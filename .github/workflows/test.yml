@@ -48,7 +48,7 @@ jobs:
       steps:
         - name: ⬇️ Checkout
           id: checkout
-          uses: actions/checkout@4
+          uses: actions/checkout@3
           with:
             fetch-depth: 0
   
