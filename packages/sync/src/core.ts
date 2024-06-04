@@ -1,9 +1,20 @@
 import { ArraySubject, ObjectSubject, isSignal, type WritableSignal } from "@signe/reactive";
 import { isObject } from "./utils";
 
-export const syncClass = (instance: any, options = {}) => {
+interface SyncOptions {
+  onSync?: (value: Map<string, any>) => void;
+  onPersist?: (value: Set<string>) => void;
+}
+
+interface TypeOptions {
+  syncToClient?: boolean;
+  persist?: boolean;
+  classType?: any;
+}
+
+export const syncClass = (instance: any, options: SyncOptions = {}) => {
   const cacheSync = new Map();
-  const cachePersist = new Set();
+  const cachePersist = new Set<string>();
   instance.$valuesChanges = {
     set: (path: string, value: any) => {
       cacheSync.set(path, value);
@@ -79,7 +90,7 @@ export const createSyncClass = (currentClass: any, parentKey: any = null, parent
 export const type = (
   _signal: any,
   path: string,
-  options = {},
+  options: TypeOptions = {},
   currentInstance: any
 ): WritableSignal<any> => {
   const syncToClient = options.syncToClient ?? true;

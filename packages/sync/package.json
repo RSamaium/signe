@@ -1,18 +1,28 @@
 {
   "name": "@signe/sync",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "",
-  "main": "src/index.ts",
+  "main": "./dist/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "dependencies": {
-    "@signe/reactive": "workspace:*"
+    "build": "tsup src/index.ts src/client/index.ts",
+    "dev": "tsup src/index.ts src/client/index.ts --watch"
   },
   "exports": {
-    ".": "./dist/index.js",
-    "./client": "./dist/client/index.js"
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./client": {
+      "import": "./dist/client/index.js",
+      "types": "./dist/client/index.d.ts"
+    },
+    "./*": "./*"
   },
+  "dependencies": {
+    "@signe/reactive": "workspace:*",
+    "partysocket": "^1.0.1"
+  },
+  "type": "module",
   "keywords": [],
   "author": "",
   "license": "MIT"

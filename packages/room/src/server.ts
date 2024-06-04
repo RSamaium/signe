@@ -3,11 +3,11 @@ import { dset } from "dset";
 import z from "zod";
 import type * as Party from "./types/party";
 import {
-    awaitReturn,
-    buildObject,
-    extractParams,
-    isClass,
-    throttle,
+  awaitReturn,
+  buildObject,
+  extractParams,
+  isClass,
+  throttle,
 } from "./utils";
 
 const Message = z.object({
@@ -45,7 +45,7 @@ export class Server implements Party.Server {
     const loadMemory = async () => {
       const root = await this.room.storage.get(".");
       const memory = await this.room.storage.list();
-      const tmpObject = root || {};
+      const tmpObject: any = root || {};
       for (let [key, value] of memory) {
         if (key == ".") {
           continue;
@@ -81,7 +81,7 @@ export class Server implements Party.Server {
   }
 
   private getUsersProperty() {
-    const meta = this.subRoom.constructor._propertyMetadata;
+    const meta = this.subRoom.constructor['_propertyMetadata'];
     const propId = meta?.get("users");
     if (propId) {
       return this.subRoom[propId];
@@ -98,7 +98,7 @@ export class Server implements Party.Server {
       user = isClass(classType) ? new classType() : classType(conn, ctx);
       signal()[publicId] = user;
     }
-    await awaitReturn(this.subRoom.onJoin?.(user, conn, ctx));
+    await awaitReturn(this.subRoom['onJoin']?.(user, conn, ctx));
     conn.setState({ publicId });
     conn.send(
       JSON.stringify({
@@ -112,14 +112,14 @@ export class Server implements Party.Server {
   }
 
   async onMessage(message: string, sender: Party.Connection) {
-    const actions = this.subRoom.constructor._actionMetadata;
+    const actions = this.subRoom.constructor['_actionMetadata'];
     const result = Message.safeParse(JSON.parse(message));
     if (!result.success) {
       return;
     }
     if (actions) {
       const signal = this.getUsersProperty();
-      const { publicId } = sender.state;
+      const { publicId } = sender.state as any;
       const user = signal?.()[publicId];
       const actionName = actions.get(result.data.action);
       if (actionName) {
@@ -140,9 +140,9 @@ export class Server implements Party.Server {
 
   async onClose(conn: Party.Connection) {
     const signal = this.getUsersProperty();
-    const { publicId } = conn.state;
+    const { publicId } = conn.state as any;
     const user = signal?.()[publicId];
-    await awaitReturn(this.subRoom.onLeave?.(user, conn));
+    await awaitReturn(this.subRoom['onLeave']?.(user, conn));
     if (signal) {
       delete signal()[publicId];
     }

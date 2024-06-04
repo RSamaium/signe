@@ -1,8 +1,18 @@
 {
   "compilerOptions": {
-    "target": "es2020",
+    "target": "ESNext",
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    "moduleResolution": "NodeNext"
-  }
+    "lib": ["ESNext", "DOM"],
+    "moduleResolution": "node",
+    "paths": {
+      "@signe/sync": ["./packages/sync/src/index.ts"],
+      "@signe/reactive": ["./packages/reactive/src/index.ts"]
+    },
+    "module": "ESNext",
+    "declaration": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true
+  },
+  "exclude": ["**/dist/**", "node_modules"]
 }
