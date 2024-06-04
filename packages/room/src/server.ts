@@ -67,7 +67,7 @@ export class Server implements Party.Server {
           })
         );
         values.clear();
-      }, 100),
+      }, 500),
       onPersist: throttle(async (values) => {
         for (let path of values) {
           const instance =
@@ -76,7 +76,7 @@ export class Server implements Party.Server {
           await this.room.storage.put(path, itemValue);
         }
         values.clear();
-      }, 2000),
+      }, this.subRoom['throttleStorage'] ?? 2000),
     });
   }
 
