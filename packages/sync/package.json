@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@signe/reactive": "workspace:*",
+    "@signe/sync": "workspace:*",
     "partysocket": "^1.0.1"
   },
   "type": "module",
