@@ -23,6 +23,9 @@
     "zod": "^3.23.8",
     "@signe/sync": "workspace:*"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240603.0"
   }
