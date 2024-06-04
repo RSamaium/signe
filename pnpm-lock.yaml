@@ -60,6 +60,9 @@ importers:
       '@signe/reactive':
         specifier: workspace:*
         version: link:../reactive
+      '@signe/sync':
+        specifier: workspace:*
+        version: 'link:'
       partysocket:
         specifier: ^1.0.1
         version: 1.0.1
