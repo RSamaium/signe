@@ -41,6 +41,9 @@ importers:
 
   packages/room:
     dependencies:
+      '@signe/sync':
+        specifier: workspace:*
+        version: link:../sync
       dset:
         specifier: ^3.1.3
         version: 3.1.3
@@ -60,9 +63,6 @@ importers:
       '@signe/reactive':
         specifier: workspace:*
         version: link:../reactive
-      '@signe/sync':
-        specifier: workspace:*
-        version: 'link:'
       partysocket:
         specifier: ^1.0.1
         version: 1.0.1

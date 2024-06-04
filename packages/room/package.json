@@ -20,7 +20,8 @@
   "dependencies": {
     "dset": "^3.1.3",
     "partysocket": "^1.0.1",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "@signe/sync": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240603.0"
