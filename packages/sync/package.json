@@ -1,0 +1,19 @@
+{
+  "name": "@signe/sync",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@signe/reactive": "workspace:*"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./client": "./dist/client/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT"
+}
