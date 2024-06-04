@@ -1,6 +1,6 @@
 import { signal } from "@signe/reactive";
-import { sync, syncClass } from "@signe/sync";
 import { describe, expect, test, vi } from "vitest";
+import { sync, syncClass } from "../packages/sync/src";
 
 describe("Sync Class", () => {
   test("onSync", () => {
@@ -10,9 +10,9 @@ describe("Sync Class", () => {
       @sync() value = signal(0);
     }
 
-    const test = new Test();
+    const instance = new Test();
 
-    syncClass(test, {
+    syncClass(instance, {
       onSync: fn,
     });
 
