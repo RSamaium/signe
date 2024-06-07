@@ -70,8 +70,8 @@ export function signal<T = any>(
     return fn as any;
 }
 
-export function isSignal(value) {
-    return value && value.observable
+export function isSignal(value: any): boolean {
+    return !!(value && value.observable)
 }
 
 export function computed<T = any>(computeFunction: () => T, disposableFn?: () => void): ComputedSignal<T> {

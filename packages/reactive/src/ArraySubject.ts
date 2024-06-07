@@ -53,6 +53,7 @@ export class ArraySubject<T> extends BehaviorSubject<ArrayChange<T>> {
               case 'splice':
                 index = args[0];
                 changeType = args.length > 2 ? 'add' : 'remove';
+                args = args.slice(2);
                 isMutateFn = true
                 break;
             }
