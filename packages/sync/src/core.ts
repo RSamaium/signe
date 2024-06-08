@@ -1,5 +1,10 @@
-import { ArraySubject, ObjectSubject, isSignal, type WritableSignal } from "@signe/reactive";
-import { isObject } from "./utils";
+import {
+  ArraySubject,
+  ObjectSubject,
+  isSignal,
+  type WritableSignal,
+} from "@signe/reactive";
+import { isInstanceOfClass, isObject } from "./utils";
 
 interface SyncOptions {
   onSync?: (value: Map<string, any>) => void;
@@ -21,7 +26,7 @@ export const syncClass = (instance: any, options: SyncOptions = {}) => {
       options.onSync?.(cacheSync);
     },
     setPersist: (path: string) => {
-      if (path == '') path = '.'
+      if (path == "") path = ".";
       cachePersist.add(path);
       options.onPersist?.(cachePersist);
     },
@@ -36,53 +41,64 @@ export const syncClass = (instance: any, options: SyncOptions = {}) => {
 };
 
 export function createStatesSnapshot(instance: any) {
-  let persistObject: any = {}
+  let persistObject: any = {};
   if (instance.$snapshot) {
     for (const key of instance.$snapshot.keys()) {
-      const signal = instance.$snapshot.get(key)
+      const signal = instance.$snapshot.get(key);
       const persist = signal.options.persist ?? true;
       let value = signal();
       if (isObject(value) || Array.isArray(value)) {
-        break
+        break;
       }
       if (persist) {
         persistObject[key] = value;
       }
     }
   }
-  return persistObject
+  return persistObject;
 }
 
 export function setMetadata(target: any, key: string, value: any) {
-  const meta = target.constructor._propertyMetadata
+  const meta = target.constructor._propertyMetadata;
   const propId = meta?.get(key);
   if (propId) {
     if (isSignal(target[propId])) {
-      target[propId].set(value)
-    }
-    else {
+      target[propId].set(value);
+    } else {
       target[propId] = value;
     }
   }
 }
 
-export const createSyncClass = (currentClass: any, parentKey: any = null, parentClass = null, path = "") => {
+export const createSyncClass = (
+  currentClass: any,
+  parentKey: any = null,
+  parentClass = null,
+  path = ""
+) => {
   currentClass.$path = path;
   if (parentClass) {
     currentClass.$valuesChanges = parentClass.$valuesChanges;
   }
   if (parentKey) {
-    setMetadata(currentClass, 'id', parentKey)
+    setMetadata(currentClass, "id", parentKey);
   }
   if (currentClass.$snapshot) {
     for (const key of currentClass.$snapshot.keys()) {
-      const signal = currentClass.$snapshot.get(key)
+      const signal = currentClass.$snapshot.get(key);
       const syncToClient = signal.options.syncToClient ?? true;
+      const persist = signal.options.persist ?? true;
       let value = signal();
       if (isObject(value) || Array.isArray(value)) {
         value = { ...value };
       }
-      if (syncToClient) currentClass.$valuesChanges.set((path ? path + "." : "") + key, value);
+      const newPath = (path ? path + "." : "") + key;
+      if (syncToClient) {
+        currentClass.$valuesChanges.set(newPath, value);
+      }
+      if (persist) {
+        if (parentClass) currentClass.$valuesChanges.setPersist(path);
+      }
     }
   }
 };
@@ -99,44 +115,63 @@ export const type = (
   _signal.options = options;
   _signal.observable.subscribe((value) => {
     const check = currentInstance.$valuesChanges;
+
+    function savePath(propPath, value) {
+      if (syncToClient) check.set(propPath, value);
+      if (persist) {
+        check.setPersist(currentInstance.$path);
+      }
+    }
+
     if (init) {
       init = false;
       return;
     }
     if (currentInstance.$path !== undefined) {
-      const propPath = (currentInstance.$path ? currentInstance.$path + "." : "") + path;
+      const propPath =
+        (currentInstance.$path ? currentInstance.$path + "." : "") + path;
       if (_signal._subject instanceof ObjectSubject) {
         const newPath =
           (currentInstance.$path ? currentInstance.$path + "." : "") +
           path +
           "." +
           value.key;
+
         if (value.type == "add") {
-          createSyncClass(value.value, value.key, currentInstance, newPath);
+          if (isInstanceOfClass(value.value)) {
+            createSyncClass(value.value, value.key, currentInstance, newPath);
+          } else {
+            savePath(newPath, value.value);
+          }
         } else if (value.type == "update") {
           if (isObject(value.value) || Array.isArray(value.value)) {
-            // createClass
+            createSyncClass(value.value, value.key, currentInstance, newPath);
           } else {
-            if (syncToClient) check.set(newPath, value.value);
+            savePath(newPath, value.value);
           }
         } else if (value.type == "remove") {
-          if (syncToClient) check.set(newPath, "$delete");
+          savePath(newPath, "$delete");
         }
       } else if (_signal._subject instanceof ArraySubject) {
+        const newPath = propPath + "." + value.index;
+        const firstItem = value.items[0];
         if (value.type == "add") {
-          createSyncClass(
-            value.items[0],
-            value.key,
-            propPath +
-              "." +
-              value.index
-          );
+          if (isInstanceOfClass(firstItem)) {
+            createSyncClass(firstItem, value.key, currentInstance, newPath);
+          } else {
+            savePath(newPath, firstItem);
+          }
+        } else if (value.type == "update") {
+          if (isObject(firstItem) || Array.isArray(firstItem)) {
+            createSyncClass(firstItem, value.key, currentInstance, newPath);
+          } else {
+            savePath(newPath, firstItem);
+          }
+        } else if (value.type == "remove") {
+          savePath(newPath, "$delete");
         }
       } else {
-        if (syncToClient) check.set(propPath, value);
-        if (persist) {
-          check.setPersist(currentInstance.$path);
-        }
+        savePath(propPath, value);
       }
     }
   });

@@ -1,6 +1,6 @@
 import { isSignal } from "@signe/reactive";
 import { setMetadata } from "./core";
-import { isFunction } from "./utils";
+import { isClass } from "./utils";
 
 export function load(rootInstance: any, values: { [path: string]: any }): void;
 export function load(
@@ -54,7 +54,6 @@ function loadValue(rootInstance: any, parts: string[], value: any) {
         if (isSignal(current)) {
           current = current();
         }
-        current[part].onDestroy?.();
         Reflect.deleteProperty(current, part);
       }
       else if (current[part]?._subject) {
@@ -72,7 +71,7 @@ function loadValue(rootInstance: any, parts: string[], value: any) {
         );
         const classType = parentInstance?.options?.classType;
         if (classType) {
-          current[part] = isFunction(classType) ? classType(part) : new classType();
+          current[part] = !isClass(classType) ? classType(part) : new classType();
           setMetadata(current[part], 'id', part)
         } else {
           current[part] = {};
