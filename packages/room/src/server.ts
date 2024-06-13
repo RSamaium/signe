@@ -1,14 +1,8 @@
-import { createStatesSnapshot, getByPath, load, syncClass } from "@signe/sync";
 import { dset } from "dset";
 import z from "zod";
+import { createStatesSnapshot, getByPath, load, syncClass } from "../../sync/src";
 import type * as Party from "./types/party";
-import {
-  awaitReturn,
-  buildObject,
-  extractParams,
-  isClass,
-  throttle,
-} from "./utils";
+import { awaitReturn, buildObject, extractParams, isClass, throttle } from "./utils";
 
 const Message = z.object({
   action: z.string(),
@@ -18,18 +12,11 @@ const Message = z.object({
 export class Server implements Party.Server {
   memoryAll = {};
   subRoom = {};
-  rooms = [];
+  rooms: any[] = [];
 
-  static async onBeforeConnect(request: Party.Request) {
-    try {
-      request.headers.set("X-User-ID", "" + Math.random());
-      return request;
-    } catch (e) {
-      return new Response("Unauthorized", { status: 401 });
-    }
-  }
+  constructor(readonly room: Party.Room) {}
 
-  constructor(readonly room: Party.Room) {
+  async onStart() {
     for (let room of this.rooms) {
       const params = extractParams(room.path, this.room.id);
       if (params) {
@@ -52,10 +39,10 @@ export class Server implements Party.Server {
         }
         dset(tmpObject, key, value);
       }
-      load(this, tmpObject);
+      load(this.subRoom, tmpObject);
     };
 
-    loadMemory();
+    await loadMemory();
 
     syncClass(this.subRoom, {
       onSync: throttle((values) => {
@@ -76,12 +63,12 @@ export class Server implements Party.Server {
           await this.room.storage.put(path, itemValue);
         }
         values.clear();
-      }, this.subRoom['throttleStorage'] ?? 2000),
+      }, this.subRoom["throttleStorage"] ?? 2000),
     });
   }
 
   private getUsersProperty() {
-    const meta = this.subRoom.constructor['_propertyMetadata'];
+    const meta = this.subRoom.constructor["_propertyMetadata"];
     const propId = meta?.get("users");
     if (propId) {
       return this.subRoom[propId];
@@ -98,7 +85,7 @@ export class Server implements Party.Server {
       user = isClass(classType) ? new classType() : classType(conn, ctx);
       signal()[publicId] = user;
     }
-    await awaitReturn(this.subRoom['onJoin']?.(user, conn, ctx));
+    await awaitReturn(this.subRoom["onJoin"]?.(user, conn, ctx));
     conn.setState({ publicId });
     conn.send(
       JSON.stringify({
@@ -112,7 +99,7 @@ export class Server implements Party.Server {
   }
 
   async onMessage(message: string, sender: Party.Connection) {
-    const actions = this.subRoom.constructor['_actionMetadata'];
+    const actions = this.subRoom.constructor["_actionMetadata"];
     const result = Message.safeParse(JSON.parse(message));
     if (!result.success) {
       return;
@@ -142,7 +129,7 @@ export class Server implements Party.Server {
     const signal = this.getUsersProperty();
     const { publicId } = conn.state as any;
     const user = signal?.()[publicId];
-    await awaitReturn(this.subRoom['onLeave']?.(user, conn));
+    await awaitReturn(this.subRoom["onLeave"]?.(user, conn));
     if (signal) {
       delete signal()[publicId];
     }

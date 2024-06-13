@@ -1,13 +1,13 @@
 import { load } from "@signe/sync";
 import PartySocket from "partysocket";
 
-export function connection(options, room) {
+export function connection(options, roomInstance) {
   const conn = new PartySocket(options);
   conn.addEventListener("message", (event) => {
     const object = JSON.parse(event.data);
     switch (object.type) {
       case "sync":
-        load(room, object.value, true);
+        load(roomInstance, object.value, true);
         break;
     }
   });
