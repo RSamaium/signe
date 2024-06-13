@@ -1,6 +1,11 @@
 import { signal } from "@signe/reactive";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { persist, sync, syncClass } from "../../packages/sync/src";
+import {
+  createStatesSnapshot,
+  persist,
+  sync,
+  syncClass,
+} from "../../packages/sync/src";
 
 describe("onSync", () => {
   it("should sync class", () => {
@@ -35,7 +40,6 @@ describe("onSync", () => {
 
     expect(onSync).toHaveBeenCalledWith(new Map([["nested", {}]]));
   });
-
 
   it("should sync class and update on change", () => {
     class TestClass {
@@ -336,7 +340,6 @@ describe("onPersist", () => {
     expect(onPersist).toHaveBeenCalledWith(new Set(["nested.id"]));
   });
 
- 
   it("should create new path for array collection (shard)", () => {
     class NestedClass {
       @sync() value = signal(10);
@@ -352,7 +355,7 @@ describe("onPersist", () => {
     syncClass(instance, { onPersist });
 
     const nested = new NestedClass();
-    instance.nested.mutate(array => array.push(nested))
+    instance.nested.mutate((array) => array.push(nested));
 
     expect(onPersist).toHaveBeenCalledWith(new Set(["nested.0"]));
   });
@@ -403,5 +406,65 @@ describe("onPersist", () => {
 
     expect(onSync).toHaveBeenCalledTimes(2);
     expect(onPersist).not.toHaveBeenCalled();
+  });
+});
+
+describe("createStatesSnapshot", () => {
+  it("should return an empty object if instance.$snapshot is not defined", () => {
+    class TestClass {
+      count = signal(0);
+      text = signal("hello");
+    }
+
+    const instance = new TestClass();
+
+    syncClass(instance);
+
+    const result = createStatesSnapshot(instance);
+    expect(result).toEqual({});
+  });
+
+  it("should persist primitive values with sync decorator", () => {
+    class TestClass {
+      @sync() count = signal(0);
+      @sync() text = signal("hello");
+    }
+
+    const instance = new TestClass();
+
+    syncClass(instance);
+
+    const result = createStatesSnapshot(instance);
+    expect(result).toEqual({
+      count: 0,
+      text: "hello",
+    });
+  });
+
+  it("should not persist values with persist option set to false", () => {
+    class TestClass {
+      @sync({ persist: false }) count = signal(0);
+      text = signal("hello");
+    }
+
+    const instance = new TestClass();
+
+    syncClass(instance);
+
+    const result = createStatesSnapshot(instance);
+    expect(result).toEqual({});
+  });
+
+  it("should not persist non-primitive values", () => {
+    class TestClass {
+      @sync() count = signal({ a: 1 });
+      @sync() text = signal([1, 2, 3]);
+    }
+
+    const instance = new TestClass();
+    syncClass(instance);
+
+    const result = createStatesSnapshot(instance);
+    expect(result).toEqual({});
   });
 });

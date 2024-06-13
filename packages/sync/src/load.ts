@@ -2,6 +2,19 @@ import { isSignal } from "@signe/reactive";
 import { setMetadata } from "./core";
 import { isClass } from "./utils";
 
+/**
+ * Loads values into the root instance by paths or from an object.
+ * 
+ * @param {object} rootInstance - The instance into which values will be loaded.
+ * @param {object} values - The values to load, either as paths or an object.
+ * @param {boolean} [valueIsObject=false] - If true, `values` is treated as an object.
+ * @example
+ * // Using paths:
+ * load(instance, { 'position.x': 10, 'position.y': 20 });
+ * 
+ * // Using an object:
+ * load(instance, { position: { x: 10, y: 20 } }, true);
+ */
 export function load(rootInstance: any, values: { [path: string]: any }): void;
 export function load(
   rootInstance: any,
@@ -20,6 +33,14 @@ export function load(
   }
 }
 
+/**
+ * Loads values into the root instance using paths.
+ * 
+ * @param {object} rootInstance - The instance into which values will be loaded.
+ * @param {object} values - The values to load, with keys as paths.
+ * @example
+ * loadFromPaths(instance, { 'position.x': 10, 'position.y': 20 });
+ */
 function loadFromPaths(rootInstance: any, values: { [path: string]: any }) {
   for (const [path, value] of Object.entries(values)) {
     const parts = path.split(".");
@@ -27,6 +48,15 @@ function loadFromPaths(rootInstance: any, values: { [path: string]: any }) {
   }
 }
 
+/**
+ * Recursively loads values from an object into the root instance.
+ * 
+ * @param {object} rootInstance - The instance into which values will be loaded.
+ * @param {object} values - The values to load.
+ * @param {string} [currentPath=""] - The current path in the recursion.
+ * @example
+ * loadFromObject(instance, { position: { x: 10, y: 20 } });
+ */
 function loadFromObject(
   rootInstance: any,
   values: object,
@@ -43,6 +73,15 @@ function loadFromObject(
   }
 }
 
+/**
+ * Sets a value in the root instance by navigating through the path parts.
+ * 
+ * @param {object} rootInstance - The instance into which the value will be set.
+ * @param {string[]} parts - The parts of the path.
+ * @param {any} value - The value to set.
+ * @example
+ * loadValue(instance, ['position', 'x'], 10);
+ */
 function loadValue(rootInstance: any, parts: string[], value: any) {
   let current: any = rootInstance;
 
@@ -82,6 +121,15 @@ function loadValue(rootInstance: any, parts: string[], value: any) {
   }
 }
 
+/**
+ * Retrieves a value from the root instance by a path.
+ * 
+ * @param {object} root - The root instance.
+ * @param {string} path - The path to the value.
+ * @returns {any} - The value at the specified path.
+ * @example
+ * const value = getByPath(instance, 'position.x');
+ */
 export function getByPath(root: any, path: string) {
   const parts = path.split(".");
   let current = root;

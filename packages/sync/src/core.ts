@@ -17,6 +17,29 @@ interface TypeOptions {
   classType?: any;
 }
 
+/**
+ * Synchronizes an instance by adding `$valuesChanges` methods for state management.
+ *
+ * This function initializes a cache for syncing and persisting values. It adds methods to the instance
+ * to set values, mark values for persistence, and check and retrieve values from the cache.
+ * Optionally, callbacks can be provided to handle synchronization and persistence events.
+ *
+ * @param {Record<string, any>} instance - The instance to be synchronized.
+ * @param {SyncOptions} [options={}] - Optional synchronization options.
+ * @param {Function} [options.onSync] - Callback function to be called on value sync with the current cache.
+ * @param {Function} [options.onPersist] - Callback function to be called on value persistence with the current cache.
+ *
+ * @example
+ * class TestClass {
+ *   @sync() count = signal(0);
+ *   @sync() text = signal('hello');
+ * }
+ * const instance = new TestClass();
+ * syncClass(instance, {
+ *   onSync: (cache) => console.log('Sync cache:', cache),
+ *   onPersist: (cache) => console.log('Persist cache:', cache),
+ * });
+ */
 export const syncClass = (instance: any, options: SyncOptions = {}) => {
   const cacheSync = new Map();
   const cachePersist = new Set<string>();
@@ -40,7 +63,29 @@ export const syncClass = (instance: any, options: SyncOptions = {}) => {
   createSyncClass(instance);
 };
 
-export function createStatesSnapshot(instance: any) {
+/**
+ * Creates a snapshot of the current state of an instance's signals.
+ *
+ * This function iterates over the signals stored in the instance's $snapshot property.
+ * If a signal's value is not an object or array and the signal's persist option is true or undefined,
+ * it adds the signal's value to the returned snapshot object.
+ *
+ * @param {Record<string, any>} instance - The instance containing the $snapshot map of signals.
+ * @returns {Record<string, any>} - An object representing the persisted snapshot of the instance's state.
+ *
+ * @example
+ * ```typescript
+ * class TestClass {
+ *   @sync() count = signal(0);
+ *   @sync() text = signal('hello');
+ * }
+ * const instance = new TestClass();
+ * syncClass(instance);
+ * const snapshot = createStatesSnapshot(instance);
+ * console.log(snapshot); // { count: 0, text: 'hello' }
+ * ```
+ */
+export function createStatesSnapshot(instance: Record<string, any>): Record<string, any> {
   let persistObject: any = {};
   if (instance.$snapshot) {
     for (const key of instance.$snapshot.keys()) {

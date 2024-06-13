@@ -1,7 +1,30 @@
 import { type } from "./core";
 
-export function sync(options?: any) {
-  let classType;
+interface SyncOptions {
+  classType?: Function;
+  persist?: boolean;
+  syncToClient?: boolean;
+}
+
+/**
+ * A decorator to sync a property with optional settings.
+ * 
+ * @param {SyncOptions | Function} [options] - The options or class type for syncing.
+ * @returns {PropertyDecorator} - The property decorator function.
+ * @example
+ * ```typescript
+ * import { signal } from '@signe/reactive'
+ * import { sync } from '@signe/sync'
+ * 
+ * class MyClass {
+ *   @sync() myProperty = signal(10);
+ * 
+ *   @sync({ classType: MyClass, persist: false }) myOtherProperty = signal({});
+ * }
+ * ```
+ */
+export function sync(options?: SyncOptions | Function): PropertyDecorator {
+  let classType: Function | undefined;
   let persist = true;
   let syncToClient = true;
 
@@ -10,10 +33,10 @@ export function sync(options?: any) {
   } else if (typeof options === "object") {
     classType = options.classType;
     if (options.hasOwnProperty("persist")) {
-      persist = options.persist;
+      persist = options.persist!;
     }
     if (options.hasOwnProperty("syncToClient")) {
-      syncToClient = options.syncToClient;
+      syncToClient = options.syncToClient!;
     }
   }
 
@@ -42,7 +65,21 @@ export function sync(options?: any) {
   };
 }
 
-export function id() {
+/**
+ * A decorator to mark a property as an ID.
+ * 
+ * @returns {PropertyDecorator} - The property decorator function.
+ * @example
+ * ```typescript
+ * import { signal } from '@signe/reactive'
+ * import { id } from '@signe/sync'
+ * 
+ * class MyClass {
+ *   @id() myId = signal(0);
+ * }
+ * ```
+ */
+export function id(): PropertyDecorator {
   return function (target: any, propertyKey: string) {
     if (!target.constructor._propertyMetadata) {
       target.constructor._propertyMetadata = new Map();
@@ -51,7 +88,24 @@ export function id() {
   };
 }
 
-export function users(options) {
+interface UsersOptions extends SyncOptions {}
+
+/**
+ * A decorator to mark a property for users with sync options.
+ * 
+ * @param {UsersOptions} options - The options for syncing.
+ * @returns {PropertyDecorator} - The property decorator function.
+ * @example
+ * ```typescript
+ * import { signal } from '@signe/reactive'
+ * import { users } from '@signe/sync'
+ * 
+ * class MyClass {
+ *   @users(UserClass) myUsers = signal({});
+ * }
+ * ```
+ */
+export function users(options: UsersOptions): PropertyDecorator {
   return function (target: any, propertyKey: string) {
     if (!target.constructor._propertyMetadata) {
       target.constructor._propertyMetadata = new Map();
@@ -61,7 +115,21 @@ export function users(options) {
   };
 }
 
-export function persist() {
+/**
+ * A decorator to mark a property for persistence.
+ * 
+ * @returns {PropertyDecorator} - The property decorator function.
+ * @example
+ * ```typescript
+ * import { signal } from '@signe/reactive'
+ * import { persist } from '@signe/sync'
+ * 
+ * class MyClass {
+ *   @persist() myPersistentProperty = signal(0);
+ * }
+ * ```
+ */
+export function persist(): PropertyDecorator {
   return sync({
     persist: true,
     syncToClient: false,
