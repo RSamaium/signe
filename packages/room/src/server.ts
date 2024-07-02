@@ -13,6 +13,7 @@ export class Server implements Party.Server {
   memoryAll = {};
   subRoom = {};
   rooms: any[] = [];
+  options?: Party.ServerOptions = {}
 
   constructor(readonly room: Party.Room) {}
 
@@ -27,6 +28,10 @@ export class Server implements Party.Server {
 
     if (!this.subRoom) {
       throw new Error("Room not found");
+    }
+
+    this.options = {
+      hibernate: this.subRoom["hibernate"] ?? false,
     }
 
     const loadMemory = async () => {
@@ -54,7 +59,7 @@ export class Server implements Party.Server {
           })
         );
         values.clear();
-      }, 500),
+      }, this.subRoom["throttleSync"] ?? 500),
       onPersist: throttle(async (values) => {
         for (let path of values) {
           const instance =
@@ -86,7 +91,7 @@ export class Server implements Party.Server {
       signal()[publicId] = user;
     }
     await awaitReturn(this.subRoom["onJoin"]?.(user, conn, ctx));
-    conn.setState({ publicId });
+    conn.setState({ publicId });                                                
     conn.send(
       JSON.stringify({
         type: "sync",
