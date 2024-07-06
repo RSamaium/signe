@@ -1,9 +1,8 @@
-import { Room, Action } from "../../../src";
+import { Action, Room } from "../../../src";
 import { RoomSchema } from "../shared/room.schema";
 
 @Room({
-    path: 'game',
-    hibernate: true
+    path: 'game'
 })
 export class GameRoom extends RoomSchema {
     @Action('increment')

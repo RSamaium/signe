@@ -24,6 +24,5 @@ export function Room(options: RoomOptions) {
     target.maxUsers = options.maxUsers;
     target.throttleStorage = options.throttleStorage;
     target.throttleSync = options.throttleSync;
-    target.hibernate = options.hibernate;
   };
 }

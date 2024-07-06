@@ -89,6 +89,7 @@ export function id(): PropertyDecorator {
 }
 
 interface UsersOptions extends SyncOptions {}
+type UserClass = Function;
 
 /**
  * A decorator to mark a property for users with sync options.
@@ -105,7 +106,7 @@ interface UsersOptions extends SyncOptions {}
  * }
  * ```
  */
-export function users(options: UsersOptions): PropertyDecorator {
+export function users(options: UsersOptions | UserClass): PropertyDecorator {
   return function (target: any, propertyKey: string) {
     if (!target.constructor._propertyMetadata) {
       target.constructor._propertyMetadata = new Map();

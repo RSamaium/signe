@@ -65,3 +65,13 @@ export function isInstanceOfClass(value: unknown): boolean {
   }
   return Object.getPrototypeOf(value) !== Object.prototype;
 }
+
+export function generateShortUUID(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let uuid = '';
+  for (let i = 0; i < 8; i++) {
+      const randomIndex = Math.floor(Math.random() * chars.length);
+      uuid += chars[randomIndex];
+  }
+  return uuid;
+}

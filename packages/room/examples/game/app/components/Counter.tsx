@@ -11,7 +11,7 @@ export default function Counter() {
   useEffect(() => {
     room.current = new RoomSchema();
     socket.current = connection({
-      host: 'localhost:1999',
+      host: location.hostname == 'localhost' ? 'localhost:1999' : 'https://signe.rsamaium.partykit.dev',
       room: 'game'
     }, room.current)
     

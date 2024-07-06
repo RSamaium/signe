@@ -1,6 +1,6 @@
 {
   "$schema": "https://www.partykit.io/schema.json",
-  "name": "game",
+  "name": "signe",
   "main": "party/server.ts",
   "compatibilityDate": "2024-06-09",
   "serve": {
