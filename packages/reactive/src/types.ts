@@ -29,6 +29,7 @@ export interface ComputedSignal<T = any> {
     (): T;
     observable: Observable<T>;
     subscription: Subscription;
+    dependencies: Set<WritableSignal<any>>;
 }
 
 export type Signal<T = any> = WritableSignal<T> | WritableArraySignal<T> | WritableObjectSignal<T> | ComputedSignal<T>;

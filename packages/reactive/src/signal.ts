@@ -108,6 +108,8 @@ export function computed<T = any>(computeFunction: () => T, disposableFn?: () =>
         lastComputedValue = value;
     });
 
+    fn.dependencies = dependencies
+
     currentSubscriptionsTracker?.(fn.subscription);
 
     init = false

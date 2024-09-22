@@ -90,4 +90,9 @@ describe("computed", () => {
     compSignal.subscription.unsubscribe();
     expect(disposeFn).toHaveBeenCalled();
   });
+
+  it("should subscribe to the simple computed (not contains any signal)", () => {
+    const simpleComputed = computed(() => 2 * 2);
+    expect(simpleComputed.dependencies).toHaveLength(0);
+  });
 });
