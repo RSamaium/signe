@@ -12,6 +12,12 @@ const trackDependency = (signal) => {
     }
 };
 
+/**
+ * Creates a reactive signal with the given default value.
+ * @template T The type of the signal value
+ * @param {T} defaultValue The initial value of the signal
+ * @returns {WritableSignal<T> | WritableArraySignal<T> | WritableObjectSignal<T>} A writable signal
+ */
 export function signal<T extends any[]>(defaultValue: T): WritableArraySignal<T>;
 export function signal<T extends Record<string, any>>(defaultValue: T): WritableObjectSignal<T>;
 export function signal<T>(defaultValue: T): WritableSignal<T>;
@@ -70,10 +76,22 @@ export function signal<T = any>(
     return fn as any;
 }
 
+/**
+ * Checks if a value is a signal.
+ * @param {any} value The value to check
+ * @returns {boolean} True if the value is a signal, false otherwise
+ */
 export function isSignal(value: any): boolean {
     return !!(value && value.observable)
 }
 
+/**
+ * Creates a computed signal based on a compute function.
+ * @template T The type of the computed value
+ * @param {() => T} computeFunction The function to compute the value
+ * @param {() => void} [disposableFn] Optional function to be called when the computed signal is disposed
+ * @returns {ComputedSignal<T>} A computed signal
+ */
 export function computed<T = any>(computeFunction: () => T, disposableFn?: () => void): ComputedSignal<T> {
     const dependencies: Set<WritableSignal<any>> = new Set();
     let init = true

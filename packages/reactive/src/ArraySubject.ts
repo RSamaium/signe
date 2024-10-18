@@ -22,12 +22,13 @@ export class ArraySubject<T> extends BehaviorSubject<ArrayChange<T>> {
     this._items = new Proxy(items, {
       get: (target, prop, receiver) => {
         const origMethod = target[prop];
-        // Intercept function calls (e.g., push, pop)
         if (typeof origMethod === 'function') {
           return (...args) => {
             let changeType: 'add' | 'remove' | 'update' = 'update';
             let index: number | undefined = undefined;
             let isMutateFn = false;
+            let itemsToEmit: T[] = [];
+            let changeSplice = true;
 
             switch (prop) {
               case 'push':
@@ -52,16 +53,30 @@ export class ArraySubject<T> extends BehaviorSubject<ArrayChange<T>> {
                 break;
               case 'splice':
                 index = args[0];
-                changeType = args.length > 2 ? 'add' : 'remove';
-                args = args.slice(2);
-                isMutateFn = true
+                const deleteCount = args[1];
+                const newItems = args.slice(2);
+                itemsToEmit = newItems;
+                if (deleteCount > 0 && newItems.length === 0) {
+                  changeType = 'remove';
+                } else if (deleteCount === 0 && newItems.length > 0) {
+                  changeType = 'add';
+                } else if (deleteCount === 0 && newItems.length === 0) {
+                  changeSplice = false
+                } else {
+                  changeType = 'update';
+                }
+                isMutateFn = true;
                 break;
             }
 
             const result = origMethod.apply(target, args);
-            // Notify subscribers after the method call
-            if (isMutateFn) {
-              this.next({ type: changeType, index, items: args });
+            
+            if (isMutateFn  && changeSplice) {
+              if (prop === 'splice') {
+                this.next({ type: changeType, index, items: itemsToEmit });
+              } else {
+                this.next({ type: changeType, index, items: args });
+              }
             }
 
             return result;
