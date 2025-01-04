@@ -85,7 +85,7 @@ export function override(
     if (typeof provider === "function") {
       return provider.name === key;
     } else if (typeof provider === "object") {
-      return provider.provide === key;
+      return (provider as any).provide === key;
     }
     return false;
   });
@@ -94,7 +94,7 @@ export function override(
   const mappedProviders = flatProviders.map((provider) => {
     if (typeof provider === "function" && provider.name === key) {
       return newProvider;
-    } else if (typeof provider === "object" && provider.provide === key) {
+    } else if (typeof provider === "object" && (provider as any).provide === key) {
       return newProvider;
     }
     return provider;

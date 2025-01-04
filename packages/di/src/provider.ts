@@ -48,9 +48,11 @@ export async function injector(context: Context, providers: Providers) {
             token = provider;
             instance = new provider(context);
         } else {
-            token = provider.provide;
-            if (isClassProvider(provider)) {
-                instance = new provider.useClass(context);
+            token = (provider as any).provide;
+            const provideUserClass = (provider as any).useClass;
+            const isClass = typeof provideUserClass === 'function';
+            if (isClass) {
+                instance = new provideUserClass(context);
             } else if ('useValue' in provider) {
                 instance = provider.useValue;
             } else if ('useFactory' in provider) {
