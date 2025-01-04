@@ -1,0 +1,24 @@
+{
+  "name": "@signe/di",
+  "version": "1.0.1",
+  "description": "",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsup src/index.ts",
+    "dev": "tsup src/index.ts --watch"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./*": "./*"
+  },
+  "keywords": [],
+  "author": "Samuel Ronce",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module"
+}
