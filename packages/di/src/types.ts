@@ -77,4 +77,4 @@ export type Provider =
 /**
  * Array of providers that can be nested one level deep
  */
-export type Providers = Provider[] | Provider[][];
+export type Providers = (Provider | Providers)[];
