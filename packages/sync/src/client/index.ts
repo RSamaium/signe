@@ -40,3 +40,5 @@ export function connection(options, roomInstance) {
     conn,
   };
 }
+
+export { PartySocket };

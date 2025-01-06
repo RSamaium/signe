@@ -62,9 +62,10 @@ function loadFromObject(
   values: object,
   currentPath: string = ""
 ) {
-  for (const [key, value] of Object.entries(values)) {
+  for (let key in values) {
+    const value = values[key];
     const newPath = currentPath ? `${currentPath}.${key}` : key;
-    if (typeof value === "object" && !Array.isArray(value)) {
+    if (typeof value === "object" && !Array.isArray(value) && value !== null) {
       loadFromObject(rootInstance, value, newPath);
     } else {
       const parts = newPath.split(".");

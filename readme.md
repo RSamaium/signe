@@ -8,7 +8,8 @@ A collection of packages to manage real-time and reactive applications.
 |---------------------|---------------------------------------------------------------------------------------------------------------------------------------------|
 | `@signe/reactive`   | Primitive usage of reactivity with `signal`, `computed`, and `effect`.                                                                      |
 | `@signe/sync`       | Listens to signals within a class to synchronize with the client (if on the server-side) or, on the client-side, recreates a class from the data received from the server. Provides indication for data persistence. |
-| `@signe/room`       | Creates a Room based on PartyKit for real-time applications. Can be deployed on Cloudflare.                                                 |
+| `@signe/room`       | Creates a Room based on PartyKit for real-time applications. Can be deployed on Cloudflare.                                                                 |
+| `@signe/di`         | Dependency injection for Signe applications.                                                                 |
 
 ## Development
 
