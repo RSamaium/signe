@@ -99,6 +99,9 @@ function loadValue(rootInstance: any, parts: string[], value: any) {
       else if (current[part]?._subject) {
         current[part].set(value);
       }
+      else {
+        current[part] = value;
+      }
     } else {
       if (isSignal(current)) {
         current = current();

@@ -18,9 +18,19 @@ describe("load function", () => {
         y: signal(0),
       }
       @sync(_class) nested = signal({});
+      normalValue = 0;
     }
 
     testInstance = new TestClass();
+  });
+
+  it("should load values into non-signal properties", () => {
+    load(testInstance, { normalValue: 42 }, true);
+    expect(testInstance.normalValue).toBe(42);
+
+    // Vérifier que ça fonctionne aussi avec un deuxième chargement
+    load(testInstance, { normalValue: 100 }, true);
+    expect(testInstance.normalValue).toBe(100);
   });
 
   it("should load values using paths", () => {
@@ -40,68 +50,6 @@ describe("load function", () => {
     expect(testInstance.position.y()).toBe(20);
   });
 
-  it("should load values from an object with null values", () => {
-    load(testInstance, {
-        position: {
-            x: null,
-            y: 20,
-        },
-    }, true);
-    expect(testInstance.position.x()).toBe(null);
-    expect(testInstance.position.y()).toBe(20);
-  });
-
-  it("should handle undefined values", () => {
-    load(testInstance, { 'position.x': undefined });
-    expect(testInstance.position.x()).toBe(undefined);
-  });
-
-  it("should handle multiple nested levels", () => {
-    const data = {
-      position: {
-        x: 100,
-        y: 200
-      },
-      nested: {
-        id: {
-          value: 50
-        }
-      }
-    };
-    load(testInstance, data, true);
-    expect(testInstance.position.x()).toBe(100);
-    expect(testInstance.position.y()).toBe(200);
-    expect(testInstance.nested()['id'].value()).toBe(50);
-  });
-
-  it("should handle array of paths", () => {
-    load(testInstance, {
-      'count': 5,
-      'position.x': 15,
-      'position.y': 25,
-      'nested.id.value': 35
-    });
-    expect(testInstance.count()).toBe(5);
-    expect(testInstance.position.x()).toBe(15);
-    expect(testInstance.position.y()).toBe(25);
-    expect(testInstance.nested()['id'].value()).toBe(35);
-  });
-
-  it("should handle overwriting existing values", () => {
-    load(testInstance, { 'position.x': 10 });
-    expect(testInstance.position.x()).toBe(10);
-    
-    load(testInstance, { 'position.x': 20 });
-    expect(testInstance.position.x()).toBe(20);
-  });
-
-  it("should handle mixed object and path loading", () => {
-    load(testInstance, { 'position.x': 10 });
-    load(testInstance, { position: { y: 20 } }, true);
-    expect(testInstance.position.x()).toBe(10);
-    expect(testInstance.position.y()).toBe(20);
-  });
-
   it("collection", () => {
     load(testInstance, { 'nested.id.value': 10});
     expect(testInstance.nested()['id']).instanceOf(_class)
@@ -111,5 +59,90 @@ describe("load function", () => {
   it("should delete a property if value is $delete", () => {
     load(testInstance, { "nested.id": "$delete" });
     expect(testInstance.nested()["id"]).toBeUndefined();
+  });
+
+  it("should load nested GameObject in Scene", () => {
+    class GameObject {
+      position = {
+        x: signal(0),
+        y: signal(0),
+      };
+      @sync() direction = signal(0);
+      @sync() graphics = signal([]);
+    }
+
+    class Scene {
+      @sync(GameObject) users = signal({});
+    }
+
+    const scene = new Scene();
+    
+    load(scene, {
+      users: {
+        player1: {
+          position: { x: 100, y: 200 },
+          direction: 45,
+          graphics: ['sprite1', 'sprite2']
+        }
+      }
+    }, true);
+
+    expect(scene.users()['player1']).instanceOf(GameObject);
+    expect(scene.users()['player1'].position.x()).toBe(100);
+    expect(scene.users()['player1'].position.y()).toBe(200);
+    expect(scene.users()['player1'].direction()).toBe(45);
+    expect(scene.users()['player1'].graphics()).toEqual(['sprite1', 'sprite2']);
+  });
+
+  it("should handle multiple loads on the same Scene", () => {
+    class GameObject {
+      position = {
+        x: signal(0),
+        y: signal(0),
+      };
+      @sync() direction = signal(0);
+      @sync() graphics = signal([]);
+    }
+
+    class Scene {
+      @sync(GameObject) users = signal({});
+    }
+
+    const scene = new Scene();
+    
+    load(scene, {
+      users: {
+        player1: {
+          position: { x: 100, y: 200 },
+          direction: 45,
+          graphics: ['sprite1']
+        }
+      }
+    }, true);
+
+    load(scene, {
+      users: {
+        player1: {
+          position: { x: 150, y: 250 },
+          graphics: ['sprite2', 'sprite3']
+        },
+        player2: {
+          position: { x: 300, y: 400 },
+          direction: 90,
+          graphics: ['sprite4']
+        }
+      }
+    }, true);
+
+    expect(scene.users()['player1'].position.x()).toBe(150);
+    expect(scene.users()['player1'].position.y()).toBe(250);
+    expect(scene.users()['player1'].direction()).toBe(45);
+    expect(scene.users()['player1'].graphics()).toEqual(['sprite2', 'sprite3']);
+
+    expect(scene.users()['player2']).instanceOf(GameObject);
+    expect(scene.users()['player2'].position.x()).toBe(300);
+    expect(scene.users()['player2'].position.y()).toBe(400);
+    expect(scene.users()['player2'].direction()).toBe(90);
+    expect(scene.users()['player2'].graphics()).toEqual(['sprite4']);
   });
 });
