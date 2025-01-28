@@ -109,7 +109,7 @@ describe("load function", () => {
     }
 
     const scene = new Scene();
-    
+  
     load(scene, {
       users: {
         player1: {

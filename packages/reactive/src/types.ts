@@ -1,4 +1,3 @@
-
 import { Observable, Subscription } from 'rxjs';
 import { ArrayChange, ArraySubject } from './ArraySubject';
 import { ObjectChange, ObjectSubject } from "./ObjectSubject";
@@ -9,6 +8,8 @@ interface BaseWritableSignal<T = any> {
     mutate(mutateFn: (value: T) => void): void;
     update(updateFn: (value: T) => T): void;
     animate(value: T | ((currentValue: T) => T), options?: any): any;
+    freeze(): void;
+    unfreeze(): void;
 }
 
 export interface WritableSignal<T = any> extends BaseWritableSignal<T> {

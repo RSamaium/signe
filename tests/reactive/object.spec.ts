@@ -52,4 +52,22 @@ describe('ObjectSubject', () => {
 
     expect(mockFn).toHaveBeenCalledWith({ type: 'reset', value: { b: 2 } });
   });
+
+  it('should freeze the signal', () => {
+    const objectSignal = signal({ a: 1 });
+    const mockFn = vi.fn();
+    objectSignal.freeze();
+    objectSignal.observable.subscribe(mockFn);
+    objectSignal.mutate(obj => obj.a = 2);
+    expect(mockFn).not.toHaveBeenCalled();
+  });
+
+  it('should unfreeze the signal', () => {
+    const objectSignal = signal({ a: 1 });
+    const mockFn = vi.fn();
+    objectSignal.freeze();
+    objectSignal.observable.subscribe(mockFn);
+    objectSignal.unfreeze();
+    expect(mockFn).toHaveBeenCalled();
+  });
 });

@@ -60,6 +60,23 @@ export function signal<T = any>(
         }
     };
 
+    fn._isFrozen = false;
+
+    fn.freeze = () => {
+        fn._isFrozen = true;
+    };
+
+    fn.unfreeze = () => {
+        fn._isFrozen = false;
+        if (subject instanceof ArraySubject) {
+            subject.next({ type: 'init', items: subject.items });
+        } else if (subject instanceof ObjectSubject) {
+            subject.next({ type: 'init', value: subject.obj });
+        } else {
+            subject.next(subject.value);
+        }
+    };
+
     fn.mutate = (mutateFn) => {
         const value = getValue();
         mutateFn(value);
@@ -70,7 +87,9 @@ export function signal<T = any>(
         fn.set(updatedValue);
     };
 
-    fn.observable = subject.asObservable();
+    fn.observable = subject.asObservable().pipe(
+        filter(() => !fn._isFrozen)
+    );
     fn._subject = subject;
 
     return fn as any;
