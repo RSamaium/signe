@@ -10,104 +10,199 @@ npm install @signe/room @signe/reactive @signe/sync
 
 ## Features
 
-- 🔄 Automatic state synchronization
-- 👥 Built-in user management
-- 🎮 Action-based message handling
-- 🔐 Authentication support
-- 🎯 TypeScript support
+- 🔄 Automatic state synchronization across clients
+- 👥 Built-in user management with customizable player classes
+- 🎮 Action-based message handling with type safety
+- 🔐 Flexible authentication and authorization system
+- 🛡️ Guard system for room and action-level security
+- 🎯 Full TypeScript support
+- 🔌 WebSocket-based real-time communication
+- 💾 Automatic state persistence
+- 🚀 Optimized for performance with throttling support
 
-## Usage
+## Basic Usage
 
-Here's a complete example of how to create a multiplayer room:
+Here's a simple example of a multiplayer game room:
 
 ```ts
 import { signal } from "@signe/reactive";
-import { Room, Server, action } from "@signe/room";
+import { Room, Server, Action } from "@signe/room";
 import { id, sync, users } from "@signe/sync";
 
-// Define a Player class to represent connected users
-export class Player {
-  @id() id = signal("");
+// Define a Player class
+class Player {
+  @id() id: string;
   @sync() x = signal(0);
   @sync() y = signal(0);
-  @sync() color = signal("#000000");
-
-  constructor() {
-    const randomColor = Math.floor(Math.random() * 16777215).toString(16);
-    this.color.set("#" + randomColor);
-  }
+  @sync() score = signal(0);
 }
 
-// Define your room's state schema
-export class RoomSchema {
-  @sync() count = signal(0);
-  @users(Player) players = signal({});
-}
-
-// Create your room with custom logic
+// Create your room
 @Room({
-  path: "chess-{id}",  // Dynamic room path with parameters
-  maxUsers: 2,         // Limit number of users per room
+  path: "game",
 })
-export class MyRoom extends RoomSchema {
-  // Authentication hook
-  static onAuth() {
-    // Add your authentication logic here
+class GameRoom {
+  @users(Player) players = signal({});
+  @sync() gameState = signal("waiting");
+
+  @Action("move")
+  move(player: Player, position: { x: number, y: number }) {
+    player.x.set(position.x);
+    player.y.set(position.y);
+  }
+}
+
+// Create your server
+export default class GameServer extends Server {
+  rooms = [GameRoom];
+}
+```
+
+## Advanced Features
+
+### Room Configuration
+
+The `@Room` decorator accepts various configuration options:
+
+```ts
+@Room({
+  path: "game-{id}",     // Dynamic path with parameters
+  maxUsers: 4,           // Limit number of users
+  throttleStorage: 1000, // Throttle storage updates (ms)
+  throttleSync: 100,     // Throttle sync updates (ms)
+  hibernate: false,      // Enable/disable hibernation
+  guards: [isAuthenticated], // Room-level guards
+})
+```
+
+### Authentication & Authorization
+
+You can implement authentication and authorization using guards:
+
+```ts
+// Authentication guard
+function isAuthenticated(conn: Connection, ctx: ConnectionContext) {
+  const token = ctx.request.headers.get("authorization");
+  return validateToken(token); // Returns boolean or Promise<boolean>
+}
+
+// Role-based guard
+function isAdmin(conn: Connection, value: any) {
+  return conn.state.role === "admin";
+}
+
+@Room({
+  path: "admin-panel",
+  guards: [isAuthenticated], // Applied to all connections and messages
+})
+class AdminRoom {
+  @Action("deleteUser")
+  @Guard([isAdmin]) // Applied only to this action
+  async deleteUser(admin: Player, userId: string) {
+    // Only authenticated admins can execute this
+  }
+}
+```
+
+### State Management
+
+The room system provides several ways to manage state:
+
+```ts
+class GameRoom {
+  // Synchronized signals
+  @sync() score = signal(0);
+  @sync() gameState = signal<"waiting" | "playing" | "ended">("waiting");
+  
+  // User management
+  @users(Player) players = signal({});
+  
+  // Complex state
+  @sync() 
+  gameConfig = signal({
+    maxPlayers: 4,
+    timeLimit: 300,
+    mapSize: { width: 1000, height: 1000 }
+  });
+
+  // Methods to update state
+  @Action("updateConfig")
+  updateConfig(player: Player, config: Partial<GameConfig>) {
+    if (player.isHost) {
+      this.gameConfig.update(current => ({
+        ...current,
+        ...config
+      }));
+    }
+  }
+}
+```
+
+### Lifecycle Hooks
+
+Rooms provide several lifecycle hooks:
+
+```ts
+class GameRoom {
+  async onCreate() {
   }
 
-  constructor(readonly room, readonly params: { id: string }) {
-    super();
+  async onJoin(player: Player, conn: Connection, ctx: ConnectionContext) {
+
+  async onLeave(player: Player, conn: Connection) {
   }
 
-  // Room lifecycle hooks
-  onCreate() {
-    // Called when the room is created
+  async onClose() {
   }
+}
+```
 
-  onJoin(player: Player) {
-    console.log(player.id(), "joined");
-    // Handle player joining
-  }
+### Message Handling
 
-  onLeave() {
-    // Handle player leaving
-  }
+Handle client messages using typed actions:
 
-  // Custom actions
-  @action("move")
-  move(player: Player, data: any) {
+```ts
+// Define message types
+interface MoveMessage {
+  x: number;
+  y: number;
+  speed: number;
+}
+
+class GameRoom {
+  @Action("move")
+  move(player: Player, data: MoveMessage) {
+    // Validate input
+    if (data.speed > player.maxSpeed) return;
+    
+    // Update player position
     player.x.set(data.x);
     player.y.set(data.y);
   }
 }
-
-// Create your server with room definitions
-export default class MyServer extends Server {
-  rooms = [MyRoom];
-}
 ```
 
-## Decorators
+### Error Handling
 
-- `@Room(options)`: Defines a room with configuration options
-- `@sync()`: Marks a property for automatic synchronization
-- `@id()`: Marks a property as the unique identifier
-- `@users(PlayerClass)`: Creates a synchronized collection of users
-- `@action(name)`: Defines a method as a callable action from clients
+Implement error handling in your rooms:
 
-## Lifecycle Hooks
-
-- `onAuth()`: Called during authentication
-- `onCreate()`: Called when the room is created
-- `onJoin(player)`: Called when a player joins
-- `onLeave()`: Called when a player leaves
-
-## Best Practices
-
-1. Always define proper types for your actions' data parameters
-2. Implement proper authentication in the `onAuth` hook
-3. Clean up resources in the `onLeave` hook
-4. Use TypeScript for better type safety and development experience
+```ts
+class GameRoom {
+  @Action("move")
+  async move(player: Player, data: MoveMessage) {
+    try {
+      await this.validateMove(data);
+      // Process move
+    } catch (error) {
+      // Handle error
+      player.send("error", {
+        code: "INVALID_MOVE",
+        message: error.message
+      });
+    }
+  }
+}
+```
 
 ## License
 

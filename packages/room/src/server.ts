@@ -264,6 +264,17 @@ export class Server implements Party.Server {
     const subRoom = await this.getSubRoom({
       getMemoryAll: true,
     })
+
+    // Check room guards
+    const roomGuards = subRoom.constructor['_roomGuards'] || [];
+    for (const guard of roomGuards) {
+      const isAuthorized = await guard(conn, ctx);
+      if (!isAuthorized) {
+        conn.close();
+        return;
+      }
+    }
+
     // Generate a unique public ID for the user
     const publicId = generateShortUUID()
     let user = null;
@@ -320,6 +331,16 @@ export class Server implements Party.Server {
       return;
     }
     const subRoom = await this.getSubRoom()
+
+    // Check room guards
+    const roomGuards = subRoom.constructor['_roomGuards'] || [];
+    for (const guard of roomGuards) {
+      const isAuthorized = await guard(sender, result.data.value);
+      if (!isAuthorized) {
+        return;
+      }
+    }
+
     const actions = subRoom.constructor["_actionMetadata"];
     if (actions) {
       const signal = this.getUsersProperty(subRoom);
@@ -327,6 +348,16 @@ export class Server implements Party.Server {
       const user = signal?.()[publicId];
       const actionName = actions.get(result.data.action);
       if (actionName) {
+
+        // Check all guards if they exist
+        const guards = subRoom.$actionGuards?.get(actionName.key) || [];
+        for (const guard of guards) {
+          const isAuthorized = await guard(sender, result.data.value);
+          if (!isAuthorized) {
+            return;
+          }
+        }
+
         // Validate action body if a validation schema is defined
         if (actionName.bodyValidation) {
           const bodyResult = actionName.bodyValidation.safeParse(
