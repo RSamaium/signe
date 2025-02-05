@@ -393,6 +393,10 @@ export class Server implements Party.Server {
   async onClose(conn: Party.Connection) {
     const subRoom = await this.getSubRoom()
     const signal = this.getUsersProperty(subRoom);
+    // Handle case where conn.state is null
+    if (!conn.state) {
+      return;
+    }
     const { publicId } = conn.state as any;
     const user = signal?.()[publicId];
     // Call the room's onLeave method if it exists
