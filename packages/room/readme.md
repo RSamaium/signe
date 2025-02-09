@@ -58,6 +58,16 @@ export default class GameServer extends Server {
 }
 ```
 
+## Action 
+
+An action is a function that is called when a client sends a message to the server.
+
+Function have to be decorated with the `@Action` decorator and  have 3 parameters:
+
+- The first parameter is the player instance
+- The second parameter is the value of the action
+- The third parameter is the Party.Connection instance
+
 ## Advanced Features
 
 ### Room Configuration
@@ -104,6 +114,34 @@ class AdminRoom {
 }
 ```
 
+### Action Validation with Zod
+
+You can validate action input data using Zod schemas:
+
+```ts
+import { z } from "zod";
+
+class GameRoom {
+  @Action("move", z.object({
+    x: z.number().min(0).max(1000),
+    y: z.number().min(0).max(1000)
+  }))
+  move(player: Player, position: { x: number, y: number }) {
+    player.x.set(position.x);
+    player.y.set(position.y);
+  }
+
+  @Action("setName", z.object({
+    name: z.string().min(3).max(20)
+  }))
+  setName(player: Player, data: { name: string }) {
+    player.name.set(data.name);
+  }
+}
+```
+
+Actions with invalid data will be automatically rejected if they don't match the validation schema.
+
 ### State Management
 
 The room system provides several ways to manage state:
@@ -144,65 +182,22 @@ Rooms provide several lifecycle hooks:
 
 ```ts
 class GameRoom {
-  async onCreate() {
-  }
-
-  async onJoin(player: Player, conn: Connection, ctx: ConnectionContext) {
-
-  async onLeave(player: Player, conn: Connection) {
-  }
-
-  async onClose() {
-  }
+  async onCreate()
+  async onJoin(player: Player, conn: Connection, ctx: ConnectionContext) {}
+  async onLeave(player: Player, conn: Connection) {}
 }
 ```
 
-### Message Handling
+## Party.Connection
 
-Handle client messages using typed actions:
+Wraps a standard WebSocket, with a few additional PartyKit-specific properties.
 
 ```ts
-// Define message types
-interface MoveMessage {
-  x: number;
-  y: number;
-  speed: number;
-}
-
-class GameRoom {
-  @Action("move")
-  move(player: Player, data: MoveMessage) {
-    // Validate input
-    if (data.speed > player.maxSpeed) return;
-    
-    // Update player position
-    player.x.set(data.x);
-    player.y.set(data.y);
-  }
-}
+connection.send("Good-bye!");
+connection.close();
 ```
 
-### Error Handling
-
-Implement error handling in your rooms:
-
-```ts
-class GameRoom {
-  @Action("move")
-  async move(player: Player, data: MoveMessage) {
-    try {
-      await this.validateMove(data);
-      // Process move
-    } catch (error) {
-      // Handle error
-      player.send("error", {
-        code: "INVALID_MOVE",
-        message: error.message
-      });
-    }
-  }
-}
-```
+> https://docs.partykit.io/reference/partyserver-api/#partyconnection
 
 ## License
 

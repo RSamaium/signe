@@ -1,9 +1,9 @@
 import type * as Party from "./types/party"
-
+import type { z } from "zod"
 type GuardFn = (sender: Party.Connection, value: any) => boolean | Promise<boolean>;
 type RoomGuardFn = (conn: Party.Connection, ctx: Party.ConnectionContext) => boolean | Promise<boolean>;
 
-export function Action(name: string, bodyValidation?) {
+export function Action(name: string, bodyValidation?: z.ZodSchema) {
   return function (target: any, propertyKey: string) {
     if (!target.constructor._actionMetadata) {
       target.constructor._actionMetadata = new Map();

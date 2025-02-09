@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { signal } from "../../packages/reactive/src";
 import { Action, Room, Server, ServerIo, Guard } from "../../packages/room/src";
 import { id, users } from "../../packages/sync/src";
+import { z } from "zod";
 
 describe("Server", () => {
     let server: Server;
@@ -73,6 +74,19 @@ describe("Server", () => {
         userAction() {
           this.count.update((count) => count + 5);
         }
+
+        @Action("updatePosition", z.object({
+          x: z.number(),
+          y: z.number()
+        }))
+        updatePosition(user: any, value: { x: number, y: number }) {
+          this.count.update((count) => count + value.x + value.y);
+        }
+
+        @Action("updateName", z.object({
+          name: z.string().min(3)
+        }))
+        updateName() {}
 
         onJoin: any = onJoinSpy;
         onLeave: any = onLeaveSpy;
@@ -294,6 +308,77 @@ describe("Server", () => {
       });
     });
 
+    describe("Action Body Validation", () => {
+      beforeEach(async () => {
+        @Room({
+          path: "game",
+        })
+        class ValidationRoom {
+          count = signal(0);
+
+          @Action("updatePosition", z.object({
+            x: z.number(),
+            y: z.number()
+          }))
+          updatePosition(user: any, value: { x: number, y: number }) {
+            this.count.update((count) => count + value.x + value.y);
+          }
+
+          @Action("updateName", z.object({
+            name: z.string().min(3)
+          }))
+          updateName() {}
+        }
+
+        server = new (class extends Server {
+          rooms = [ValidationRoom];
+        })(new ServerIo("game") as any);
+
+        await server.onStart();
+        await server.onConnect(conn as any, {} as any);
+      });
+
+      it("should accept an action with valid data", async () => {
+        const message = JSON.stringify({
+          action: "updatePosition",
+          value: { x: 10, y: 20 }
+        });
+
+        await server.onMessage(message, conn as any);
+        expect((server.subRoom as any).count()).toBe(30);
+      });
+
+      it("should reject an action with invalid data (wrong type)", async () => {
+        const message = JSON.stringify({
+          action: "updatePosition",
+          value: { x: "10", y: 20 }
+        });
+
+        await server.onMessage(message, conn as any);
+        expect((server.subRoom as any).count()).toBe(0);
+      });
+
+      it("should reject an action with invalid data (missing field)", async () => {
+        const message = JSON.stringify({
+          action: "updatePosition",
+          value: { x: 10 }
+        });
+
+        await server.onMessage(message, conn as any);
+        expect((server.subRoom as any).count()).toBe(0);
+      });
+
+      it("should reject an action with invalid string validation", async () => {
+        const message = JSON.stringify({
+          action: "updateName",
+          value: { name: "ab" }
+        });
+
+        await server.onMessage(message, conn as any);
+        expect((server.subRoom as any).count()).toBe(0);
+      });
+    });
+
     describe("Room Guards", () => {
       let ProtectedGameRoom: any;
 
@@ -317,6 +402,19 @@ describe("Server", () => {
           increment() {
             this.count.update((count) => count + 1);
           }
+
+          @Action("updatePosition", z.object({
+            x: z.number(),
+            y: z.number()
+          }))
+          updatePosition(user: any, value: { x: number, y: number }) {
+            this.count.update((count) => count + value.x + value.y);
+          }
+
+          @Action("updateName", z.object({
+            name: z.string().min(3)
+          }))
+          updateName() {}
 
           onJoin: any = onJoinSpy;
           onLeave: any = onLeaveSpy;
