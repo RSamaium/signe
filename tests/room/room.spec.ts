@@ -106,7 +106,6 @@ describe("Server", () => {
 
     it("should handle connection correctly", async () => {
       await server.onStart();
-
       await server.onConnect(conn as any, {} as any);
 
       expect(setState).toHaveBeenCalledWith({
@@ -116,6 +115,29 @@ describe("Server", () => {
         expect.stringContaining('"type":"sync"')
       );
       expect(onJoinSpy).toHaveBeenCalled();
+    });
+
+    it("should pass correct parameters to onJoin hook", async () => {
+      await server.onStart();
+      const context = { request: { headers: new Headers() } };
+      await server.onConnect(conn as any, context as any);
+
+      expect(onJoinSpy).toHaveBeenCalledWith(
+        expect.any(Player),
+        conn,
+        context
+      );
+    });
+
+    it("should pass correct parameters to onLeave hook", async () => {
+      await server.onStart();
+      await server.onConnect(conn as any, {} as any);
+      const { publicId } = conn.state;
+      const user = (server.subRoom as any).users()[publicId];
+
+      await server.onClose(conn as any);
+
+      expect(onLeaveSpy).toHaveBeenCalledWith(user, conn);
     });
 
     it("should handle messages correctly", async () => {

@@ -232,6 +232,26 @@ import type {
     analytics: AnalyticsEngineDataset;
   };
   
+  /**
+   * Interface defining the lifecycle hooks available in a Room
+   */
+  export interface RoomHooks<TUser = any> {
+    /**
+     * Called when a user joins the room
+     * @param user The user object that joined
+     * @param conn The connection object
+     * @param ctx The connection context
+     */
+    onJoin?(user: TUser, conn: Connection, ctx: ConnectionContext): void | Promise<void>;
+  
+    /**
+     * Called when a user leaves the room
+     * @param user The user object that left
+     * @param conn The connection object
+     */
+    onLeave?(user: TUser, conn: Connection): void | Promise<void>;
+  }
+  
   /** @deprecated Use `Party.Room` instead */
   export type Party = Room;
   
