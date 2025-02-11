@@ -50,7 +50,7 @@ type CreateRoomOptions = {
 export class Server implements Party.Server {
   subRoom = null;
   rooms: any[] = [];
-  private timeoutHandles: Map<string, NodeJS.Timeout> = new Map();
+  private timeoutHandles: Map<string, any> = new Map();
 
   static async onBeforeConnect(request: Party.Request, lobby: Party.Lobby) {
     const token = new URL(request.url).searchParams.get("token") ?? "";
