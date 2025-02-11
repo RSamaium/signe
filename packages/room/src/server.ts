@@ -50,6 +50,13 @@ type CreateRoomOptions = {
 export class Server implements Party.Server {
   subRoom = null;
   rooms: any[] = [];
+  private timeoutHandles: Map<string, NodeJS.Timeout> = new Map();
+
+  static async onBeforeConnect(request: Party.Request, lobby: Party.Lobby) {
+    const token = new URL(request.url).searchParams.get("token") ?? "";
+    request.headers.set("X-User-ID", token);
+    return request;
+  }
 
   /**
    * @constructor
@@ -244,6 +251,24 @@ export class Server implements Party.Server {
     return null;
   }
 
+  private async getSession(privateId: string): Promise<{publicId: string, state?: any} | null> {
+    if (!privateId) return null;
+    try {
+      const session = await this.room.storage.get(`session:${privateId}`);
+      return session as {publicId: string, state?: any} | null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  private async saveSession(privateId: string, data: {publicId: string, state?: any}) {
+    await this.room.storage.put(`session:${privateId}`, data);
+  }
+
+  private async deleteSession(privateId: string) {
+    await this.room.storage.delete(`session:${privateId}`);
+  }
+
   /**
    * @method onConnect
    * @async
@@ -275,25 +300,49 @@ export class Server implements Party.Server {
       }
     }
 
-    // Generate a unique public ID for the user
-    const publicId = generateShortUUID()
+    // Check for existing session
+    const providedPrivateId = ctx.request?.headers.get("X-User-ID");
+    const existingSession = providedPrivateId ? await this.getSession(providedPrivateId) : null;
+
+    // Generate IDs
+    const publicId = existingSession?.publicId || generateShortUUID();
+    const privateId = existingSession ? providedPrivateId : generateShortUUID();
+
     let user = null;
     const signal = this.getUsersProperty(subRoom);
+    
     if (signal) {
       const { classType } = signal.options;
-      // Create a new user instance based on the defined class type
       user = isClass(classType) ? new classType() : classType(conn, ctx);
+      
+      // Restore state if exists
+      if (existingSession?.state) {
+        Object.assign(user, existingSession.state);
+      }
+      
       signal()[publicId] = user;
+      
+      // Only store new session if it doesn't exist
+      if (!existingSession) {
+        await this.saveSession(privateId, {
+          publicId
+        });
+      }
     }
+
     // Call the room's onJoin method if it exists
     await awaitReturn(subRoom["onJoin"]?.(user, conn, ctx));
-    conn.setState({ publicId });
-    // Send initial sync data to the new connection
+    
+    // Store both IDs in connection state
+    conn.setState({ publicId, privateId });
+
+    // Send initial sync data with both IDs to the new connection
     conn.send(
       JSON.stringify({
         type: "sync",
         value: {
           pId: publicId,
+          privateId,
           ...subRoom.$memoryAll,
         },
       })
@@ -393,17 +442,77 @@ export class Server implements Party.Server {
   async onClose(conn: Party.Connection) {
     const subRoom = await this.getSubRoom()
     const signal = this.getUsersProperty(subRoom);
-    // Handle case where conn.state is null
     if (!conn.state) {
       return;
     }
-    const { publicId } = conn.state as any;
+    const { publicId, privateId } = conn.state as any;
     const user = signal?.()[publicId];
-    // Call the room's onLeave method if it exists
-    await awaitReturn(subRoom["onLeave"]?.(user, conn));
-    if (signal) {
-      // Remove the user from the room
-      delete signal()[publicId];
+    
+    if (!user) return;
+
+    // Save current state
+    if (privateId) {
+      await this.saveSession(privateId, {
+        publicId,
+        state: { ...user }
+      });
+    }
+
+    // Clear any existing timeout for this user
+    const existingTimeout = this.timeoutHandles.get(privateId);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+      this.timeoutHandles.delete(privateId);
+    }
+
+    const cleanup = async () => {
+      // Call onLeave hook
+      await awaitReturn(subRoom["onLeave"]?.(user, conn));
+      
+      // Remove user from signal
+      if (signal) {
+        delete signal()[publicId];
+      }
+      
+      // Delete session
+      if (privateId) {
+        await this.deleteSession(privateId);
+      }
+
+      // Broadcast user disconnection
+      this.room.broadcast(
+        JSON.stringify({
+          type: "user_disconnected",
+          value: { publicId }
+        })
+      );
+
+      // Clear timeout handle
+      this.timeoutHandles.delete(privateId);
+    };
+
+    const disconnectTimeout = subRoom.constructor.disconnectTimeout ?? 0;
+    
+    if (disconnectTimeout > 0) {
+      // Set temporary offline status
+      if (user.status) {
+        user.status.set('offline');
+      }
+
+      // Broadcast temporary disconnection
+      this.room.broadcast(
+        JSON.stringify({
+          type: "user_offline",
+          value: { publicId }
+        })
+      );
+
+      // Set cleanup timeout
+      const timeout = setTimeout(cleanup, disconnectTimeout);
+      this.timeoutHandles.set(privateId, timeout);
+    } else {
+      // Immediate cleanup if no timeout
+      await cleanup();
     }
   }
 }

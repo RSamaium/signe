@@ -22,6 +22,7 @@ export interface RoomOptions {
   throttleSync?: number;
   hibernate?: boolean;
   guards?: RoomGuardFn[];
+  disconnectTimeout?: number;
 }
 
 export function Room(options: RoomOptions) {
@@ -30,6 +31,7 @@ export function Room(options: RoomOptions) {
     target.maxUsers = options.maxUsers;
     target.throttleStorage = options.throttleStorage;
     target.throttleSync = options.throttleSync;
+    target.disconnectTimeout = options.disconnectTimeout ?? 0;
     if (options.guards) {
       target['_roomGuards'] = options.guards;
     }

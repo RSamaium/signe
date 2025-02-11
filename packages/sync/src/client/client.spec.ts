@@ -2,8 +2,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { connection } from ".";
 import { load } from "@signe/sync";
 import PartySocket from "partysocket";
+import { TokenStorage } from "./storage";
 
 vi.mock("partysocket");
+vi.mock("./storage", () => ({
+  TokenStorage: {
+    saveToken: vi.fn(),
+    getToken: vi.fn().mockImplementation(() => Promise.resolve("default-token"))
+  }
+}));
 
 vi.mock("@signe/sync", () => ({
   load: vi.fn(),
@@ -11,12 +18,16 @@ vi.mock("@signe/sync", () => ({
 
 const MockPartySocket = vi.fn();
 vi.mocked(PartySocket).mockImplementation((options) => {
+  if (options.query && typeof options.query === 'function') {
+    void options.query();
+  }
   return MockPartySocket(options);
 });
 
 describe("connection", () => {
   let mockSocket;
   let eventListeners; 
+  const defaultOptions = { host: "test-host" };
   
   beforeEach(() => {
     eventListeners = new Map();
@@ -39,10 +50,53 @@ describe("connection", () => {
     };
     
     MockPartySocket.mockReturnValue(mockSocket);
+    vi.clearAllMocks();
+  });
+
+  it("should use default TokenStorage if no tokenManager provided", async () => {
+    const conn = connection(defaultOptions, {});
+    
+    // Wait for async operations to complete
+    await new Promise(process.nextTick);
+    
+    expect(conn).toBeDefined();
+    expect(TokenStorage.getToken).toHaveBeenCalled();
+  });
+
+  it("should use custom tokenManager if provided", async () => {
+    const customTokenManager = {
+      saveToken: vi.fn(),
+      getToken: vi.fn().mockResolvedValue("custom-token")
+    };
+
+    const options = { ...defaultOptions, tokenManager: customTokenManager };
+    const conn = connection(options, {});
+
+    await new Promise(process.nextTick);
+
+    expect(customTokenManager.getToken).toHaveBeenCalled();
+    expect(TokenStorage.getToken).not.toHaveBeenCalled();
+  });
+
+  it("should save token when receiving sync message with privateId", () => {
+    const conn = connection(defaultOptions, {});
+    
+    const messageData = {
+      type: "sync",
+      value: { privateId: "test-token" }
+    };
+    
+    const messageEvent = new MessageEvent("message", {
+      data: JSON.stringify(messageData)
+    });
+    
+    eventListeners.get("message")[0](messageEvent);
+    
+    expect(TokenStorage.saveToken).toHaveBeenCalledWith("test-token");
   });
 
   it("should create a connection with PartySocket", () => {
-    const options = { url: "test-url" };
+    const options = { ...defaultOptions, url: "test-url" };
     const roomInstance = {};
     
     const conn = connection(options, roomInstance);
@@ -53,7 +107,7 @@ describe("connection", () => {
 
   it("should handle sync messages and load data", () => {
     const roomInstance = {};
-    const conn = connection({}, roomInstance);
+    const conn = connection(defaultOptions, roomInstance);
     
     const messageData = {
       type: "sync",
@@ -70,7 +124,7 @@ describe("connection", () => {
   });
 
   it("should emit messages correctly", () => {
-    const conn = connection({}, {});
+    const conn = connection(defaultOptions, {});
     
     conn.emit("test-action", { data: "test" });
     
@@ -83,7 +137,7 @@ describe("connection", () => {
   });
 
   it("should register and handle custom event listeners", () => {
-    const conn = connection({}, {});
+    const conn = connection(defaultOptions, {});
     const callback = vi.fn();
     
     conn.on("custom-event", callback);
@@ -103,7 +157,7 @@ describe("connection", () => {
   });
 
   it("should remove event listeners correctly", () => {
-    const conn = connection({}, {});
+    const conn = connection(defaultOptions, {});
     const callback = vi.fn();
     
     conn.on("custom-event", callback);
@@ -113,7 +167,7 @@ describe("connection", () => {
   });
 
   it("should close the connection", () => {
-    const conn = connection({}, {});
+    const conn = connection(defaultOptions, {});
     
     conn.close();
     

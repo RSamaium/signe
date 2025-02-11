@@ -1,4 +1,5 @@
 import { generateShortUUID } from "../../sync/src/utils";
+import { Storage } from "./storage";
 
 class MockPartySocket {
     private events: Map<string, Function> = new Map();
@@ -17,25 +18,9 @@ class MockPartySocket {
     }
 }
 
-class MockStorage {
-    private storage: Map<string, any> = new Map();
-    
-    async get(key: string) {
-        return this.storage.get(key);
-    }
-    
-    async put(key: string, value: any) {
-        this.storage.set(key, value);
-    }
-    
-    async list() {
-        return this.storage
-    }
-}
-
 class MockPartyRoom {
   private clients: Map<string, MockPartySocket> = new Map();
-  storage = new MockStorage();
+  storage = new Storage();
 
   constructor(public id?: string) {
     this.id = id || generateShortUUID()
