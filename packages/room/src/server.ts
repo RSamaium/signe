@@ -313,14 +313,12 @@ export class Server implements Party.Server {
     
     if (signal) {
       const { classType } = signal.options;
-      user = isClass(classType) ? new classType() : classType(conn, ctx);
-      
+     
       // Restore state if exists
-      if (existingSession?.state) {
-        Object.assign(user, existingSession.state);
+      if (!existingSession?.publicId) {
+        user = isClass(classType) ? new classType() : classType(conn, ctx);
+        signal()[publicId] = user;
       }
-      
-      signal()[publicId] = user;
       
       // Only store new session if it doesn't exist
       if (!existingSession) {
@@ -453,8 +451,7 @@ export class Server implements Party.Server {
     // Save current state
     if (privateId) {
       await this.saveSession(privateId, {
-        publicId,
-        state: { ...user }
+        publicId
       });
     }
 
@@ -514,5 +511,10 @@ export class Server implements Party.Server {
       // Immediate cleanup if no timeout
       await cleanup();
     }
+  }
+
+  async onAlarm() {
+    const subRoom = await this.getSubRoom()
+    await awaitReturn(subRoom["onAlarm"]?.(subRoom));
   }
 }

@@ -88,6 +88,11 @@ describe("Server", () => {
         }))
         updateName() {}
 
+        @Action('resetPlayers')
+        resetPlayers() {
+          this.users.set({});
+        }
+
         onJoin: any = onJoinSpy;
         onLeave: any = onLeaveSpy;
       }
@@ -228,6 +233,33 @@ describe("Server", () => {
       await server.onClose(conn2 as any);
 
       expect(Object.keys((server.subRoom as any).users()).length).toBe(0);
+    });
+
+    it("should reset players and notify clients", async () => {
+      await server.onStart();
+
+      const conn1 = createConnection();
+      const conn2 = createConnection();
+
+      await server.onConnect(conn1 as any, {} as any);
+      await server.onConnect(conn2 as any, {} as any);
+
+      expect(Object.keys((server.subRoom as any).users()).length).toBe(2);
+
+      const resetMessage = JSON.stringify({
+        action: "resetPlayers",
+        value: null,
+      });
+
+      await server.onMessage(resetMessage, conn1 as any);
+
+      expect(Object.keys((server.subRoom as any).users()).length).toBe(0);
+      expect(conn1.send).toHaveBeenCalledWith(
+        expect.stringContaining('"users":{}')
+      );
+      expect(conn2.send).toHaveBeenCalledWith(
+        expect.stringContaining('"users":{}')
+      );
     });
 
     describe("Session Management", () => {
