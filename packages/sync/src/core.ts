@@ -5,6 +5,7 @@ import {
   type WritableSignal,
 } from "@signe/reactive";
 import { isInstanceOfClass, isObject } from "./utils";
+import { type Observable } from "rxjs";
 
 interface SyncOptions {
   onSync?: (value: Map<string, any>) => void;
@@ -15,6 +16,31 @@ interface TypeOptions {
   syncToClient?: boolean;
   persist?: boolean;
   classType?: any;
+}
+
+interface ExtendedWritableSignal<T> extends Omit<WritableSignal<T>, 'observable'> {
+  options?: TypeOptions;
+  _subject?: ObjectSubject<T> | ArraySubject<T>;
+  observable: Observable<SubjectValue<T>>;
+}
+
+interface SubjectValue<T = any> {
+  type: 'add' | 'update' | 'remove' | 'reset';
+  value: T;
+  key?: string;
+  index?: number;
+  items?: T[];
+}
+
+interface SyncInstance {
+  $path?: string;
+  $snapshot?: Map<string, ExtendedWritableSignal<any>>;
+  $valuesChanges: {
+    set: (path: string, value: any) => void;
+    setPersist: (path: string) => void;
+    has: (path: string) => boolean;
+    get: (path: string) => any;
+  };
 }
 
 /**
@@ -148,73 +174,83 @@ export const createSyncClass = (
   }
 };
 
-export const type = (
-  _signal: any,
+export const type = <T>(
+  _signal: ExtendedWritableSignal<T>,
   path: string,
   options: TypeOptions = {},
-  currentInstance: any
-): WritableSignal<any> => {
-  const syncToClient = options.syncToClient ?? true;
-  const persist = options.persist ?? true;
+  currentInstance: SyncInstance
+): ExtendedWritableSignal<T> => {
+  const { syncToClient = true, persist = true } = options;
   let init = true;
   _signal.options = options;
-  _signal.observable.subscribe((value) => {
-    const check = currentInstance.$valuesChanges;
 
-    function savePath(propPath, value) {
-      if (syncToClient) check.set(propPath, value);
-      if (persist) {
-        check.setPersist(currentInstance.$path);
+  const handleObjectSubject = (value: SubjectValue, propPath: string) => {
+    const newPath = `${propPath}${value.key ? `.${value.key}` : ''}`;
+
+    if (['add', 'reset', 'update'].includes(value.type)) {
+      if (isInstanceOfClass(value.value)) {
+        createSyncClass(value.value, value.key, currentInstance, newPath);
+      } else if (value.type === 'update' && (isObject(value.value) || Array.isArray(value.value))) {
+        createSyncClass(value.value, value.key, currentInstance, newPath);
+      } else {
+        savePath(newPath, value.value);
       }
+    } else if (value.type === 'remove') {
+      savePath(newPath, '$delete');
+    }
+  };
+
+  const handleArraySubject = (value: SubjectValue, propPath: string) => {
+    if (value.type === 'reset' && Array.isArray(value.items)) {
+      value.items.forEach((item, index) => {
+        const newPath = `${propPath}.${index}`;
+        if (isInstanceOfClass(item)) {
+          createSyncClass(item, value.key, currentInstance, newPath);
+        } else {
+          savePath(newPath, item);
+        }
+      });
+      return;
     }
 
+    const newPath = `${propPath}.${value.index}`;
+    const firstItem = value.items?.[0];
+
+    if (['add', 'update'].includes(value.type) && firstItem !== undefined) {
+      if (isInstanceOfClass(firstItem)) {
+        createSyncClass(firstItem, value.key, currentInstance, newPath);
+      } else if (value.type === 'update' && (isObject(firstItem) || Array.isArray(firstItem))) {
+        createSyncClass(firstItem, value.key, currentInstance, newPath);
+      } else {
+        savePath(newPath, firstItem);
+      }
+    } else if (value.type === 'remove') {
+      savePath(newPath, '$delete');
+    }
+  };
+
+  const savePath = (propPath: string, value: any) => {
+    if (syncToClient) {
+      currentInstance.$valuesChanges.set(propPath, value);
+    }
+    if (persist && currentInstance.$path !== undefined) {
+      currentInstance.$valuesChanges.setPersist(currentInstance.$path);
+    }
+  };
+
+  _signal.observable.subscribe((value: SubjectValue<T>) => {
     if (init) {
       init = false;
       return;
     }
-    if (currentInstance.$path !== undefined) {
-      const propPath =
-        (currentInstance.$path ? currentInstance.$path + "." : "") + path;
-      if (_signal._subject instanceof ObjectSubject) {
-        const newPath =
-          (currentInstance.$path ? currentInstance.$path + "." : "") +
-          path +
-          "." +
-          value.key;
 
-        if (value.type == "add") {
-          if (isInstanceOfClass(value.value)) {
-            createSyncClass(value.value, value.key, currentInstance, newPath);
-          } else {
-            savePath(newPath, value.value);
-          }
-        } else if (value.type == "update") {
-          if (isObject(value.value) || Array.isArray(value.value)) {
-            createSyncClass(value.value, value.key, currentInstance, newPath);
-          } else {
-            savePath(newPath, value.value);
-          }
-        } else if (value.type == "remove") {
-          savePath(newPath, "$delete");
-        }
+    if (currentInstance.$path !== undefined) {
+      const propPath = `${currentInstance.$path ? currentInstance.$path + '.' : ''}${path}`;
+
+      if (_signal._subject instanceof ObjectSubject) {
+        handleObjectSubject(value, propPath);
       } else if (_signal._subject instanceof ArraySubject) {
-        const newPath = propPath + "." + value.index;
-        const firstItem = value.items[0];
-        if (value.type == "add") {
-          if (isInstanceOfClass(firstItem)) {
-            createSyncClass(firstItem, value.key, currentInstance, newPath);
-          } else {
-            savePath(newPath, firstItem);
-          }
-        } else if (value.type == "update") {
-          if (isObject(firstItem) || Array.isArray(firstItem)) {
-            createSyncClass(firstItem, value.key, currentInstance, newPath);
-          } else {
-            savePath(newPath, firstItem);
-          }
-        } else if (value.type == "remove") {
-          savePath(newPath, "$delete");
-        }
+        handleArraySubject(value, propPath);
       } else {
         savePath(propPath, value);
       }

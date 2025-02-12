@@ -5,6 +5,7 @@ import {
   persist,
   sync,
   syncClass,
+  id,
 } from "../../packages/sync/src";
 
 describe("onSync", () => {
@@ -18,7 +19,7 @@ describe("onSync", () => {
 
     syncClass(instance, { onSync });
 
-    expect(onSync).toHaveBeenCalledWith(new Map([["count", 0]]));
+    expect(onSync).toHaveBeenCalledWith(new Map<string, any>([["count", 0]]));
   });
 
   it("should not sync nested class if not attached to parent", () => {
@@ -38,7 +39,7 @@ describe("onSync", () => {
     const nested = new NestedClass();
     nested.value.set(20);
 
-    expect(onSync).toHaveBeenCalledWith(new Map([["nested", {}]]));
+    expect(onSync).toHaveBeenCalledWith(new Map<string, any>([["nested", {}]]));
   });
 
   it("should sync class and update on change", () => {
@@ -54,7 +55,7 @@ describe("onSync", () => {
     instance.count.set(1);
 
     expect(onSync).toHaveBeenCalledTimes(2);
-    expect(onSync).toHaveBeenCalledWith(new Map([["count", 1]]));
+    expect(onSync).toHaveBeenCalledWith(new Map<string, any>([["count", 1]]));
   });
 
   it("should sync multiple properties", () => {
@@ -73,7 +74,7 @@ describe("onSync", () => {
 
     expect(onSync).toHaveBeenCalledTimes(4);
     expect(onSync).toHaveBeenCalledWith(
-      new Map([
+      new Map<string, any>([
         ["count", 1],
         ["name", "updated"],
       ])
@@ -106,12 +107,14 @@ describe("onSync", () => {
 
       expect(onSync).toHaveBeenCalledTimes(2);
       expect(onSync).toHaveBeenCalledWith(
-        new Map([
+        new Map<string, any>([
           ["nested", {}],
           ["nested.id.value", 10],
         ])
       );
     });
+
+
   });
 
   describe("sync object", () => {
@@ -135,7 +138,7 @@ describe("onSync", () => {
 
       expect(onSync).toHaveBeenCalledTimes(2);
       expect(onSync).toHaveBeenCalledWith(
-        new Map([
+        new Map<string, any>([
           ["data", { a: 1, b: 2 }],
           ["data.a", 3],
         ])
@@ -148,7 +151,7 @@ describe("onSync", () => {
       });
 
       expect(onSync).toHaveBeenCalledWith(
-        new Map([
+        new Map<string, any>([
           ["data", { a: 1, b: 2 }],
           ["data.a", "$delete"],
         ])
@@ -176,7 +179,7 @@ describe("onSync", () => {
 
       expect(onSync).toHaveBeenCalledTimes(2);
       expect(onSync).toHaveBeenCalledWith(
-        new Map([
+        new Map<string, any>([
           ["data", { nested: {} }],
           ["data.nested.value", 10],
         ])
@@ -206,7 +209,7 @@ describe("onSync", () => {
 
       expect(onSync).toHaveBeenCalledTimes(2);
       expect(onSync).toHaveBeenCalledWith(
-        new Map([
+        new Map<string, any>([
           ["items", { "0": 1, "1": 2 }],
           ["items.2", 3],
         ])
@@ -220,7 +223,7 @@ describe("onSync", () => {
 
       expect(onSync).toHaveBeenCalledTimes(2);
       expect(onSync).toHaveBeenCalledWith(
-        new Map([
+        new Map<string, any>([
           ["items", { "0": 1, "1": 2 }],
           ["items.0", 10],
         ])
@@ -233,7 +236,7 @@ describe("onSync", () => {
       });
 
       expect(onSync).toHaveBeenCalledWith(
-        new Map([
+        new Map<string, any>([
           ["items", { "0": 1, "1": 2 }],
           ["items.0", "$delete"],
         ])
@@ -261,14 +264,72 @@ describe("onSync", () => {
 
       expect(onSync).toHaveBeenCalledTimes(2);
       expect(onSync).toHaveBeenCalledWith(
-        new Map([
+        new Map<string, any>([
           ["data", {}],
           ["data.0.value", 10],
         ])
       );
     });
   });
+
+  it("should sync Question class with id and text", () => {
+    class Question {
+      @sync() text = signal("");
+    }
+
+    class Room {
+      @sync(Question) currentQuestion = signal({} as Question);
+    }
+
+    const room = new Room();
+    const onSync = vi.fn();
+
+    syncClass(room, { onSync });
+
+    const question = new Question();
+    question.text.set("What is your name?");
+
+    room.currentQuestion.set(question);
+
+    expect(onSync).toHaveBeenCalledWith(
+      new Map<string, any>([
+        ["currentQuestion", {}],
+        ["currentQuestion.text", "What is your name?"],
+      ])
+    );
+  });
+
+  it("should sync array of Question class", () => {
+    class Question {
+      @sync() text = signal("");
+    }
+
+    class Room {
+      @sync(Question) questions = signal([] as Question[]);
+    }
+
+    const room = new Room();
+    const onSync = vi.fn();
+
+    syncClass(room, { onSync });
+
+    const question = new Question();
+    question.text.set("What is your name?");
+
+    room.questions.set([question, question]);
+
+    expect(onSync).toHaveBeenCalledTimes(3);
+    expect(onSync).toHaveBeenCalledWith(
+      new Map<string, any>([
+        ["questions", {}],
+        ["questions.0.text", "What is your name?"],
+        ["questions.1.text", "What is your name?"],
+      ])
+    );
+  });
+
 });
+
 
 describe("onPersist", () => {
   it("should sync class", () => {

@@ -20,7 +20,8 @@
   },
   "dependencies": {
     "@signe/reactive": "workspace:*",
-    "partysocket": "^1.0.1"
+    "partysocket": "^1.0.1",
+    "rxjs": "^7.8.1"
   },
   "publishConfig": {
     "access": "public"
