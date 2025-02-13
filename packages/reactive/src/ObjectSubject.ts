@@ -49,3 +49,8 @@ export class ObjectSubject<T extends Record<string, any>> extends BehaviorSubjec
     this.next({ type: 'reset', value: newObj });
   }
 }
+
+
+export const isObjectSubject = (value: any): boolean => {
+  return '_obj' in value;
+}

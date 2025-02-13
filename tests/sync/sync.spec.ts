@@ -332,6 +332,7 @@ describe("onSync", () => {
 
 
 describe("onPersist", () => {
+  
   it("should sync class", () => {
     class TestClass {
       @sync() count = signal(0);
@@ -344,7 +345,7 @@ describe("onPersist", () => {
 
     instance.count.set(1);
 
-    expect(onPersist).toHaveBeenCalledWith(new Set(["."]));
+    expect(onPersist).toHaveBeenCalledWith(new Map<string, any>([[".", 1]]));
   });
 
   it("should multi persist", () => {
@@ -361,7 +362,9 @@ describe("onPersist", () => {
     instance.count.set(1);
     instance.name.set("updated");
 
-    expect(onPersist).toHaveBeenCalledWith(new Set(["."]));
+    expect(onPersist).toHaveBeenCalledWith(new Map<string, any>([[
+      ".", 'updated'
+    ]]));
   });
 
   it("should multi persist with object", () => {
@@ -378,7 +381,9 @@ describe("onPersist", () => {
       obj.a = 3;
     });
 
-    expect(onPersist).toHaveBeenCalledWith(new Set(["."]));
+    expect(onPersist).toHaveBeenCalledWith(new Map<string, any>([[
+      ".", 3
+    ]]));
   });
 
   it("should create new path for collection (shard)", () => {
@@ -398,7 +403,7 @@ describe("onPersist", () => {
     const nested = new NestedClass();
     instance.nested.mutate((obj) => (obj["id"] = nested));
 
-    expect(onPersist).toHaveBeenCalledWith(new Set(["nested.id"]));
+    expect(onPersist).toHaveBeenCalledWith(new Map<string, any>([["nested.id", 10]]));
   });
 
   it("should create new path for array collection (shard)", () => {
@@ -418,7 +423,7 @@ describe("onPersist", () => {
     const nested = new NestedClass();
     instance.nested.mutate((array) => array.push(nested));
 
-    expect(onPersist).toHaveBeenCalledWith(new Set(["nested.0"]));
+    expect(onPersist).toHaveBeenCalledWith(new Map<string, any>([["nested.0", 10]]));
   });
 
   it("not call", () => {

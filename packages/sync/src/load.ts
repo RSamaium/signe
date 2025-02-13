@@ -1,5 +1,5 @@
 import { isSignal } from "@signe/reactive";
-import { setMetadata } from "./core";
+import { DELETE_TOKEN, setMetadata } from "./core";
 import { isClass } from "./utils";
 
 /**
@@ -90,7 +90,7 @@ function loadValue(rootInstance: any, parts: string[], value: any) {
     const part = parts[i];
 
     if (i === parts.length - 1) {
-      if (value == '$delete') {
+      if (value == DELETE_TOKEN) {
         if (isSignal(current)) {
           current = current();
         }

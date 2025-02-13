@@ -1,6 +1,8 @@
 import {
   ArraySubject,
   ObjectSubject,
+  isArraySubject,
+  isObjectSubject,
   isSignal,
   type WritableSignal,
 } from "@signe/reactive";
@@ -9,7 +11,7 @@ import { type Observable } from "rxjs";
 
 interface SyncOptions {
   onSync?: (value: Map<string, any>) => void;
-  onPersist?: (value: Set<string>) => void;
+  onPersist?: (value: Map<string, any>) => void;
 }
 
 interface TypeOptions {
@@ -37,11 +39,13 @@ interface SyncInstance {
   $snapshot?: Map<string, ExtendedWritableSignal<any>>;
   $valuesChanges: {
     set: (path: string, value: any) => void;
-    setPersist: (path: string) => void;
+    setPersist: (path: string, value: any) => void;
     has: (path: string) => boolean;
     get: (path: string) => any;
   };
 }
+
+export const DELETE_TOKEN = '$delete';
 
 /**
  * Synchronizes an instance by adding `$valuesChanges` methods for state management.
@@ -68,15 +72,15 @@ interface SyncInstance {
  */
 export const syncClass = (instance: any, options: SyncOptions = {}) => {
   const cacheSync = new Map();
-  const cachePersist = new Set<string>();
+  const cachePersist = new Map<string, any>();
   instance.$valuesChanges = {
     set: (path: string, value: any) => {
       cacheSync.set(path, value);
       options.onSync?.(cacheSync);
     },
-    setPersist: (path: string) => {
+    setPersist: (path: string, value: any) => {
       if (path == "") path = ".";
-      cachePersist.add(path);
+      cachePersist.set(path, value);
       options.onPersist?.(cachePersist);
     },
     has: (path: string) => {
@@ -113,13 +117,13 @@ export const syncClass = (instance: any, options: SyncOptions = {}) => {
  */
 export function createStatesSnapshot(instance: Record<string, any>): Record<string, any> {
   let persistObject: any = {};
-  if (instance.$snapshot) {
+  if (instance?.$snapshot) {
     for (const key of instance.$snapshot.keys()) {
       const signal = instance.$snapshot.get(key);
       const persist = signal.options.persist ?? true;
       let value = signal();
       if (isObject(value) || Array.isArray(value)) {
-        break;
+        continue;
       }
       if (persist) {
         persistObject[key] = value;
@@ -168,7 +172,7 @@ export const createSyncClass = (
         currentClass.$valuesChanges.set(newPath, value);
       }
       if (persist) {
-        if (parentClass) currentClass.$valuesChanges.setPersist(path);
+        if (parentClass) currentClass.$valuesChanges.setPersist(path, value);
       }
     }
   }
@@ -186,7 +190,6 @@ export const type = <T>(
 
   const handleObjectSubject = (value: SubjectValue, propPath: string) => {
     const newPath = `${propPath}${value.key ? `.${value.key}` : ''}`;
-
     if (['add', 'reset', 'update'].includes(value.type)) {
       if (isInstanceOfClass(value.value)) {
         createSyncClass(value.value, value.key, currentInstance, newPath);
@@ -196,7 +199,7 @@ export const type = <T>(
         savePath(newPath, value.value);
       }
     } else if (value.type === 'remove') {
-      savePath(newPath, '$delete');
+      savePath(newPath, DELETE_TOKEN);
     }
   };
 
@@ -225,7 +228,7 @@ export const type = <T>(
         savePath(newPath, firstItem);
       }
     } else if (value.type === 'remove') {
-      savePath(newPath, '$delete');
+      savePath(newPath, DELETE_TOKEN);
     }
   };
 
@@ -234,7 +237,10 @@ export const type = <T>(
       currentInstance.$valuesChanges.set(propPath, value);
     }
     if (persist && currentInstance.$path !== undefined) {
-      currentInstance.$valuesChanges.setPersist(currentInstance.$path);
+      currentInstance.$valuesChanges.setPersist(
+        value == DELETE_TOKEN ? propPath : currentInstance.$path, 
+        value
+      );
     }
   };
 
@@ -246,10 +252,9 @@ export const type = <T>(
 
     if (currentInstance.$path !== undefined) {
       const propPath = `${currentInstance.$path ? currentInstance.$path + '.' : ''}${path}`;
-
-      if (_signal._subject instanceof ObjectSubject) {
+      if (isObjectSubject(_signal._subject)) {
         handleObjectSubject(value, propPath);
-      } else if (_signal._subject instanceof ArraySubject) {
+      } else if (isArraySubject(_signal._subject)) {
         handleArraySubject(value, propPath);
       } else {
         savePath(propPath, value);

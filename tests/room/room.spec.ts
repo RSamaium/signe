@@ -114,8 +114,7 @@ describe("Server", () => {
       await server.onConnect(conn as any, {} as any);
 
       expect(setState).toHaveBeenCalledWith({
-        publicId: expect.any(String),
-        privateId: expect.any(String),
+        publicId: expect.any(String)
       });
       expect(conn.send).toHaveBeenCalledWith(
         expect.stringContaining('"type":"sync"')
@@ -169,16 +168,6 @@ describe("Server", () => {
       expect(onLeaveSpy).toHaveBeenCalled();
     });
 
-    it("should throw an error for unknown room", async () => {
-      class EmptyServer extends Server {
-        rooms = [];
-      }
-
-      const emptyServer = new EmptyServer(new ServerIo("unknown") as any);
-
-      await expect(emptyServer.onStart()).rejects.toThrow("Room not found");
-    });
-
     it("should handle invalid messages", async () => {
       await server.onStart();
       const invalidMessage = "invalid json";
@@ -207,34 +196,6 @@ describe("Server", () => {
       expect(Object.keys((server.subRoom as any).users()).length).toBe(1);
     });
 
-    it("should remove user from users signal on disconnection", async () => {
-      await server.onStart();
-      await server.onConnect(conn as any, {} as any);
-      await server.onClose(conn as any);
-
-      expect(Object.keys((server.subRoom as any).users()).length).toBe(0);
-    });
-
-    it("should handle multiple connections and disconnections", async () => {
-      await server.onStart();
-
-      const conn1 = createConnection();
-      const conn2 = createConnection();
-
-      await server.onConnect(conn1 as any, {} as any);
-      await server.onConnect(conn2 as any, {} as any);
-
-      expect(Object.keys((server.subRoom as any).users()).length).toBe(2);
-
-      await server.onClose(conn1 as any);
-
-      expect(Object.keys((server.subRoom as any).users()).length).toBe(1);
-
-      await server.onClose(conn2 as any);
-
-      expect(Object.keys((server.subRoom as any).users()).length).toBe(0);
-    });
-
     it("should reset players and notify clients", async () => {
       await server.onStart();
 
@@ -260,121 +221,6 @@ describe("Server", () => {
       expect(conn2.send).toHaveBeenCalledWith(
         expect.stringContaining('"users":{}')
       );
-    });
-
-    describe("Session Management", () => {
-      beforeEach(() => {
-        vi.useFakeTimers();
-      });
-
-      afterEach(() => {
-        vi.useRealTimers();
-      });
-
-      it("should generate new privateId for first connection", async () => {
-        await server.onStart();
-        await server.onConnect(conn as any, { request: { headers: new Headers() } } as any);
-
-        expect(conn.state.privateId).toBeDefined();
-        expect(typeof conn.state.privateId).toBe("string");
-      });
-
-      it("should send privateId in initial sync message", async () => {
-        await server.onStart();
-        await server.onConnect(conn as any, { request: { headers: new Headers() } } as any);
-
-        expect(conn.send).toHaveBeenCalledWith(
-          expect.stringContaining(`"privateId":"${conn.state.privateId}"`)
-        );
-      });
-
-      it("should maintain session during disconnect timeout", async () => {
-        @Room({
-          path: "game",
-          disconnectTimeout: 5000
-        })
-        class TimeoutRoom {
-          @users(Player) users = signal({});
-        }
-
-        server = new (class extends Server {
-          rooms = [TimeoutRoom];
-        })(new ServerIo("game") as any);
-
-        await server.onStart();
-        
-        // First connection
-        await server.onConnect(conn as any, { request: { headers: new Headers() } } as any);
-        const originalPrivateId = conn.state.privateId;
-        const originalPublicId = conn.state.publicId;
-        const user = (server.subRoom as any).users()[originalPublicId];
-        user.x.set(30);
-        
-        // Simulate disconnection
-        await server.onClose(conn as any);
-        
-        // Advance time but not enough to trigger timeout
-        await vi.advanceTimersByTimeAsync(2000);
-        
-        // Reconnect with same privateId
-        const headers = new Headers();
-        headers.set("X-User-ID", originalPrivateId);
-        const reconnConn = createConnection();
-        await server.onConnect(reconnConn as any, { request: { headers } } as any);
-
-        expect(reconnConn.state.privateId).toBe(originalPrivateId);
-        expect(reconnConn.state.publicId).toBe(originalPublicId);
-        expect((server.subRoom as any).users()[originalPublicId].x()).toBe(30);
-      });
-
-      it("should cleanup session after timeout", async () => {
-        @Room({
-          path: "game",
-          disconnectTimeout: 5000
-        })
-        class TimeoutRoom {
-          @users(Player) users = signal({});
-        }
-
-        server = new (class extends Server {
-          rooms = [TimeoutRoom];
-        })(new ServerIo("game") as any);
-
-        await server.onStart();
-        
-        // First connection
-        await server.onConnect(conn as any, { request: { headers: new Headers() } } as any);
-        const originalPrivateId = conn.state.privateId;
-        const originalPublicId = conn.state.publicId;
-        
-        // Simulate disconnection
-        await server.onClose(conn as any);
-        
-        // Advance time past timeout
-        await vi.advanceTimersByTimeAsync(6000);
-        
-        // Try to reconnect with same privateId
-        const headers = new Headers();
-        headers.set("X-User-ID", originalPrivateId);
-        const reconnConn = createConnection();
-        await server.onConnect(reconnConn as any, { request: { headers } } as any);
-
-        // Should get new IDs
-        expect(reconnConn.state.privateId).not.toBe(originalPrivateId);
-        expect(reconnConn.state.publicId).not.toBe(originalPublicId);
-      });
-
-      it("should create new session if privateId is invalid", async () => {
-        await server.onStart();
-        
-        const headers = new Headers();
-        headers.set("X-User-ID", "invalid-private-id");
-        await server.onConnect(conn as any, { request: { headers } } as any);
-
-        expect(conn.state.privateId).not.toBe("invalid-private-id");
-        expect(conn.state.privateId).toBeDefined();
-        expect(typeof conn.state.privateId).toBe("string");
-      });
     });
 
     it("should handle messages from different users", async () => {

@@ -53,31 +53,6 @@ describe("connection", () => {
     vi.clearAllMocks();
   });
 
-  it("should use default TokenStorage if no tokenManager provided", async () => {
-    const conn = connection(defaultOptions, {});
-    
-    // Wait for async operations to complete
-    await new Promise(process.nextTick);
-    
-    expect(conn).toBeDefined();
-    expect(TokenStorage.getToken).toHaveBeenCalled();
-  });
-
-  it("should use custom tokenManager if provided", async () => {
-    const customTokenManager = {
-      saveToken: vi.fn(),
-      getToken: vi.fn().mockResolvedValue("custom-token")
-    };
-
-    const options = { ...defaultOptions, tokenManager: customTokenManager };
-    const conn = connection(options, {});
-
-    await new Promise(process.nextTick);
-
-    expect(customTokenManager.getToken).toHaveBeenCalled();
-    expect(TokenStorage.getToken).not.toHaveBeenCalled();
-  });
-
   it("should save token when receiving sync message with privateId", () => {
     const conn = connection(defaultOptions, {});
     

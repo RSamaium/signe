@@ -79,8 +79,8 @@ importers:
   packages/room/examples/game:
     dependencies:
       partysocket:
-        specifier: ^1.0.1
-        version: 1.0.1
+        specifier: ^1.0.3
+        version: 1.0.3
       react:
         specifier: ^18.2.0
         version: 18.3.1
@@ -2070,6 +2070,9 @@ packages:
 
   partysocket@1.0.1:
     resolution: {integrity: sha512-sSnLf9X0Oaxw0wXp0liKho0QQqStDJB5I4ViaqmtI4nHm6cpb2kUealErPrcQpYUF6zgTHzLQhIO++2tcJc59A==}
+
+  partysocket@1.0.3:
+    resolution: {integrity: sha512-7sSojS4oCRK1Fe1h+Sa0Za5dwOf+M9VksQlynD8yqwGpLvnO4oxx9ppmOSeh6CJTMbF5gbnvUQKMK525QSBdBw==}
 
   path-exists@4.0.0:
     resolution: {integrity: sha512-ak9Qy5Q7jYb2Wwcey5Fpvg2KoAc/ZIhLSLOSBmRmygPsGwkVVt0fZa0qrtMz+m6tJTAHfZQ8FnmB4MG4LWy7/w==}
@@ -4699,6 +4702,10 @@ snapshots:
       - utf-8-validate
 
   partysocket@1.0.1:
+    dependencies:
+      event-target-shim: 6.0.2
+
+  partysocket@1.0.3:
     dependencies:
       event-target-shim: 6.0.2
 

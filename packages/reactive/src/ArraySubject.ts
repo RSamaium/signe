@@ -104,3 +104,7 @@ export class ArraySubject<T> extends BehaviorSubject<ArrayChange<T>> {
     this.next({ type: 'reset', items: newItems });
   }
 }
+
+export const isArraySubject = (value: any): boolean => {
+  return '_items' in value;
+}

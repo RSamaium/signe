@@ -5,8 +5,9 @@ import {
   getByPath,
   load,
   syncClass,
-} from "../../sync/src";
-import { generateShortUUID } from "../../sync/src/utils";
+  DELETE_TOKEN,
+  generateShortUUID
+} from "@signe/sync";
 import type * as Party from "./types/party";
 import {
   awaitReturn,
@@ -50,13 +51,6 @@ type CreateRoomOptions = {
 export class Server implements Party.Server {
   subRoom = null;
   rooms: any[] = [];
-  private timeoutHandles: Map<string, any> = new Map();
-
-  static async onBeforeConnect(request: Party.Request, lobby: Party.Lobby) {
-    const token = new URL(request.url).searchParams.get("token") ?? "";
-    request.headers.set("X-User-ID", token);
-    return request;
-  }
 
   /**
    * @constructor
@@ -107,13 +101,72 @@ export class Server implements Party.Server {
     }
   }
 
+  private async garbageCollector(options: { sessionExpiryTime: number }) {
+    const subRoom = await this.getSubRoom();
+    if (!subRoom) return;
+
+    // Get active connections
+    const activeConnections = [...this.room.getConnections()];
+    const activePrivateIds = new Set(activeConnections.map(conn => conn.id));
+
+    try {
+      // Get all sessions from storage
+      const sessions = await this.room.storage.list();
+      const users = this.getUsersProperty(subRoom);
+      const usersPropName = this.getUsersPropName(subRoom);
+
+      // Store valid publicIds from sessions
+      const validPublicIds = new Set<string>();
+      const expiredPublicIds = new Set<string>();
+      const SESSION_EXPIRY_TIME = options.sessionExpiryTime 
+      const now = Date.now();
+
+      for (const [key, session] of sessions) {
+        // Only process session entries
+        if (!key.startsWith('session:')) continue;
+
+        const privateId = key.replace('session:', '');
+        const typedSession = session as {publicId: string, created: number, connected: boolean};
+        
+        // Check if session should be deleted based on:
+        // 1. Connection is not active
+        // 2. Session is marked as disconnected
+        // 3. Session is older than expiry time
+        if (!activePrivateIds.has(privateId) && 
+            !typedSession.connected && 
+            (now - typedSession.created) > SESSION_EXPIRY_TIME) {
+          // Delete expired session
+          await this.deleteSession(privateId);
+          expiredPublicIds.add(typedSession.publicId);
+        } else if (typedSession && typedSession.publicId) {
+          // Keep track of valid publicIds from active or recent sessions
+          validPublicIds.add(typedSession.publicId);
+        }
+      }
+
+      // Clean up users only if ALL their sessions are expired
+      if (users && usersPropName) {
+        const currentUsers = users();
+        for (const publicId in currentUsers) {
+          // Only delete user if they have an expired session and no valid sessions
+          if (expiredPublicIds.has(publicId) && !validPublicIds.has(publicId)) {
+            delete currentUsers[publicId];
+            await this.room.storage.delete(`${usersPropName}.${publicId}`);
+          }
+        }
+      }
+     
+    } catch (error) {
+      console.error('Error in garbage collector:', error);
+    }
+  }
+
   /**
    * @method createRoom
    * @private
    * @async
    * @param {CreateRoomOptions} [options={}] - Options for creating the room.
    * @returns {Promise<Object>} The created room instance.
-   * @throws {Error} If no matching room is found.
    * 
    * @example
    * ```typescript
@@ -127,6 +180,7 @@ export class Server implements Party.Server {
   private async createRoom(options: CreateRoomOptions = {}) {
     let instance
     let init = true
+    let initPersist = true
 
     // Find the appropriate room based on the current room ID
     for (let room of this.rooms) {
@@ -138,7 +192,7 @@ export class Server implements Party.Server {
     }
 
     if (!instance) {
-      throw new Error("Room not found");
+      return null;
     }
 
     // Load the room's memory from storage
@@ -148,15 +202,16 @@ export class Server implements Party.Server {
       const memory = await this.room.storage.list();
       const tmpObject: any = root || {};
       for (let [key, value] of memory) {
+        if (key.startsWith('session:')) {
+          continue;
+        }
         if (key == ".") {
           continue;
         }
         dset(tmpObject, key, value);
       }
-      load(instance, tmpObject);
+      load(instance, tmpObject, true);
     };
-
-    await loadMemory();
 
     instance.$memoryAll = {}
 
@@ -180,12 +235,20 @@ export class Server implements Party.Server {
     }
 
     // Persist callback: Save changes to storage
-    const persistCb = async (values) => {
-      for (let path of values) {
+    const persistCb = async (values: Map<string, any>) => {
+      if (initPersist) {
+        values.clear();
+        return;
+      }
+      for (let [path, value] of values) {
         const _instance =
           path == "." ? instance : getByPath(instance, path);
-        const itemValue = createStatesSnapshot(_instance);
-        await this.room.storage.put(path, itemValue);
+        const itemValue = createStatesSnapshot(_instance); 
+        if (value == DELETE_TOKEN) {
+          await this.room.storage.delete(path);
+        } else {
+          await this.room.storage.put(path, itemValue);
+        }
       }
       values.clear();
     }
@@ -195,6 +258,10 @@ export class Server implements Party.Server {
       onSync: throttle(syncCb, instance["throttleSync"] ?? 500),
       onPersist: throttle(persistCb, instance["throttleStorage"] ?? 2000),
     });
+
+    await loadMemory();
+
+    initPersist = false
 
     return instance
   }
@@ -215,8 +282,8 @@ export class Server implements Party.Server {
    * }
    * ```
    */
-  private async getSubRoom(options = {}) {
-    let subRoom
+  private async getSubRoom(options = {}): Promise<any | null> {
+    let subRoom // instance of the room or null
     if (this.isHibernate) {
       subRoom = await this.createRoom(options)
     }
@@ -251,18 +318,35 @@ export class Server implements Party.Server {
     return null;
   }
 
-  private async getSession(privateId: string): Promise<{publicId: string, state?: any} | null> {
+  private getUsersPropName(subRoom) {
+    const meta = subRoom.constructor["_propertyMetadata"];
+    return meta?.get("users")
+  }
+
+  private async getSession(privateId: string): Promise<{publicId: string, state?: any, created?: number, connected?: boolean} | null> {
     if (!privateId) return null;
     try {
       const session = await this.room.storage.get(`session:${privateId}`);
-      return session as {publicId: string, state?: any} | null;
+      return session as {publicId: string, state?: any, created: number, connected: boolean} | null;
     } catch (e) {
       return null;
     }
   }
 
-  private async saveSession(privateId: string, data: {publicId: string, state?: any}) {
-    await this.room.storage.put(`session:${privateId}`, data);
+  private async saveSession(privateId: string, data: {publicId: string, state?: any, created?: number, connected?: boolean}) {
+    const sessionData = {
+      ...data,
+      created: data.created || Date.now(),
+      connected: data.connected !== undefined ? data.connected : true
+    };
+    await this.room.storage.put(`session:${privateId}`, sessionData);
+  }
+
+  private async updateSessionConnection(privateId: string, connected: boolean) {
+    const session = await this.getSession(privateId);
+    if (session) {
+      await this.saveSession(privateId, { ...session, connected });
+    }
   }
 
   private async deleteSession(privateId: string) {
@@ -290,6 +374,14 @@ export class Server implements Party.Server {
       getMemoryAll: true,
     })
 
+    if (!subRoom) {
+      conn.close();
+      return;
+    }
+
+    const sessionExpiryTime = subRoom.constructor.sessionExpiryTime;
+    await this.garbageCollector({ sessionExpiryTime });
+
     // Check room guards
     const roomGuards = subRoom.constructor['_roomGuards'] || [];
     for (const guard of roomGuards) {
@@ -301,16 +393,15 @@ export class Server implements Party.Server {
     }
 
     // Check for existing session
-    const providedPrivateId = ctx.request?.headers.get("X-User-ID");
-    const existingSession = providedPrivateId ? await this.getSession(providedPrivateId) : null;
+    const existingSession = await this.getSession(conn.id) 
 
     // Generate IDs
     const publicId = existingSession?.publicId || generateShortUUID();
-    const privateId = existingSession ? providedPrivateId : generateShortUUID();
 
     let user = null;
     const signal = this.getUsersProperty(subRoom);
-    
+    const usersPropName = this.getUsersPropName(subRoom);
+
     if (signal) {
       const { classType } = signal.options;
      
@@ -318,13 +409,18 @@ export class Server implements Party.Server {
       if (!existingSession?.publicId) {
         user = isClass(classType) ? new classType() : classType(conn, ctx);
         signal()[publicId] = user;
+        const snapshot = createStatesSnapshot(user);
+        this.room.storage.put(`${usersPropName}.${publicId}`, snapshot);
       }
       
       // Only store new session if it doesn't exist
       if (!existingSession) {
-        await this.saveSession(privateId, {
+        await this.saveSession(conn.id, {
           publicId
         });
+      }
+      else {
+        await this.updateSessionConnection(conn.id, true);
       }
     }
 
@@ -332,7 +428,7 @@ export class Server implements Party.Server {
     await awaitReturn(subRoom["onJoin"]?.(user, conn, ctx));
     
     // Store both IDs in connection state
-    conn.setState({ publicId, privateId });
+    conn.setState({ publicId });
 
     // Send initial sync data with both IDs to the new connection
     conn.send(
@@ -340,7 +436,6 @@ export class Server implements Party.Server {
         type: "sync",
         value: {
           pId: publicId,
-          privateId,
           ...subRoom.$memoryAll,
         },
       })
@@ -378,7 +473,6 @@ export class Server implements Party.Server {
       return;
     }
     const subRoom = await this.getSubRoom()
-
     // Check room guards
     const roomGuards = subRoom.constructor['_roomGuards'] || [];
     for (const guard of roomGuards) {
@@ -439,82 +533,67 @@ export class Server implements Party.Server {
    */
   async onClose(conn: Party.Connection) {
     const subRoom = await this.getSubRoom()
+
+    if (!subRoom) {
+      return;
+    }
+
     const signal = this.getUsersProperty(subRoom);
+
     if (!conn.state) {
       return;
     }
-    const { publicId, privateId } = conn.state as any;
+
+    const privateId = conn.id;
+    const { publicId } = conn.state as any;
     const user = signal?.()[publicId];
-    
+
     if (!user) return;
 
-    // Save current state
-    if (privateId) {
-      await this.saveSession(privateId, {
-        publicId
-      });
-    }
+    await awaitReturn(subRoom["onLeave"]?.(user, conn));
 
-    // Clear any existing timeout for this user
-    const existingTimeout = this.timeoutHandles.get(privateId);
-    if (existingTimeout) {
-      clearTimeout(existingTimeout);
-      this.timeoutHandles.delete(privateId);
-    }
+    // Mark session as disconnected instead of deleting it
+    await this.updateSessionConnection(privateId, false);
 
-    const cleanup = async () => {
-      // Call onLeave hook
-      await awaitReturn(subRoom["onLeave"]?.(user, conn));
-      
-      // Remove user from signal
-      if (signal) {
-        delete signal()[publicId];
-      }
-      
-      // Delete session
-      if (privateId) {
-        await this.deleteSession(privateId);
-      }
-
-      // Broadcast user disconnection
-      this.room.broadcast(
-        JSON.stringify({
-          type: "user_disconnected",
-          value: { publicId }
-        })
-      );
-
-      // Clear timeout handle
-      this.timeoutHandles.delete(privateId);
-    };
-
-    const disconnectTimeout = subRoom.constructor.disconnectTimeout ?? 0;
-    
-    if (disconnectTimeout > 0) {
-      // Set temporary offline status
-      if (user.status) {
-        user.status.set('offline');
-      }
-
-      // Broadcast temporary disconnection
-      this.room.broadcast(
-        JSON.stringify({
-          type: "user_offline",
-          value: { publicId }
-        })
-      );
-
-      // Set cleanup timeout
-      const timeout = setTimeout(cleanup, disconnectTimeout);
-      this.timeoutHandles.set(privateId, timeout);
-    } else {
-      // Immediate cleanup if no timeout
-      await cleanup();
-    }
+    // Broadcast user disconnection
+    this.room.broadcast(
+      JSON.stringify({
+        type: "user_disconnected",
+        value: { publicId }
+      })
+    );
   }
 
   async onAlarm() {
     const subRoom = await this.getSubRoom()
     await awaitReturn(subRoom["onAlarm"]?.(subRoom));
+  }
+
+  async onError(connection: Party.Connection, error: Error) {
+    const subRoom = await this.getSubRoom()
+    await awaitReturn(subRoom["onError"]?.(connection, error));
+  }
+
+  async onRequest(req: Party.Request) {
+    const subRoom = await this.getSubRoom()
+    const res = (body: any, status: number) => {
+      return new Response(JSON.stringify(body), { status });
+    }
+    if (!subRoom) {
+      return res({
+        error: "Not found"
+      }, 404);
+    }
+
+    const response = await awaitReturn(subRoom["onRequest"]?.(req, this.room));
+    if (!response) {
+      return res({
+        error: "Not found"
+      }, 404);
+    }
+    if (response instanceof Response) {
+      return response;
+    }
+    return res(response, 200);
   }
 }

@@ -3,8 +3,17 @@ import { effect } from '../../../../../reactive';
 import { connection } from '../../../../../sync/src/client';
 import { RoomSchema } from "../../shared/room.schema";
 
+let val = localStorage.getItem('test')
+
+if (!val) {
+  val = ''+Math.random()
+  localStorage.setItem('test', val)
+}
+
 export default function Counter() {
-  const [count, setCount] = useState<number | null>(null);
+  const [refresh, setRefresh] = useState(0);
+  const [count, setCount] = useState(0);
+  const [users, setUsers] = useState<any[]>([]);
   let socket = useRef<any>(null);
   let room = useRef<any>(null);
 
@@ -12,12 +21,22 @@ export default function Counter() {
     room.current = new RoomSchema();
     socket.current = connection({
       host: location.hostname == 'localhost' ? 'localhost:1999' : 'https://signe.rsamaium.partykit.dev',
-      room: 'game'
-    }, room.current)
-    
-    effect(() => {
-       setCount(room.current.count())
+      room: 'game',
+      id:  val as string
+    }, room.current);
+
+    socket.current.on('user_disconnected', (data: any) => {
+      console.log(data)
     })
+
+    // Subscribe to changes
+    effect(() => {
+      if (room.current) {
+        setCount(room.current.count());
+        setUsers(Object.values(room.current.users()));
+        setRefresh(refresh + 1);
+      }
+    });
   }, []);
 
   const increment = () => {
@@ -36,9 +55,28 @@ export default function Counter() {
     margin: "1rem 0rem",
   };
 
+  const getStorage = async () => {
+    const response = await fetch('/party/game').then(res => res.json())
+    console.log(JSON.stringify(response, null, 2))
+  }
+
   return (
-    <button style={styles} onClick={increment}>
-      Increment me! {count !== null && <>Count: {count}</>}
-    </button>
+    <>
+      {
+        room.current && (
+          <div key={refresh}>
+            <button style={styles} onClick={increment}>
+              Increment me! {count !== null && <>Count: {count}</>}
+            </button>
+            <button onClick={getStorage}>get storage</button>
+            <ul>
+              {users.map((user: any) => (
+                <li key={user.id()}>{user.id()} : {user.score()}</li>
+              ))}
+            </ul>
+          </div>
+        )
+      }
+    </>
   );
 }

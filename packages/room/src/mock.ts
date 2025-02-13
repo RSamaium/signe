@@ -1,7 +1,7 @@
 import { generateShortUUID } from "../../sync/src/utils";
 import { Storage } from "./storage";
 
-class MockPartySocket {
+export class MockPartySocket {
     private events: Map<string, Function> = new Map();
     id = generateShortUUID()
     
@@ -36,6 +36,10 @@ class MockPartyRoom {
     this.clients.forEach((client) => {
       client._trigger('message', data);
     });
+  }
+
+  getConnections() {
+    return this.clients;
   }
 
   clear() {
