@@ -27,8 +27,6 @@ describe("load function", () => {
   it("should load values into non-signal properties", () => {
     load(testInstance, { normalValue: 42 }, true);
     expect(testInstance.normalValue).toBe(42);
-
-    // Vérifier que ça fonctionne aussi avec un deuxième chargement
     load(testInstance, { normalValue: 100 }, true);
     expect(testInstance.normalValue).toBe(100);
   });
@@ -144,5 +142,35 @@ describe("load function", () => {
     expect(scene.users()['player2'].position.y()).toBe(400);
     expect(scene.users()['player2'].direction()).toBe(90);
     expect(scene.users()['player2'].graphics()).toEqual(['sprite4']);
+  });
+
+  it("should properly load Question instance with its properties", () => {
+    class Question {
+      text = signal("");
+      options = signal<string[]>([]);
+      correctOptionIndex = signal(0);
+    }
+
+    class RoomSchema {
+      @sync(Question) questions = signal([]);
+    }
+
+    const room = new RoomSchema();
+    
+    load(room, {
+      questions: {
+        "0": {
+          id: "question-1",
+          text: "What is the capital of France?",
+          options: ["London", "Paris", "Berlin", "Madrid"],
+          correctOptionIndex: 1
+        }
+      }
+    }, true);
+
+    expect(room.questions()[0]).instanceOf(Question);
+    expect(room.questions()[0].text()).toBe("What is the capital of France?");
+    expect(room.questions()[0].options()).toEqual(["London", "Paris", "Berlin", "Madrid"]);
+    expect(room.questions()[0].correctOptionIndex()).toBe(1);
   });
 });
