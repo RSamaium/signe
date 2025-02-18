@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { signal } from "../../packages/reactive/src";
-import { Action, Room, Server, ServerIo, Guard } from "../../packages/room/src";
+import { Action, Room, Server, ServerIo, Guard, testRoom } from "../../packages/room/src";
 import { id, users } from "../../packages/sync/src";
 import { z } from "zod";
 
@@ -30,7 +30,7 @@ describe("Server", () => {
       };
     };
 
-    beforeEach(() => {
+    beforeEach(async () => {
       setState = vi.fn();
       conn = createConnection();
       onJoinSpy = vi.fn();
@@ -52,13 +52,6 @@ describe("Server", () => {
       class GameRoom {
         count = signal(0);
         @users(Player) users = signal({});
-        $actionGuards: Map<string, ((sender: any, value: any) => boolean | Promise<boolean>)[]>;
-
-        constructor() {
-          this.$actionGuards = new Map();
-          this.$actionGuards.set('adminAction', [isAuthenticatedGuard, isAdminGuard]);
-          this.$actionGuards.set('userAction', [isAuthenticatedGuard]);
-        }
 
         @Action("increment")
         increment() {
@@ -66,11 +59,13 @@ describe("Server", () => {
         }
 
         @Action("adminAction")
+        @Guard([isAuthenticatedGuard, isAdminGuard])
         adminAction() {
           this.count.update((count) => count + 10);
         }
 
         @Action("userAction")
+        @Guard(isAuthenticatedGuard)
         userAction() {
           this.count.update((count) => count + 5);
         }

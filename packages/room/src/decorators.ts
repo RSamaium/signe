@@ -28,10 +28,10 @@ export interface RoomOptions {
 export function Room(options: RoomOptions) {
   return function (target: any) {
     target.path = options.path;
-    target.maxUsers = options.maxUsers;
-    target.throttleStorage = options.throttleStorage;
-    target.throttleSync = options.throttleSync;
-    target.sessionExpiryTime = options.sessionExpiryTime ?? 5 * 60 * 1000;
+    target.prototype.maxUsers = options.maxUsers;
+    target.prototype.throttleStorage = options.throttleStorage;
+    target.prototype.throttleSync = options.throttleSync;
+    target.prototype.sessionExpiryTime = options.sessionExpiryTime ?? 5 * 60 * 1000;
     if (options.guards) {
       target['_roomGuards'] = options.guards;
     }
@@ -60,6 +60,9 @@ export function Guard(guards: GuardFn[]) {
   ) {
     if (!target.constructor['_actionGuards']) {
       target.constructor['_actionGuards'] = new Map();
+    }
+    if (!Array.isArray(guards)) {
+      guards = [guards]
     }
     target.constructor['_actionGuards'].set(propertyKey, guards);
   };

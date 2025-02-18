@@ -199,6 +199,49 @@ connection.close();
 
 > https://docs.partykit.io/reference/partyserver-api/#partyconnection
 
+## Testing
+
+```ts
+import { test, vi } from "vitest"
+import { testRoom, Room, Action, sync } from "@signe/room"
+import { signal } from "@signe/reactive"
+
+test('test', async () => {
+
+    @Room({
+        path: "game"
+    })
+    class GameRoom {
+      @sync() count = signal(0);
+
+      @Action('increment')
+      increment() {
+        this.count.update(c => c + 1)
+      }
+    }
+
+    const { createClient, room, server } = await testRoom(GameRoom)
+    const client1 = await createClient()
+    const client2 = await createClient()
+
+    const countFn = vi.fn()
+
+    client1.addEventListener('message', countFn)
+    client2.addEventListener('message',countFn)
+
+    await client1.send({
+        action: 'increment'
+    })
+
+    expect(countFn).toHaveBeenCalledTimes(2)
+    expect(countFn).toHaveBeenCalledWith('{"type":"sync","value":{"count":1}}')
+    expect(room.count()).toBe(1)
+    expect(server.roomStorage.get('.')).toEqual({
+      count: 1
+    })
+})
+```
+
 ## License
 
 MIT

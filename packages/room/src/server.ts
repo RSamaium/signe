@@ -78,6 +78,10 @@ export class Server implements Party.Server {
     return !!this["options"]?.hibernate;
   }
 
+  get roomStorage(): Party.Storage {
+    return this.room.storage
+  }
+
   /**
    * @method onStart
    * @async
@@ -491,7 +495,7 @@ export class Server implements Party.Server {
       if (actionName) {
 
         // Check all guards if they exist
-        const guards = subRoom.$actionGuards?.get(actionName.key) || [];
+        const guards = subRoom.constructor['_actionGuards']?.get(actionName.key) || [];
         for (const guard of guards) {
           const isAuthorized = await guard(sender, result.data.value);
           if (!isAuthorized) {
