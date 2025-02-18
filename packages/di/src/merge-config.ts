@@ -27,15 +27,24 @@ export interface AppConfig {
  * @returns Merged configuration with providers properly combined
  */
 export function mergeConfig(baseConfig: AppConfig, config: AppConfig): AppConfig {
+    // Create a new config object with everything except providers
     const mergedConfig: AppConfig = {
         ...baseConfig,
-        ...config
+        ...config,
+        providers: [...baseConfig.providers] // Start with a copy of base providers
     }
-    for (let provider of config.providers) {
-        const isFound = findProvider(baseConfig.providers, provider.provide)
-        if (!isFound) {
-            mergedConfig.providers = override(baseConfig.providers, provider, { upsert: true })
+
+    // Process each provider from the config to merge
+    for (const provider of config.providers) {
+        const existingProvider = findProvider(baseConfig.providers, provider.provide)
+        if (existingProvider) {
+            // Replace existing provider
+            mergedConfig.providers = override(mergedConfig.providers, provider)
+        } else {
+            // Add new provider
+            mergedConfig.providers.push(provider)
         }
     }
+
     return mergedConfig;
 }
