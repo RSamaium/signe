@@ -30,6 +30,16 @@ export function isInjected(context: Context, name: string): boolean {
 }
 
 /**
+ * Checks if a service has been provided in the context
+ * @param context - The injection context
+ * @param name - Name of the service to check
+ * @returns True if the service has been provided, false otherwise
+ */
+export function isProvided(context: Context, name: string): boolean {
+  return context.get('inject:' + name) !== undefined;
+}
+
+/**
  * Retrieves a service from the dependency injection context
  * @template T - Type of the service to inject
  * @param context - The injection context
