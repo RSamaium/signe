@@ -162,16 +162,6 @@ function convertPropertyToZod(
     key: string,
     parentSchema: JSONSchema7
 ): ZodType<unknown> {
-    if (schema.$ref) {
-        return z.array(
-            z.object({
-                value: z.object({
-                    id: z.string()
-                })
-            })
-        );
-    }
-
     if (schema.type === 'object') {
         return z.object(jsonSchemaToZod(schema));
     }

@@ -188,6 +188,7 @@ describe('jsonSchemaToZod', () => {
             type: 'object',
             properties: {
                 categories: {
+                    type: 'string',
                     $ref: '#/definitions/CategoryList'
                 }
             }
@@ -196,9 +197,7 @@ describe('jsonSchemaToZod', () => {
         const zodSchema = z.object(jsonSchemaToZod(schema))
 
         expect(zodSchema.safeParse({
-            categories: [
-                { value: { id: '123' } }
-            ]
+            categories: '123'
         }).success).toBeTruthy()
 
         expect(zodSchema.safeParse({
