@@ -246,6 +246,88 @@ class GameRoom {
 }
 ```
 
+### Connecting to World Service
+
+The World Service provides optimal room and shard assignment for distributed applications. It handles load balancing and allows clients to connect to the most appropriate server.
+
+#### Server Configuration
+
+To use the World service, you need to:
+
+1. Add `WorldRoom` to your server:
+
+```ts
+import { Server, WorldRoom } from '@signe/room';
+
+export default class MainServer extends Server {
+  rooms = [
+    GameRoom,
+    WorldRoom // Add WorldRoom to enable World service
+  ]
+}
+```
+
+2. Configure your `partykit.json` file:
+
+```json
+{
+  "$schema": "https://www.partykit.io/schema.json",
+  "name": "yourapp",
+  "main": "party/server.ts",
+  "compatibilityDate": "2025-02-04",
+  "parties": {
+    "shard": "party/shard.ts", // Shard implementation
+    "world": "party/server.ts" // World service implementation
+  }
+}
+```
+
+#### Client Connection
+
+On the client side, use the `connectionWorld` function to connect to your room through the World service:
+
+```js
+import { connectionWorld } from '@signe/sync/client';
+
+// Initialize your room instance
+const room = new YourRoomSchema();
+
+// Connect through the World service
+const connection = await connectionWorld({
+  worldUrl: 'https://your-app-url.com', // Your application URL
+  roomId: 'unique-room-id',             // Room identifier
+  worldId: 'your-world-id',             // Optional, defaults to 'world-default'
+  autoCreate: true,                     // Auto-create room if it doesn't exist
+  retryCount: 3,                        // Number of connection attempts
+  retryDelay: 1000,                     // Delay between retries in ms
+  socketOptions: {                      // Optional PartySocket configuration
+    protocols: ['your-protocol']
+  }
+}, room);
+
+// Listen for events
+connection.on('customEvent', (data) => {
+  console.log('Received custom event:', data);
+});
+
+// Send events to the room
+connection.emit('increment', { value: 1 });
+
+// Close the connection when done
+connection.close();
+```
+
+The `connectionWorld` function:
+1. Queries the World service to find the optimal shard for the requested room
+2. Establishes a WebSocket connection to the assigned shard
+3. Returns a connection object with methods for sending and receiving messages
+
+This approach offers several benefits:
+- Automatic load balancing across multiple servers
+- Simplified connection management
+- Built-in retry logic for reliability
+- Room creation on demand
+
 ### Lifecycle Hooks
 
 Rooms provide several lifecycle hooks:

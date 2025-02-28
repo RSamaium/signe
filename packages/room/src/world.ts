@@ -287,7 +287,6 @@ export class WorldRoom {
  
       // Check for errors
       if ('error' in result) {
-        console.error(`Error connecting to room ${data.roomId}:`, result.error);
         return new Response(JSON.stringify({ 
           error: result.error 
         }), { 
