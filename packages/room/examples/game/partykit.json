@@ -4,7 +4,8 @@
   "main": "party/server.ts",
   "compatibilityDate": "2025-02-04",
   "parties": {
-    "shard": "party/shard.ts"
+    "shard": "party/shard.ts",
+    "world": "party/world.ts"
   },
   "serve": {
     "path": "public",

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { effect } from '../../../../../reactive';
-import { connection } from '../../../../../sync/src/client';
+import { connection, connectionWorld } from '../../../../../sync/src/client';
 import { RoomSchema } from "../../shared/room.schema";
 
 let val = ''+Math.random()
@@ -13,26 +13,29 @@ export default function Counter() {
   let room = useRef<any>(null);
 
   useEffect(() => {
-    room.current = new RoomSchema();
-    socket.current = connection({
-      host: 'localhost:1999',
-      room: 'game' + val,
-     party: 'shard',
-      // id:  val as string
-    }, room.current);
+    async function init() {
+      room.current = new RoomSchema();
+      room.current = new RoomSchema();
 
-    socket.current.on('user_disconnected', (data: any) => {
-      console.log(data)
-    })
-
-    // Subscribe to changes
-    effect(() => {
-      if (room.current) {
-        setCount(room.current.count());
-        setUsers(Object.values(room.current.users()));
-        setRefresh(refresh + 1);
-      }
-    });
+      socket.current = await connectionWorld({
+        worldUrl: 'http://localhost:1999',
+        roomId: 'quiz'
+      }, room.current);
+  
+      socket.current.on('user_disconnected', (data: any) => {
+        console.log(data)
+      })
+  
+      // Subscribe to changes
+      effect(() => {
+        if (room.current) {
+          setCount(room.current.count());
+          setUsers(Object.values(room.current.users()));
+          setRefresh(refresh + 1);
+        }
+      });
+    }
+    init();
   }, []);
 
   const increment = () => {
@@ -65,11 +68,6 @@ export default function Counter() {
               Increment me! {count !== null && <>Count: {count}</>}
             </button>
             <button onClick={getStorage}>get storage</button>
-            <ul>
-              {users.map((user: any) => (
-                <li key={user.id()}>{user.id()} : {user.score()}</li>
-              ))}
-            </ul>
           </div>
         )
       }
