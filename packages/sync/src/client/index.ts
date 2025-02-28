@@ -1,6 +1,5 @@
 import { load } from "@signe/sync";
 import PartySocket, { PartySocketOptions } from "partysocket";
-import { TokenStorage } from "./storage";
 
 interface ConnectionOptions extends PartySocketOptions {
   // Options for connecting via World - maintenue pour compatibilité
@@ -213,4 +212,4 @@ async function getOptimalShard(worldOptions: WorldConnectionOptions | Connection
   throw new Error('Failed to get shard after all retry attempts');
 }
 
-export { PartySocket, TokenStorage };
+export { PartySocket };
