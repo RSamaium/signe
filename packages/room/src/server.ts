@@ -895,15 +895,10 @@ export class Server implements Party.Server {
     const method = req.method;
     let pathname = url.pathname;
 
-    // delete two parts in beginning
-    pathname = pathname.substring(1, pathname.length - 1);
-
-    console.log(pathname)
+    pathname = '/' + pathname.split('/').slice(4).join('/');
 
     // Check each registered handler
     for (const [routeKey, handler] of requestHandlers.entries()) {
-      // On divise seulement par le premier ":" pour préserver les ":" dans les paramètres
-      // comme dans "/users/:id"
       const firstColonIndex = routeKey.indexOf(':');
       const handlerMethod = routeKey.substring(0, firstColonIndex);
       const handlerPath = routeKey.substring(firstColonIndex + 1);
@@ -916,8 +911,7 @@ export class Server implements Party.Server {
       // Simple path matching (could be enhanced with path params)
       if (this.pathMatches(pathname, handlerPath)) {
         // Extract path params if any
-        const params = this.extractPathParams(pathname, handlerPath);
-        
+        const params = this.extractPathParams(pathname, handlerPath);  
         // Check request guards if they exist
         const guards = subRoom.constructor['_requestGuards']?.get(handler.key) || [];
         for (const guard of guards) {

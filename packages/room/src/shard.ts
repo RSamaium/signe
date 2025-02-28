@@ -196,24 +196,15 @@ export class Shard {
    * @returns {Promise<boolean>} Succès de la mise à jour
    */
   async updateWorldStats(): Promise<boolean> {
-    // Si aucune URL World n'est configurée, ne rien faire
-    if (!this.worldUrl) {
-      return false;
-    }
-
     const currentConnections = this.connectionMap.size;
     
-    // Ne mettre à jour que si le nombre de connexions a changé
-    // ou si c'est une mise à jour périodique forcée
     if (currentConnections === this.lastReportedConnections) {
       return true;
     }
 
     try {
-      const url = new URL(`${this.worldUrl}/parties/world/${encodeURIComponent(this.worldId)}`);
-      url.searchParams.append('action', 'update-shard');
-      
-      const response = await fetch(url.toString(), {
+      const worldRoom = this.room.context.parties.world.get('world-default');
+      const response = await worldRoom.fetch('/update-shard', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

@@ -93,7 +93,7 @@ class ApiRoom {
 
 // Create mock request for testing
 function createMockRequest(path: string, options?: any): any {
-  const fullUrl = `http://localhost${path}`;
+  const fullUrl = `http://localhost/parties/world/default${path}`;
   
   const req = {
     // This is the critical part - we need a full URL string that can be parsed with new URL()

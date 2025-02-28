@@ -1,5 +1,5 @@
 import { signal } from "@signe/reactive";
-import { Room, Action, Guard } from "./decorators";
+import { Room, Action, Guard, Request } from "./decorators";
 import { sync, id, persist } from "@signe/sync";
 import { z } from "zod";
 import * as Party from "./types/party";
@@ -53,7 +53,9 @@ class ShardInfo {
   @id() id: string;
   @sync() roomId = signal("");
   @sync() url = signal("");
-  @sync() currentConnections = signal(0);
+  @sync({
+    persist: false
+  }) currentConnections = signal(0);
   @sync() maxConnections = signal(100);
   @sync() status = signal<ShardStatus>("active");
   @sync() lastHeartbeat = signal(0);
@@ -68,22 +70,19 @@ class ShardInfo {
 })
 export class WorldRoom {
   // Synchronized state
-  @sync() rooms = signal<Record<string, RoomConfig>>({});
-  @sync() shards = signal<Record<string, ShardInfo>>({});
-  @sync() roomShards = signal<Record<string, string[]>>({});
+  @sync(RoomConfig) rooms = signal<Record<string, RoomConfig>>({});
+  @sync(ShardInfo) shards = signal<Record<string, ShardInfo>>({});
   
   // Only persisted state (not synced to clients)
   @persist() rrCounters = signal<Record<string, number>>({});
   
   // Configuration
-  @sync() defaultShardUrlTemplate = signal("{shardId}");
-  @sync() defaultMaxConnectionsPerShard = signal(100);
+  defaultShardUrlTemplate = signal("{shardId}");
+  defaultMaxConnectionsPerShard = signal(100);
   
   // Non-synced state
   private worldId: string = 'default';
   private conn: Party.Connection | null = null;
-  
-  constructor() {}
   
   // Lifecycle hooks
   async onCreate(id: string) {
@@ -117,15 +116,7 @@ export class WorldRoom {
         const roomId = shard.roomId();
         
         // Update shards list
-        const updatedShards = { ...this.shards() };
-        delete updatedShards[shard.id];
-        this.shards.set(updatedShards);
-        
-        // Update room-shard relations
-        const roomShardsList = [...(this.roomShards()[roomId] || [])];
-        const updatedRoomShards = { ...this.roomShards() };
-        updatedRoomShards[roomId] = roomShardsList.filter(id => id !== shard.id);
-        this.roomShards.set(updatedRoomShards);
+        delete this.shards()[shard.id];
         
         hasChanges = true;
       }
@@ -136,14 +127,15 @@ export class WorldRoom {
   }
   
   // Actions
-  @Action("registerRoom", RoomConfigSchema)
-  async registerRoom(conn: Party.Connection, roomConfig: z.infer<typeof RoomConfigSchema>) {
+  @Request({
+    path: 'register-room',
+    method: 'POST',
+  })
+  async registerRoom(req: Party.Request) {
+    const roomConfig: z.infer<typeof RoomConfigSchema> = await req.json();
     const roomId = roomConfig.name;
     
-    // Create or update room config
-    const updatedRooms = { ...this.rooms() };
-    
-    if (!updatedRooms[roomId]) {
+    if (!this.rooms()[roomId]) {
       const newRoom = new RoomConfig();
       newRoom.id = roomId;
       newRoom.name.set(roomConfig.name);
@@ -153,13 +145,7 @@ export class WorldRoom {
       newRoom.minShards.set(roomConfig.minShards);
       newRoom.maxShards.set(roomConfig.maxShards);
       
-      updatedRooms[roomId] = newRoom;
-      this.rooms.set(updatedRooms);
-      
-      // Initialize roomShards mapping
-      const updatedRoomShards = { ...this.roomShards() };
-      updatedRoomShards[roomId] = [];
-      this.roomShards.set(updatedRoomShards);
+      this.rooms()[roomId] = newRoom;
       
       console.log(`Registered new room: ${roomId}`);
       
@@ -169,21 +155,15 @@ export class WorldRoom {
           await this.autoCreateShard(roomId);
         }
       }
-      
-      return { success: true, roomId, created: true };
     } else {
       // Update existing room
-      const room = updatedRooms[roomId];
+      const room = this.rooms()[roomId];
       room.balancingStrategy.set(roomConfig.balancingStrategy);
       room.public.set(roomConfig.public);
       room.maxPlayersPerShard.set(roomConfig.maxPlayersPerShard);
       room.minShards.set(roomConfig.minShards);
       room.maxShards.set(roomConfig.maxShards);
-      
-      this.rooms.set(updatedRooms);
       console.log(`Updated room: ${roomId}`);
-      
-      return { success: true, roomId, created: false };
     }
   }
   
@@ -211,36 +191,18 @@ export class WorldRoom {
     updatedShards[shardId] = newShard;
     this.shards.set(updatedShards);
     
-    // Update room-shard relations
-    const updatedRoomShards = { ...this.roomShards() };
-    if (!updatedRoomShards[roomId]) {
-      updatedRoomShards[roomId] = [];
-    }
-    
-    if (!updatedRoomShards[roomId].includes(shardId)) {
-      updatedRoomShards[roomId] = [...updatedRoomShards[roomId], shardId];
-    }
-    
-    this.roomShards.set(updatedRoomShards);
-    
     console.log(`Registered shard ${shardId} for room ${roomId}`);
-    return {
-      success: true,
-      shardId,
-      roomId,
-      url,
-      maxConnections
-    };
   }
   
-  @Action("updateShardStats", UpdateShardStatsSchema)
-  async updateShardStats(conn: Party.Connection, data: z.infer<typeof UpdateShardStatsSchema>) {
-    const shardId = conn.id;
-    const { connections, status } = data;
-    
-    const updatedShards = { ...this.shards() };
-    const shard = updatedShards[shardId];
-    
+  @Request({
+    path: 'update-shard',
+    method: 'POST',
+  })
+  async updateShardStats(req: Party.Request) {
+    const body: { shardId: string; connections: number; status: ShardStatus } = await req.json();
+    const { shardId, connections, status } = body;
+    const shard = this.shards()[shardId];
+
     if (!shard) {
       return { error: `Shard ${shardId} not found` };
     }
@@ -250,15 +212,6 @@ export class WorldRoom {
       shard.status.set(status);
     }
     shard.lastHeartbeat.set(Date.now());
-    
-    this.shards.set(updatedShards);
-    
-    return {
-      success: true,
-      shardId,
-      connections,
-      status: shard.status()
-    };
   }
   
   @Action("scaleRoom", ScaleRoomSchema)
@@ -272,11 +225,8 @@ export class WorldRoom {
       return { error: `Room ${roomId} does not exist` };
     }
     
-    // Get current shards for this room
-    const roomShardIds = this.roomShards()[roomId] || [];
-    const roomShards = roomShardIds
-      .map(id => this.shards()[id])
-      .filter(Boolean);
+    const roomShards = Object.values(this.shards())
+      .filter(shard => shard.roomId() === roomId);
     
     const previousShardCount = roomShards.length;
     
@@ -309,28 +259,11 @@ export class WorldRoom {
       );
       
       // Update shards
-      const updatedShards = { ...this.shards() };
       for (const shard of shardsToRemove) {
-        delete updatedShards[shard.id];
+        delete this.shards()[shard.id];
       }
-      this.shards.set(updatedShards);
       
-      // Update room-shard relations
-      const updatedRoomShards = { ...this.roomShards() };
-      updatedRoomShards[roomId] = shardsToKeep.map(shard => shard.id);
-      this.roomShards.set(updatedRoomShards);
-      
-      return {
-        success: true,
-        roomId,
-        previousShardCount,
-        currentShardCount: shardsToKeep.length,
-        shards: shardsToKeep.map(shard => ({
-          id: shard.id,
-          url: shard.url(),
-          status: shard.status()
-        }))
-      };
+      return;
     }
     
     // Handle scaling up
@@ -349,43 +282,101 @@ export class WorldRoom {
           newShards.push(newShard);
         }
       }
-      
-      return {
-        success: true,
-        roomId,
-        previousShardCount,
-        currentShardCount: roomShards.length + newShards.length,
-        shards: [...roomShards, ...newShards].map(shard => ({
-          id: shard.id,
-          url: shard.url(),
-          status: shard.status()
-        }))
-      };
     }
-    
-    // No scaling needed
-    return {
-      success: true,
-      roomId,
-      previousShardCount,
-      currentShardCount: previousShardCount,
-      noChange: true,
-      shards: roomShards.map(shard => ({
-        id: shard.id,
-        url: shard.url(),
-        status: shard.status()
-      }))
-    };
+  }
+
+  @Request({
+    path: 'connect',
+    method: 'POST',
+  })
+  async connect(req: Party.Request) {
+    try {
+      // Extract request data
+      let data: { roomId: string; autoCreate?: boolean };
+      
+      try {
+        // Handle potential empty body or malformed JSON
+        const body = await req.text();
+        if (!body || body.trim() === '') {
+          return new Response(JSON.stringify({ 
+            error: "Request body is empty" 
+          }), { 
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        
+        data = JSON.parse(body);
+      } catch (parseError) {
+        console.error('JSON parsing error:', parseError);
+        return new Response(JSON.stringify({ 
+          error: "Invalid JSON in request body" 
+        }), { 
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      
+      // Verify roomId is provided
+      if (!data.roomId) {
+        return new Response(JSON.stringify({ 
+          error: "roomId parameter is required" 
+        }), { 
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      
+      // Determine if auto-creation is enabled (default to true)
+      const autoCreate = data.autoCreate !== undefined ? data.autoCreate : true;
+      
+      // Find optimal shard
+      const result = await this.findOptimalShard(data.roomId, autoCreate);
+ 
+      // Check for errors
+      if ('error' in result) {
+        return new Response(JSON.stringify({ 
+          error: result.error 
+        }), { 
+          status: 404,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      
+      // Log the connection
+      console.log(`Room ${data.roomId}: Client directed to shard ${result.shardId}`);
+      
+      // Return shard information to the client
+      return new Response(JSON.stringify({
+        success: true,
+        shardId: result.shardId,
+        url: result.url
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    } catch (error) {
+      console.error('Error connecting to shard:', error);
+      return new Response(JSON.stringify({ 
+        error: "Internal server error" 
+      }), { 
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
   }
   
-  @Action("getOptimalShard")
-  async getOptimalShard(conn: Party.Connection, { roomId, autoCreate = true }: { roomId: string; autoCreate?: boolean }) {
+  // Méthode privée pour trouver un shard optimal sans connexion
+  private async findOptimalShard(
+    roomId: string, 
+    autoCreate: boolean = true
+  ): Promise<{ shardId: string; url: string } | { error: string }> {
     // Ensure room exists
     const room = this.rooms()[roomId];
     if (!room) {
       if (autoCreate) {
         // Auto-create room with default settings
-        await this.registerRoom(conn, {
+        await this.registerRoom({ id: 'system', state: {} } as any, {
           name: roomId,
           balancingStrategy: 'round-robin',
           public: true,
@@ -399,8 +390,10 @@ export class WorldRoom {
     }
     
     // Get shards for this room
-    const roomShardIds = this.roomShards()[roomId] || [];
-    if (roomShardIds.length === 0) {
+    const roomShards = Object.values(this.shards())
+      .filter(shard => shard.roomId() === roomId);
+    
+    if (roomShards.length === 0) {
       if (autoCreate) {
         // Auto-create a shard
         const newShard = await this.autoCreateShard(roomId);
@@ -418,8 +411,7 @@ export class WorldRoom {
     }
     
     // Get active shards
-    const activeShards = roomShardIds
-      .map(id => this.shards()[id])
+    const activeShards = roomShards
       .filter(shard => shard && shard.status() === 'active');
     
     if (activeShards.length === 0) {
@@ -450,11 +442,7 @@ export class WorldRoom {
         // Round-robin selection
         const counter = this.rrCounters()[roomId] || 0;
         const nextCounter = (counter + 1) % activeShards.length;
-        
-        // Update counter
-        const updatedCounters = { ...this.rrCounters() };
-        updatedCounters[roomId] = nextCounter;
-        this.rrCounters.set(updatedCounters);
+        this.rrCounters()[roomId] = nextCounter;
         
         selectedShard = activeShards[counter];
         break;
@@ -464,106 +452,6 @@ export class WorldRoom {
       shardId: selectedShard.id,
       url: selectedShard.url()
     };
-  }
-  
-  @Action("getRoomInfo")
-  getRoomInfo(conn: Party.Connection, { roomId }: { roomId: string }) {
-    const room = this.rooms()[roomId];
-    if (!room) {
-      return { error: `Room ${roomId} does not exist` };
-    }
-    
-    const roomShardIds = this.roomShards()[roomId] || [];
-    const roomShards = roomShardIds
-      .map(id => this.shards()[id])
-      .filter(Boolean);
-    
-    // Calculate metrics
-    const totalConnections = roomShards.reduce(
-      (sum, shard) => sum + shard.currentConnections(), 0
-    );
-    
-    const totalCapacity = roomShards.reduce(
-      (sum, shard) => sum + shard.maxConnections(), 0
-    );
-    
-    const utilizationPercentage = totalCapacity > 0 
-      ? (totalConnections / totalCapacity) * 100 
-      : 0;
-    
-    return {
-      roomId,
-      config: {
-        name: room.name(),
-        balancingStrategy: room.balancingStrategy(),
-        public: room.public(),
-        maxPlayersPerShard: room.maxPlayersPerShard(),
-        minShards: room.minShards(),
-        maxShards: room.maxShards()
-      },
-      shards: roomShards.map(shard => ({
-        id: shard.id,
-        url: shard.url(),
-        connections: shard.currentConnections(),
-        capacity: shard.maxConnections(),
-        status: shard.status()
-      })),
-      metrics: {
-        totalConnections,
-        totalCapacity,
-        utilizationPercentage
-      }
-    };
-  }
-  
-  @Action("getAllRoomsInfo")
-  getAllRoomsInfo() {
-    const roomsInfo = Object.keys(this.rooms()).map(roomId => {
-      const room = this.rooms()[roomId];
-      const roomShardIds = this.roomShards()[roomId] || [];
-      const roomShards = roomShardIds
-        .map(id => this.shards()[id])
-        .filter(Boolean);
-      
-      // Calculate metrics
-      const totalConnections = roomShards.reduce(
-        (sum, shard) => sum + shard.currentConnections(), 0
-      );
-      
-      const totalCapacity = roomShards.reduce(
-        (sum, shard) => sum + shard.maxConnections(), 0
-      );
-      
-      const utilizationPercentage = totalCapacity > 0 
-        ? (totalConnections / totalCapacity) * 100 
-        : 0;
-      
-      return {
-        roomId,
-        config: {
-          name: room.name(),
-          balancingStrategy: room.balancingStrategy(),
-          public: room.public(),
-          maxPlayersPerShard: room.maxPlayersPerShard(),
-          minShards: room.minShards(),
-          maxShards: room.maxShards()
-        },
-        shards: roomShards.map(shard => ({
-          id: shard.id,
-          url: shard.url(),
-          connections: shard.currentConnections(),
-          capacity: shard.maxConnections(),
-          status: shard.status()
-        })),
-        metrics: {
-          totalConnections,
-          totalCapacity,
-          utilizationPercentage
-        }
-      };
-    });
-    
-    return { rooms: roomsInfo };
   }
   
   // Private methods
@@ -583,7 +471,7 @@ export class WorldRoom {
     
     // Generate URL from template
     const template = urlTemplate || this.defaultShardUrlTemplate();
-    const url = template.replace('{shardId}', shardId).replace('{roomId}', roomId);
+    const url = template.replace('{shardId}', shardId).replace('{roomId}', shardId);
     
     // Set max connections
     const max = maxConnections || room.maxPlayersPerShard();
@@ -599,17 +487,7 @@ export class WorldRoom {
     newShard.lastHeartbeat.set(Date.now());
     
     // Update shards collection
-    const updatedShards = { ...this.shards() };
-    updatedShards[shardId] = newShard;
-    this.shards.set(updatedShards);
-    
-    // Update room-shard relations
-    const updatedRoomShards = { ...this.roomShards() };
-    if (!updatedRoomShards[roomId]) {
-      updatedRoomShards[roomId] = [];
-    }
-    updatedRoomShards[roomId] = [...updatedRoomShards[roomId], shardId];
-    this.roomShards.set(updatedRoomShards);
+    this.shards()[shardId] = newShard;
     
     console.log(`Auto-created shard ${shardId} for room ${roomId}`);
     return newShard;

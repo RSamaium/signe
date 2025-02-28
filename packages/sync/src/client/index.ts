@@ -133,12 +133,9 @@ export async function connectionWorld(
     party: 'shard',
     room: shardInfo.url
   };
-
-  // Don't use the pathname from URL, just use the roomId directly
-  socketOptions.room = options.roomId;
   // Establish connection with configured options
   const result = createConnection(socketOptions, roomInstance);
-  
+
   // Add shard info to result
   return {
     ...result,
@@ -167,17 +164,8 @@ async function getOptimalShard(worldOptions: WorldConnectionOptions | Connection
   
   let attempts = 0;
 
-
   // Build URL in expected format
-  const url = new URL(`${worldUrl}/parties/world/${encodeURIComponent(worldId)}`);
-  url.searchParams.append('action', 'connect');
-  url.searchParams.append('roomId', roomId);
-  
-  // Add autoCreate parameter if specified
-  if (autoCreate === false) {
-    url.searchParams.append('autoCreate', 'false');
-  }
-  
+  const url = new URL(`${worldUrl}/parties/world/${encodeURIComponent(worldId)}/connect`);
   const requestUrl = url.toString();
   
   // Try to get a shard with retries
@@ -187,7 +175,11 @@ async function getOptimalShard(worldOptions: WorldConnectionOptions | Connection
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
-        }
+        },
+        body: JSON.stringify({
+          roomId,
+          autoCreate
+        })
       });
       
       if (!response.ok) {

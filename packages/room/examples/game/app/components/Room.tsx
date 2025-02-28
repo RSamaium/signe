@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef } from "react";
 import { connectionWorld } from '../../../../../sync/src/client';
 import { RoomSchema } from "../../shared/room.schema";
-import Counter from "./Counter";
+import { effect } from "@signe/reactive";
 
 export default function Room() {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [roomId, setRoomId] = useState("quiz");
+  const [count, setCount] = useState(0);
   const socketRef = useRef<any>(null);
   const roomRef = useRef<any>(null);
 
@@ -30,6 +31,12 @@ export default function Room() {
       socketRef.current.on('disconnect', () => {
         setIsConnected(false);
         setError('Disconnected from server');
+      });
+
+      effect(() => {
+        if (roomRef.current) {
+          setCount(roomRef.current.count());
+        }
       });
       
       setIsConnected(true);
@@ -134,7 +141,8 @@ export default function Room() {
           </div>
           
           <div style={{ marginBottom: "2rem" }}>
-            <Counter />
+            <span>Count: {count}</span>
+            <button className="btn btn-primary" onClick={() => socketRef.current.emit('increment')}>Increment</button>
           </div>
           
           <button 
