@@ -69,3 +69,16 @@ export async function testRoom(Room, options: {
         }
     }
 }
+
+export async function request(room: Server, path: string, options: {
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    body?: any,
+    headers?: Record<string, string>
+} = {
+    method: 'GET',
+}) {
+    const url = new URL('http://localhost' + path)
+    const request = new Request(url.toString(), options)
+    const response = await room.onRequest(request)
+    return response
+}

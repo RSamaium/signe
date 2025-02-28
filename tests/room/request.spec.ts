@@ -80,15 +80,6 @@ class ApiRoom {
       }
     });
   }
-  
-  // Legacy onRequest handler
-  async onRequest(req: any) {
-    const url = new URL(req.url);
-    if (url.pathname === "/legacy") {
-      return { handler: "legacy" };
-    }
-    return null;
-  }
 }
 
 // Create mock request for testing
@@ -230,15 +221,6 @@ describe('Request Decorator', () => {
     expect(customResponse.headers.get("X-Custom-Header")).toBe("test-value");
     const customData = await customResponse.text();
     expect(customData).toBe("Custom response body");
-  });
-  
-  it('should fall back to legacy onRequest handler if no route matches', async () => {
-    const legacyReq = createMockRequest("/legacy");
-    const legacyResponse = await server.onRequest(legacyReq);
-    
-    expect(legacyResponse.status).toBe(200);
-    const legacyData = await legacyResponse.json();
-    expect(legacyData).toEqual({ handler: "legacy" });
   });
   
   it('should return 404 for non-existing routes', async () => {
