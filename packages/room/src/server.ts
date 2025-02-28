@@ -817,11 +817,40 @@ export class Server implements Party.Server {
     await awaitReturn(subRoom["onError"]?.(connection, error));
   }
 
+  /**
+   * @method onRequest
+   * @async
+   * @param {Party.Request} req - The HTTP request to handle
+   * @description Handles HTTP requests, either directly from clients or forwarded by shards
+   * @returns {Promise<Response>} The response to return to the client
+   */
   async onRequest(req: Party.Request) {
-    const subRoom = await this.getSubRoom()
+    // Check if the request is coming from a shard
+    const isFromShard = req.headers.has('x-forwarded-by-shard');
+    const shardId = req.headers.get('x-shard-id');
+ 
+    if (isFromShard) {
+      return this.handleShardRequest(req, shardId);
+    }
+    
+    // Handle regular client request
+    return this.handleDirectRequest(req);
+  }
+  
+  /**
+   * @method handleDirectRequest
+   * @private
+   * @async
+   * @param {Party.Request} req - The HTTP request received directly from a client
+   * @description Processes requests received directly from clients
+   * @returns {Promise<Response>} The response to return to the client
+   */
+  private async handleDirectRequest(req: Party.Request): Promise<Response> {
+    const subRoom = await this.getSubRoom();
     const res = (body: any, status: number) => {
       return new Response(JSON.stringify(body), { status });
-    }
+    };
+    
     if (!subRoom) {
       return res({
         error: "Not found"
@@ -838,5 +867,67 @@ export class Server implements Party.Server {
       return response;
     }
     return res(response, 200);
+  }
+  
+  /**
+   * @method handleShardRequest
+   * @private
+   * @async
+   * @param {Party.Request} req - The HTTP request forwarded by a shard
+   * @param {string | null} shardId - The ID of the shard that forwarded the request
+   * @description Processes requests forwarded by shards, preserving client context
+   * @returns {Promise<Response>} The response to return to the shard (which will forward it to the client)
+   */
+  private async handleShardRequest(req: Party.Request, shardId: string | null): Promise<Response> {
+    const subRoom = await this.getSubRoom();
+    
+    if (!subRoom) {
+      return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+    }
+    
+    // Create a context that preserves original client information
+    const originalClientIp = req.headers.get('x-original-client-ip');
+    const enhancedReq = this.createEnhancedRequest(req, originalClientIp);
+    
+    try {
+      // Call the room's onRequest handler with the enhanced request
+      const response = await awaitReturn(subRoom["onRequest"]?.(enhancedReq, this.room));
+      
+      if (!response) {
+        return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+      }
+      
+      if (response instanceof Response) {
+        return response;
+      }
+      
+      return new Response(JSON.stringify(response), { status: 200 });
+    } catch (error) {
+      console.error(`Error processing request from shard ${shardId}:`, error);
+      return new Response(JSON.stringify({ error: "Internal server error" }), { status: 500 });
+    }
+  }
+  
+  /**
+   * @method createEnhancedRequest
+   * @private
+   * @param {Party.Request} originalReq - The original request received from the shard
+   * @param {string | null} originalClientIp - The original client IP, if available
+   * @description Creates an enhanced request object that preserves the original client context
+   * @returns {Party.Request} The enhanced request object
+   */
+  private createEnhancedRequest(originalReq: Party.Request, originalClientIp: string | null): Party.Request {
+    // Clone the original request to avoid mutating it
+    const clonedReq = originalReq.clone();
+    
+    // Add a custom property to the request to indicate it came via a shard
+    (clonedReq as any).viaShard = true;
+    
+    // If we have the original client IP, we can use it for things like rate limiting or geolocation
+    if (originalClientIp) {
+      (clonedReq as any).originalClientIp = originalClientIp;
+    }
+    
+    return clonedReq;
   }
 }

@@ -13,6 +13,7 @@ const clientConnections = new Map<string, Party.Connection>();
 export class Shard {
   ws: PartyWebSocket;
   connectionMap = new Map<string, Party.Connection>(); // Map privateId -> connection
+  mainServerStub: any;
 
   constructor(private room: Party.Party) {}
 
@@ -22,7 +23,8 @@ export class Shard {
       console.warn('No game room stub found in main party context');
       return;
     }
-  
+    
+    this.mainServerStub = roomStub;
     this.ws = await roomStub.socket({
       headers: {
         'x-shard-id': this.room.id
@@ -98,6 +100,61 @@ export class Shard {
       privateId: conn.id,
       publicId: (conn.state as any)?.publicId
     }));
+  }
+
+  /**
+   * @method onRequest
+   * @async
+   * @param {Party.Request} req - The HTTP request to handle
+   * @description Forwards HTTP requests to the main server, preserving client context
+   * @returns {Promise<Response>} The response from the main server
+   */
+  async onRequest(req: Party.Request): Promise<Response> {
+    if (!this.mainServerStub) {
+      return new Response('Shard not connected to main server', { status: 503 });
+    }
+
+    try {
+      // Extract necessary information from the request
+      const url = new URL(req.url);
+      const path = url.pathname;
+      const method = req.method;
+      let body: string | null = null;
+      
+      if (method !== 'GET' && method !== 'HEAD') {
+        body = await req.text();
+      }
+      
+      // Convert original headers to a new Headers object
+      const headers = new Headers();
+      req.headers.forEach((value, key) => {
+        headers.set(key, value);
+      });
+      
+      // Add shard identification
+      headers.set('x-shard-id', this.room.id);
+      headers.set('x-forwarded-by-shard', 'true');
+      
+      // Client IP tracking for the main server
+      const clientIp = req.headers.get('x-forwarded-for') || 'unknown';
+      if (clientIp) {
+        headers.set('x-original-client-ip', clientIp);
+      }
+      
+      // Prepare request options
+      const requestInit: RequestInit = {
+        method,
+        headers,
+        body
+      };
+
+      // Forward the request to the main server
+      const response = await this.mainServerStub.fetch(path, requestInit);
+      return response;
+    } catch (error) {
+      console.error('Error forwarding request to main server:', error);
+      return new Response('Error forwarding request', { status: 500 });
+    }
   }
 }
 

@@ -3,12 +3,7 @@ import { effect } from '../../../../../reactive';
 import { connection } from '../../../../../sync/src/client';
 import { RoomSchema } from "../../shared/room.schema";
 
-let val = localStorage.getItem('test')
-
-if (!val) {
-  val = ''+Math.random()
-  localStorage.setItem('test', val)
-}
+let val = ''+Math.random()
 
 export default function Counter() {
   const [refresh, setRefresh] = useState(0);
@@ -21,7 +16,7 @@ export default function Counter() {
     room.current = new RoomSchema();
     socket.current = connection({
       host: 'localhost:1999',
-      room: 'game',
+      room: 'game' + val,
      party: 'shard',
       // id:  val as string
     }, room.current);
@@ -57,7 +52,7 @@ export default function Counter() {
   };
 
   const getStorage = async () => {
-    const response = await fetch('/party/game').then(res => res.json())
+    const response = await fetch('/parties/shard/game'+val).then(res => res.json())
     console.log(JSON.stringify(response, null, 2))
   }
 
