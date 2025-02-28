@@ -857,16 +857,184 @@ export class Server implements Party.Server {
       }, 404);
     }
 
-    const response = await awaitReturn(subRoom["onRequest"]?.(req, this.room));
-    if (!response) {
+    // First try to match using the registered @Request handlers
+    const response = await this.tryMatchRequestHandler(req, subRoom);
+    if (response) {
+      return response;
+    }
+
+    // Fall back to the legacy onRequest method if no handler matched
+    const legacyResponse = await awaitReturn(subRoom["onRequest"]?.(req, this.room));
+    if (!legacyResponse) {
       return res({
         error: "Not found"
       }, 404);
     }
-    if (response instanceof Response) {
-      return response;
+    if (legacyResponse instanceof Response) {
+      return legacyResponse;
     }
-    return res(response, 200);
+    return res(legacyResponse, 200);
+  }
+
+  /**
+   * @method tryMatchRequestHandler
+   * @private
+   * @async
+   * @param {Party.Request} req - The HTTP request to handle
+   * @param {Object} subRoom - The room instance
+   * @description Attempts to match the request to a registered @Request handler
+   * @returns {Promise<Response | null>} The response or null if no handler matched
+   */
+  private async tryMatchRequestHandler(req: Party.Request, subRoom: any): Promise<Response | null> {
+    const requestHandlers = subRoom.constructor["_requestMetadata"];
+    if (!requestHandlers) {
+      return null;
+    }
+
+    const url = new URL(req.url);
+    const method = req.method;
+    let pathname = url.pathname;
+
+    // delete two parts in beginning
+    pathname = pathname.substring(1, pathname.length - 1);
+
+    console.log(pathname)
+
+    // Check each registered handler
+    for (const [routeKey, handler] of requestHandlers.entries()) {
+      // On divise seulement par le premier ":" pour préserver les ":" dans les paramètres
+      // comme dans "/users/:id"
+      const firstColonIndex = routeKey.indexOf(':');
+      const handlerMethod = routeKey.substring(0, firstColonIndex);
+      const handlerPath = routeKey.substring(firstColonIndex + 1);
+
+      // Check if method matches
+      if (handlerMethod !== method) {
+        continue;
+      }
+
+      // Simple path matching (could be enhanced with path params)
+      if (this.pathMatches(pathname, handlerPath)) {
+        // Extract path params if any
+        const params = this.extractPathParams(pathname, handlerPath);
+        
+        // Check request guards if they exist
+        const guards = subRoom.constructor['_requestGuards']?.get(handler.key) || [];
+        for (const guard of guards) {
+          const isAuthorized = await guard(null, req);
+          if (!isAuthorized) {
+            return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 403 });
+          }
+        }
+
+        // Validate request body if needed
+        let bodyData = null;
+        if (handler.bodyValidation && ['POST', 'PUT', 'PATCH'].includes(method)) {
+          try {
+            const contentType = req.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
+              const body = await req.json();
+              const validation = handler.bodyValidation.safeParse(body);
+              if (!validation.success) {
+                return new Response(
+                  JSON.stringify({ error: "Invalid request body", details: validation.error }), 
+                  { status: 400 }
+                );
+              }
+              bodyData = validation.data;
+            }
+          } catch (error) {
+            return new Response(
+              JSON.stringify({ error: "Failed to parse request body" }), 
+              { status: 400 }
+            );
+          }
+        }
+
+        // Execute the handler method
+        try {
+          const result = await awaitReturn(
+            subRoom[handler.key](req, bodyData, params, this.room)
+          );
+
+          if (result instanceof Response) {
+            return result;
+          }
+
+          return new Response(
+            typeof result === 'string' ? result : JSON.stringify(result),
+            { 
+              status: 200,
+              headers: { 'Content-Type': typeof result === 'string' ? 'text/plain' : 'application/json' }
+            }
+          );
+        } catch (error) {
+          console.error('Error executing request handler:', error);
+          return new Response(
+            JSON.stringify({ error: "Internal server error" }), 
+            { status: 500 }
+          );
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * @method pathMatches
+   * @private
+   * @param {string} requestPath - The path from the request
+   * @param {string} handlerPath - The path pattern from the handler
+   * @description Checks if a request path matches a handler path pattern
+   * @returns {boolean} True if the paths match
+   */
+  private pathMatches(requestPath: string, handlerPath: string): boolean {
+    // Convert handler path pattern to regex
+    // Replace :param with named capture groups
+    const pathRegexString = handlerPath
+      .replace(/\//g, '\\/') // Escape slashes
+      .replace(/:([^\/]+)/g, '([^/]+)'); // Convert :params to capture groups
+
+    const pathRegex = new RegExp(`^${pathRegexString}$`);
+    return pathRegex.test(requestPath);
+  }
+
+  /**
+   * @method extractPathParams
+   * @private
+   * @param {string} requestPath - The path from the request
+   * @param {string} handlerPath - The path pattern from the handler
+   * @description Extracts path parameters from the request path based on the handler pattern
+   * @returns {Object} An object containing the path parameters
+   */
+  private extractPathParams(requestPath: string, handlerPath: string): Record<string, string> {
+    const params: Record<string, string> = {};
+    
+    // Extract parameter names from handler path
+    const paramNames: string[] = [];
+    handlerPath.split('/').forEach(segment => {
+      if (segment.startsWith(':')) {
+        paramNames.push(segment.substring(1));
+      }
+    });
+    
+    // Extract parameter values from request path
+    const pathRegexString = handlerPath
+      .replace(/\//g, '\\/') // Escape slashes
+      .replace(/:([^\/]+)/g, '([^/]+)'); // Convert :params to capture groups
+      
+    const pathRegex = new RegExp(`^${pathRegexString}$`);
+    const matches = requestPath.match(pathRegex);
+    
+    if (matches && matches.length > 1) {
+      // Skip the first match (the full string)
+      for (let i = 0; i < paramNames.length; i++) {
+        params[paramNames[i]] = matches[i + 1];
+      }
+    }
+    
+    return params;
   }
   
   /**
@@ -890,18 +1058,24 @@ export class Server implements Party.Server {
     const enhancedReq = this.createEnhancedRequest(req, originalClientIp);
     
     try {
-      // Call the room's onRequest handler with the enhanced request
-      const response = await awaitReturn(subRoom["onRequest"]?.(enhancedReq, this.room));
-      
-      if (!response) {
-        return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
-      }
-      
-      if (response instanceof Response) {
+      // First try to match using the registered @Request handlers
+      const response = await this.tryMatchRequestHandler(enhancedReq, subRoom);
+      if (response) {
         return response;
       }
       
-      return new Response(JSON.stringify(response), { status: 200 });
+      // Fall back to the legacy onRequest handler
+      const legacyResponse = await awaitReturn(subRoom["onRequest"]?.(enhancedReq, this.room));
+      
+      if (!legacyResponse) {
+        return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+      }
+      
+      if (legacyResponse instanceof Response) {
+        return legacyResponse;
+      }
+      
+      return new Response(JSON.stringify(legacyResponse), { status: 200 });
     } catch (error) {
       console.error(`Error processing request from shard ${shardId}:`, error);
       return new Response(JSON.stringify({ error: "Internal server error" }), { status: 500 });

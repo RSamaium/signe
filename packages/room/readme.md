@@ -13,6 +13,7 @@ npm install @signe/room @signe/reactive @signe/sync
 - 🔄 Automatic state synchronization across clients
 - 👥 Built-in user management with customizable player classes
 - 🎮 Action-based message handling with type safety
+- 🌐 HTTP request routing with path parameters
 - 🔐 Flexible authentication and authorization system
 - 🛡️ Guard system for room and action-level security
 - 🎯 Full TypeScript support
@@ -58,7 +59,7 @@ export default class GameServer extends Server {
 }
 ```
 
-## Action 
+## Action 
 
 An action is a function that is called when a client sends a message to the server.
 
@@ -67,6 +68,69 @@ Function have to be decorated with the `@Action` decorator and  have 3 parameter
 - The first parameter is the player instance
 - The second parameter is the value of the action
 - The third parameter is the Party.Connection instance
+
+## HTTP Request Handling
+
+The `@Request` decorator allows you to handle HTTP requests with specific routes and methods:
+
+```ts
+import { z } from "zod";
+import { Room, Request, RequestGuard } from "@signe/room";
+
+@Room({
+  path: "api"
+})
+class ApiRoom {
+  @sync() gameState = signal("waiting");
+  @users(Player) players = signal({});
+  @sync() scores = signal([]);
+
+  // Handle GET requests
+  @Request({ path: "/status" })
+  getStatus(req: Party.Request) {
+    return {
+      status: "online",
+      players: Object.keys(this.players()).length,
+      gameState: this.gameState(),
+    };
+  }
+
+  // Handle requests with path parameters
+  @Request({ path: "/players/:id" })
+  getPlayer(req: Party.Request, body: any, params: { id: string }) {
+    const player = this.players()[params.id];
+    if (!player) {
+      return new Response(JSON.stringify({ error: "Player not found" }), { status: 404 });
+    }
+    return player;
+  }
+
+  // Handle POST requests with body validation
+  @Request(
+    { path: "/scores", method: "POST" },
+    z.object({ 
+      playerId: z.string(),
+      score: z.number().min(0)
+    })
+  )
+  @RequestGuard([isAuthenticated])
+  submitScore(req: Party.Request, body: { playerId: string; score: number }) {
+    this.scores.update(scores => [...scores, body]);
+    return { success: true };
+  }
+}
+```
+
+Request handler methods receive these parameters:
+1. `req`: The original Party.Request object
+2. `body`: The validated request body (if validation schema was provided)
+3. `params`: An object containing any path parameters
+4. `room`: The Party.Room instance
+
+You can return:
+- A Response object for complete control
+- An object that will be serialized as JSON
+- A string that will be returned as text/plain
 
 ## Advanced Features
 
@@ -110,6 +174,12 @@ class AdminRoom {
   @Guard([isAdmin]) // Applied only to this action
   async deleteUser(admin: Player, userId: string) {
     // Only authenticated admins can execute this
+  }
+  
+  @Request({ path: "/admin/users", method: "DELETE" })
+  @RequestGuard([isAdmin]) // Applied only to this request handler
+  async deleteUserViaHttp(req: Party.Request) {
+    // Only authenticated admins can access this endpoint
   }
 }
 ```

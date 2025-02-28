@@ -17,7 +17,7 @@ describe('QuizRoom', () => {
     let server: any
 
     beforeEach(async () => {
-      const test = await testRoom(MyRoom, { shard: true });
+      const test = await testRoom(MyRoom);
       client = await test.createClient();
       room = test.room
       server = test.server

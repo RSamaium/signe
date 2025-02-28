@@ -1,7 +1,18 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Room from './Room';
+import { connection, connectionWorld } from '../../../../../sync/src/client';
+import { signal, effect } from '@signe/reactive';
+
+// Classe client pour représenter le world côté client
+class WorldClient {
+  rooms = signal<Record<string, any>>({});
+  shards = signal<Record<string, any>>({});
+  roomShards = signal<Record<string, string[]>>({});
+  defaultShardUrlTemplate = signal("{shardId}");
+  defaultMaxConnectionsPerShard = signal(100);
+}
 
 // Interfaces pour les données du World
 interface RoomConfig {
@@ -40,6 +51,7 @@ interface WorldInfo {
 const LoadingSpinner = () => (
   <div className="loading-spinner">
     <div className="spinner"></div>
+    {/* @ts-ignore */}
     <style jsx>{`
       .loading-spinner {
         display: flex;
@@ -77,6 +89,7 @@ const ProgressBar = ({ percentage }: { percentage: number }) => {
         style={{ width: `${percentage}%`, backgroundColor: barColor }}
       ></div>
       <span className="progress-label">{percentage}%</span>
+      {/* @ts-ignore */}
       <style jsx>{`
         .progress-container {
           width: 100%;
@@ -124,6 +137,7 @@ const RoomCard = ({ room, onSelect }: { room: RoomInfo; onSelect: () => void }) 
         </div>
         <ProgressBar percentage={room.metrics.utilizationPercentage} />
       </div>
+      {/* @ts-ignore */}
       <style jsx>{`
         .room-card {
           background: white;
@@ -193,6 +207,7 @@ const ShardCard = ({ shard }: { shard: ShardInfo }) => {
         <ProgressBar percentage={utilizationPercentage} />
       </div>
       
+      {/* @ts-ignore */}
       <style jsx>{`
         .shard-card {
           background: #f9fafb;
@@ -248,7 +263,7 @@ const ShardCard = ({ shard }: { shard: ShardInfo }) => {
 };
 
 // Formulaire pour créer une salle
-const CreateRoomForm = ({ worldId, onRoomCreated }: { worldId: string; onRoomCreated: () => void }) => {
+const CreateRoomForm = ({ worldId, onRoomCreated, connection }: { worldId: string; onRoomCreated: () => void; connection: any }) => {
   const [name, setName] = useState('');
   const [balancingStrategy, setBalancingStrategy] = useState<'round-robin' | 'least-connections' | 'random'>('round-robin');
   const [isPublic, setIsPublic] = useState(true);
@@ -264,30 +279,15 @@ const CreateRoomForm = ({ worldId, onRoomCreated }: { worldId: string; onRoomCre
     setError('');
     
     try {
-      const roomId = name.toLowerCase().replace(/\s+/g, '-');
-      
-      const response = await fetch(`/parties/world/${worldId}?action=register-room`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          roomId,
-          config: {
-            name,
-            balancingStrategy,
-            public: isPublic,
-            maxPlayersPerShard: maxPlayers,
-            minShards,
-            maxShards
-          }
-        })
+      // Utiliser l'action registerRoom via la connexion
+      connection.emit('registerRoom', {
+        name,
+        balancingStrategy,
+        public: isPublic,
+        maxPlayersPerShard: maxPlayers,
+        minShards,
+        maxShards
       });
-      
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Erreur lors de la création de la salle');
-      }
       
       onRoomCreated();
       
@@ -393,6 +393,7 @@ const CreateRoomForm = ({ worldId, onRoomCreated }: { worldId: string; onRoomCre
         </button>
       </form>
       
+      {/* @ts-ignore */}
       <style jsx>{`
         .create-room-form {
           background: white;
@@ -460,7 +461,7 @@ const CreateRoomForm = ({ worldId, onRoomCreated }: { worldId: string; onRoomCre
 };
 
 // Formulaire pour le scaling d'une salle
-const ScaleRoomForm = ({ worldId, room, onScaled }: { worldId: string; room: RoomInfo; onScaled: () => void }) => {
+const ScaleRoomForm = ({ worldId, room, onScaled, connection }: { worldId: string; room: RoomInfo; onScaled: () => void; connection: any }) => {
   const [targetShardCount, setTargetShardCount] = useState(room.shards.length);
   const [urlTemplate, setUrlTemplate] = useState('wss://shard-{shardId}.example.com');
   const [maxConnections, setMaxConnections] = useState(room.config.maxPlayersPerShard);
@@ -484,25 +485,15 @@ const ScaleRoomForm = ({ worldId, room, onScaled }: { worldId: string; room: Roo
     setError('');
     
     try {
-      const response = await fetch(`/parties/world/${worldId}?action=scale-room`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          roomId: room.roomId,
-          targetShardCount,
-          shardTemplate: {
-            urlTemplate,
-            maxConnections
-          }
-        })
+      // Utiliser l'action scaleRoom via la connexion
+      connection.emit('scaleRoom', {
+        roomId: room.roomId,
+        targetShardCount,
+        shardTemplate: {
+          urlTemplate,
+          maxConnections
+        }
       });
-      
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Erreur lors du scaling de la salle');
-      }
       
       onScaled();
     } catch (err: any) {
@@ -564,6 +555,7 @@ const ScaleRoomForm = ({ worldId, room, onScaled }: { worldId: string; room: Roo
         </button>
       </form>
       
+      {/* @ts-ignore */}
       <style jsx>{`
         .scale-room-form {
           background: white;
@@ -624,6 +616,64 @@ const ScaleRoomForm = ({ worldId, room, onScaled }: { worldId: string; room: Roo
   );
 };
 
+// Fonction pour convertir les données du world en format RoomInfo
+const parseWorldInfoFromClient = (worldClient: WorldClient): WorldInfo => {
+  // Récupérer les données du client
+  const roomsData = worldClient.rooms();
+  const shardsData = worldClient.shards();
+  const roomShardsData = worldClient.roomShards();
+  
+  // Transformer les données
+  const roomsInfo = Object.keys(roomsData).map(roomId => {
+    const room = roomsData[roomId];
+    const roomShardIds = roomShardsData[roomId] || [];
+    const roomShards = roomShardIds
+      .map(id => shardsData[id])
+      .filter(Boolean);
+    
+    // Calculer les métriques
+    const totalConnections = roomShards.reduce(
+      (sum, shard) => sum + (shard && typeof shard.currentConnections === 'function' ? shard.currentConnections() : 0), 
+      0
+    );
+    
+    const totalCapacity = roomShards.reduce(
+      (sum, shard) => sum + (shard && typeof shard.maxConnections === 'function' ? shard.maxConnections() : 0), 
+      0
+    );
+    
+    const utilizationPercentage = totalCapacity > 0 
+      ? Math.round((totalConnections / totalCapacity) * 100)
+      : 0;
+    
+    return {
+      roomId,
+      config: {
+        name: room && typeof room.name === 'function' ? room.name() : '',
+        balancingStrategy: room && typeof room.balancingStrategy === 'function' ? room.balancingStrategy() : 'round-robin',
+        public: room && typeof room.public === 'function' ? room.public() : true,
+        maxPlayersPerShard: room && typeof room.maxPlayersPerShard === 'function' ? room.maxPlayersPerShard() : 100,
+        minShards: room && typeof room.minShards === 'function' ? room.minShards() : 1,
+        maxShards: room && typeof room.maxShards === 'function' ? room.maxShards() : undefined
+      },
+      shards: roomShards.map(shard => ({
+        id: shard ? shard.id : '',
+        url: shard && typeof shard.url === 'function' ? shard.url() : '',
+        connections: shard && typeof shard.currentConnections === 'function' ? shard.currentConnections() : 0,
+        capacity: shard && typeof shard.maxConnections === 'function' ? shard.maxConnections() : 0,
+        status: shard && typeof shard.status === 'function' ? shard.status() : 'unknown'
+      })),
+      metrics: {
+        totalConnections,
+        totalCapacity,
+        utilizationPercentage
+      }
+    };
+  });
+  
+  return { rooms: roomsInfo };
+};
+
 // Composant principal de l'administration
 const WorldAdmin = () => {
   const [worldId, setWorldId] = useState('default');
@@ -631,52 +681,85 @@ const WorldAdmin = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [refresh, setRefresh] = useState(0);
   
-  // Récupère les informations du World
+  // Références pour le client world et la connexion
+  const worldClient = useRef<WorldClient>(new WorldClient());
+  const connection = useRef<any>(null);
+  
+  // Se connecter au world
   useEffect(() => {
-    const fetchWorldInfo = async () => {
+    const connectToWorld = async () => {
       setIsLoading(true);
       setError(null);
       
       try {
-        const response = await fetch(`/parties/world/${worldId}?action=room-info`);
+        // Réinitialiser le client world
+        worldClient.current = new WorldClient();
         
-        if (!response.ok) {
-          throw new Error(`Erreur lors de la récupération des données: ${response.status}`);
-        }
+        // Se connecter au world
+        const conn = await connectionWorld({
+          worldId: worldId,
+          // Utiliser l'URL du serveur ou la connexion locale
+          worldUrl: window.location.origin,
+          roomId: `world-${worldId}`  // C'est essentiel - le roomId doit être fourni
+        }, worldClient.current);
         
-        const data = await response.json();
-        setWorldInfo(data);
+        connection.current = conn;
         
-        // Sélectionne la première salle par défaut si aucune n'est sélectionnée
-        if (!selectedRoomId && data.rooms && data.rooms.length > 0) {
-          setSelectedRoomId(data.rooms[0].roomId);
-        }
+        // Configurer les écouteurs d'événements
+        conn.on('sync', () => {
+          // Déclencher une mise à jour du composant
+          setRefresh(prev => prev + 1);
+        });
+        
+        conn.on('error', (err: any) => {
+          setError(`Erreur de connexion: ${err.message}`);
+        });
+        
+        // Demander les informations des salles
+        conn.emit('getAllRoomsInfo');
+        
+        setIsLoading(false);
       } catch (err: any) {
-        setError(err.message);
-        console.error("Erreur:", err);
-      } finally {
+        setError(`Erreur de connexion: ${err.message}`);
         setIsLoading(false);
       }
     };
     
-    fetchWorldInfo();
+    connectToWorld();
     
-    // Configure un rafraîchissement automatique toutes les 30 secondes
-    const intervalId = setInterval(() => {
-      setRefreshTrigger(prev => prev + 1);
-    }, 30000);
+    return () => {
+      // Nettoyer la connexion lors du démontage
+      if (connection.current) {
+        connection.current.close();
+      }
+    };
+  }, [worldId]);
+  
+  // Mettre à jour worldInfo lorsque les données du client changent
+  useEffect(() => {
+    // Utiliser les données du client pour générer worldInfo
+    const info = parseWorldInfoFromClient(worldClient.current);
+    setWorldInfo(info);
     
-    return () => clearInterval(intervalId);
-  }, [worldId, refreshTrigger]);
+    // Sélectionner la première salle par défaut si aucune n'est sélectionnée
+    if (!selectedRoomId && info.rooms && info.rooms.length > 0) {
+      setSelectedRoomId(info.rooms[0].roomId);
+    } else if (selectedRoomId && !info.rooms.some(room => room.roomId === selectedRoomId)) {
+      // Si la salle sélectionnée n'existe plus, sélectionner la première salle ou null
+      setSelectedRoomId(info.rooms.length > 0 ? info.rooms[0].roomId : null);
+    }
+  }, [refresh, selectedRoomId]);
   
   // Salle sélectionnée
   const selectedRoom = worldInfo?.rooms.find(room => room.roomId === selectedRoomId);
   
-  // Gestion du rafraîchissement
+  // Gestion du rafraîchissement manuel
   const handleRefresh = () => {
-    setRefreshTrigger(prev => prev + 1);
+    if (connection.current) {
+      connection.current.emit('getAllRoomsInfo');
+    }
   };
   
   // Handler pour la création d'une salle
@@ -722,7 +805,8 @@ const WorldAdmin = () => {
             
             <CreateRoomForm 
               worldId={worldId} 
-              onRoomCreated={handleRoomCreated} 
+              onRoomCreated={handleRoomCreated}
+              connection={connection.current}
             />
             
             {worldInfo?.rooms.map(room => (
@@ -777,6 +861,7 @@ const WorldAdmin = () => {
                   worldId={worldId}
                   room={selectedRoom}
                   onScaled={handleRoomScaled}
+                  connection={connection.current}
                 />
                 
                 <h3>Shards ({selectedRoom.shards.length})</h3>
@@ -804,6 +889,7 @@ const WorldAdmin = () => {
 
       <Room />
       
+      {/* @ts-ignore */}
       <style jsx>{`
         .world-admin {
           padding: 20px;

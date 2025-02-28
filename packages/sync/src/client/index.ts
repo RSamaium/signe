@@ -159,7 +159,7 @@ async function getOptimalShard(worldOptions: WorldConnectionOptions | Connection
   const { 
     worldUrl, 
     roomId, 
-    worldId = 'default', // Default World ID is "default"
+    worldId = 'world-default', // Default World ID is "default"
     retryCount = 3, 
     retryDelay = 1000,
     autoCreate = true // Default to true for auto-creation
@@ -167,8 +167,7 @@ async function getOptimalShard(worldOptions: WorldConnectionOptions | Connection
   
   let attempts = 0;
 
-  console.log(`${worldUrl}/parties/world/${encodeURIComponent(worldId)}`)
-  
+
   // Build URL in expected format
   const url = new URL(`${worldUrl}/parties/world/${encodeURIComponent(worldId)}`);
   url.searchParams.append('action', 'connect');
