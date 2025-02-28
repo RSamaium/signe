@@ -357,23 +357,7 @@ export class Server implements Party.Server {
     await this.room.storage.delete(`session:${privateId}`);
   }
 
-  /**
-   * @method onConnect
-   * @async
-   * @param {Party.Connection} conn - The connection object for the new user.
-   * @param {Party.ConnectionContext} ctx - The context of the connection.
-   * @description Handles a new user connection, creates a user object, and sends initial sync data.
-   * @returns {Promise<void>}
-   * 
-   * @example
-   * ```typescript
-   * server.onConnect = async (conn, ctx) => {
-   *   await server.onConnect(conn, ctx);
-   *   console.log("New user connected:", conn.id);
-   * };
-   * ```
-   */
-  async onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
+  async onConnectClient(conn: Party.Connection, ctx: Party.ConnectionContext) {
     const subRoom = await this.getSubRoom({
       getMemoryAll: true,
     })
@@ -432,7 +416,10 @@ export class Server implements Party.Server {
     await awaitReturn(subRoom["onJoin"]?.(user, conn, ctx));
     
     // Store both IDs in connection state
-    conn.setState({ publicId });
+    conn.setState({ 
+      ...conn.state,
+      publicId
+     });
 
     // Send initial sync data with both IDs to the new connection
     conn.send(
@@ -444,6 +431,37 @@ export class Server implements Party.Server {
         },
       })
     );
+  }
+
+  onConnectShard(conn: Party.Connection, ctx: Party.ConnectionContext) {
+    conn.setState({
+      shard: true
+    })
+  }
+
+  /**
+   * @method onConnect
+   * @async
+   * @param {Party.Connection} conn - The connection object for the new user.
+   * @param {Party.ConnectionContext} ctx - The context of the connection.
+   * @description Handles a new user connection, creates a user object, and sends initial sync data.
+   * @returns {Promise<void>}
+   * 
+   * @example
+   * ```typescript
+   * server.onConnect = async (conn, ctx) => {
+   *   await server.onConnect(conn, ctx);
+   *   console.log("New user connected:", conn.id);
+   * };
+   * ```
+   */
+  async onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
+    if (ctx.request?.headers.has('x-shard-id')) {
+      this.onConnectShard(conn, ctx);
+    }
+    else {
+      await this.onConnectClient(conn, ctx);
+    }
   }
 
   /**

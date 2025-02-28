@@ -20,9 +20,10 @@ export default function Counter() {
   useEffect(() => {
     room.current = new RoomSchema();
     socket.current = connection({
-      host: location.hostname == 'localhost' ? 'localhost:1999' : 'https://signe.rsamaium.partykit.dev',
+      host: 'localhost:1999',
       room: 'game',
-      id:  val as string
+     party: 'shard',
+      // id:  val as string
     }, room.current);
 
     socket.current.on('user_disconnected', (data: any) => {
