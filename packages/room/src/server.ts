@@ -433,12 +433,6 @@ export class Server implements Party.Server {
     );
   }
 
-  onConnectShard(conn: Party.Connection, ctx: Party.ConnectionContext) {
-    conn.setState({
-      shard: true
-    })
-  }
-
   /**
    * @method onConnect
    * @async
@@ -465,23 +459,39 @@ export class Server implements Party.Server {
   }
 
   /**
+   * @method onConnectShard
+   * @private
+   * @param {Party.Connection} conn - The connection object for the new shard.
+   * @param {Party.ConnectionContext} ctx - The context of the shard connection.
+   * @description Handles a new shard connection, setting up the necessary state.
+   * @returns {void}
+   */
+  onConnectShard(conn: Party.Connection, ctx: Party.ConnectionContext) {
+    // Set shard metadata in connection state
+    const shardId = ctx.request?.headers.get('x-shard-id') || 'unknown-shard';
+    conn.setState({
+      shard: true,
+      shardId,
+      clients: new Map() // Track clients connected through this shard
+    });
+  }
+
+  /**
    * @method onMessage
    * @async
-   * @param {string} message - The message received from a user.
+   * @param {string} message - The message received from a user or shard.
    * @param {Party.Connection} sender - The connection object of the sender.
-   * @description Processes incoming messages and triggers corresponding actions in the sub-room.
+   * @description Processes incoming messages, handling differently based on if sender is shard or client.
    * @returns {Promise<void>}
-   * 
-   * @example
-   * ```typescript
-   * server.onMessage = async (message, sender) => {
-   *   await server.onMessage(message, sender);
-   *   console.log("Message processed from:", sender.id);
-   * };
-   * ```
    */
-
   async onMessage(message: string, sender: Party.Connection) {
+    // Check if message is from a shard
+    if (sender.state && (sender.state as any).shard) {
+      await this.handleShardMessage(message, sender);
+      return;
+    }
+    
+    // Regular client message handling
     let json
     try {
       json = JSON.parse(message)
@@ -489,12 +499,15 @@ export class Server implements Party.Server {
     catch (e) {
       return;
     }
-     // Validate incoming messages
+    
+    // Validate incoming messages
     const result = Message.safeParse(json);
     if (!result.success) {
       return;
     }
+    
     const subRoom = await this.getSubRoom()
+    
     // Check room guards
     const roomGuards = subRoom.constructor['_roomGuards'] || [];
     for (const guard of roomGuards) {
@@ -536,6 +549,214 @@ export class Server implements Party.Server {
         );
       }
     }
+  }
+
+  /**
+   * @method handleShardMessage
+   * @private
+   * @async
+   * @param {string} message - The message received from a shard.
+   * @param {Party.Connection} shardConnection - The connection object of the shard.
+   * @description Processes messages from shards, extracting client information.
+   * @returns {Promise<void>}
+   */
+  private async handleShardMessage(message: string, shardConnection: Party.Connection) {
+    let parsedMessage;
+    try {
+      parsedMessage = JSON.parse(message);
+    } catch (e) {
+      console.error("Error parsing shard message:", e);
+      return;
+    }
+    
+    const shardState = shardConnection.state as any;
+    const clients = shardState.clients;
+    
+    switch (parsedMessage.type) {
+      case 'shard.clientConnected':
+        // Handle new client connection through shard
+        await this.handleShardClientConnect(parsedMessage, shardConnection);
+        break;
+        
+      case 'shard.clientMessage':
+        // Handle message from a client through shard
+        await this.handleShardClientMessage(parsedMessage, shardConnection);
+        break;
+        
+      case 'shard.clientDisconnected':
+        // Handle client disconnection through shard
+        await this.handleShardClientDisconnect(parsedMessage, shardConnection);
+        break;
+        
+      default:
+        console.warn(`Unknown shard message type: ${parsedMessage.type}`);
+    }
+  }
+  
+  /**
+   * @method handleShardClientConnect
+   * @private
+   * @async
+   * @param {Object} message - The client connection message from a shard.
+   * @param {Party.Connection} shardConnection - The connection object of the shard.
+   * @description Handles a new client connection via a shard.
+   * @returns {Promise<void>}
+   */
+  private async handleShardClientConnect(message: any, shardConnection: Party.Connection) {
+    const { privateId, connectionInfo } = message;
+    const shardState = shardConnection.state as any;
+    
+    // Create a virtual connection context for the client
+    const virtualContext: Party.ConnectionContext = {
+      request: {
+        headers: new Headers({
+          'x-forwarded-for': connectionInfo.ip,
+          'user-agent': connectionInfo.userAgent,
+          // Add other headers as needed
+        }),
+        method: 'GET',
+        url: ''
+      } as unknown as Party.Request
+    };
+    
+    // Create a virtual connection for the client
+    const virtualConnection: Partial<Party.Connection> = {
+      id: privateId,
+      send: (data: string) => {
+        // Forward to the actual client through the shard
+        shardConnection.send(JSON.stringify({
+          targetClientId: privateId,
+          data
+        }));
+      },
+      state: {},
+      setState: (state: unknown) => {
+        // Store client state in the shard's client map
+        const clients = shardState.clients;
+        const currentState = clients.get(privateId) || {};
+        const mergedState = Object.assign({}, currentState, state as object);
+        clients.set(privateId, mergedState);
+        
+        // Update our virtual connection's state reference
+        virtualConnection.state = clients.get(privateId);
+        return virtualConnection.state as any;
+      },
+      close: () => {
+        // Send close command to the shard
+        shardConnection.send(JSON.stringify({
+          type: 'shard.closeClient',
+          privateId
+        }));
+        
+        // Clean up virtual connection
+        if (shardState.clients) {
+          shardState.clients.delete(privateId);
+        }
+      }
+    };
+    
+    // Initialize the client's state in the shard state
+    if (!shardState.clients.has(privateId)) {
+      shardState.clients.set(privateId, {});
+    }
+    
+    // Now handle this virtual connection as a regular client connection
+    await this.onConnectClient(virtualConnection as Party.Connection, virtualContext);
+  }
+  
+  /**
+   * @method handleShardClientMessage
+   * @private
+   * @async
+   * @param {Object} message - The client message from a shard.
+   * @param {Party.Connection} shardConnection - The connection object of the shard.
+   * @description Handles a message from a client via a shard.
+   * @returns {Promise<void>}
+   */
+  private async handleShardClientMessage(message: any, shardConnection: Party.Connection) {
+    const { privateId, publicId, payload } = message;
+    const shardState = shardConnection.state as any;
+    const clients = shardState.clients;
+    
+    // Get or create virtual connection for this client
+    if (!clients.has(privateId)) {
+      console.warn(`Received message from unknown client ${privateId}, creating virtual connection`);
+      clients.set(privateId, { publicId });
+    }
+    
+    // Create a virtual connection for the client
+    const virtualConnection: Partial<Party.Connection> = {
+      id: privateId,
+      send: (data: string) => {
+        // Forward to the actual client through the shard
+        shardConnection.send(JSON.stringify({
+          targetClientId: privateId,
+          data
+        }));
+      },
+      state: clients.get(privateId),
+      setState: (state: unknown) => {
+        const currentState = clients.get(privateId) || {};
+        const mergedState = Object.assign({}, currentState, state as object);
+        clients.set(privateId, mergedState);
+        virtualConnection.state = clients.get(privateId);
+        return virtualConnection.state as any;
+      },
+      close: () => {
+        shardConnection.send(JSON.stringify({
+          type: 'shard.closeClient',
+          privateId
+        }));
+        
+        if (shardState.clients) {
+          shardState.clients.delete(privateId);
+        }
+      }
+    };
+    
+    // Process the payload using the regular message handler
+    const payloadString = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    await this.onMessage(payloadString, virtualConnection as Party.Connection);
+  }
+  
+  /**
+   * @method handleShardClientDisconnect
+   * @private
+   * @async
+   * @param {Object} message - The client disconnection message from a shard.
+   * @param {Party.Connection} shardConnection - The connection object of the shard.
+   * @description Handles a client disconnection via a shard.
+   * @returns {Promise<void>}
+   */
+  private async handleShardClientDisconnect(message: any, shardConnection: Party.Connection) {
+    const { privateId, publicId } = message;
+    const shardState = shardConnection.state as any;
+    const clients = shardState.clients;
+    
+    // Get client state
+    const clientState = clients.get(privateId);
+    if (!clientState) {
+      console.warn(`Disconnection for unknown client ${privateId}`);
+      return;
+    }
+    
+    // Create a virtual connection for the client one last time
+    const virtualConnection: Partial<Party.Connection> = {
+      id: privateId,
+      send: () => {}, // No-op since client is disconnecting
+      state: clientState,
+      setState: () => {
+        // No-op since client is disconnecting
+        return {} as any;
+      },
+      close: () => {}
+    };
+    
+    // Handle disconnection with the regular onClose handler
+    await this.onClose(virtualConnection as Party.Connection);
+    
+    // Clean up
+    clients.delete(privateId);
   }
 
   /**

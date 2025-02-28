@@ -1,5 +1,6 @@
 import { ServerIo } from "./mock"
 import { Server } from "./server"
+import { Shard } from "./shard"
 
 /**
  * @description Test the room with a mock server and client
@@ -27,20 +28,43 @@ import { Server } from "./server"
  * @returns The server, room, and createClient function
  */
 export async function testRoom(Room, options: {
-    hibernate?: boolean
+    hibernate?: boolean,
+    shard?: boolean
 } = {}) {
-    const io = new ServerIo(Room.path)
+
+    const createServer = (io: any) => {
+        const server = new Server(io)
+        server.rooms = [Room]
+        return server
+    }
+
+    const isShard = options.shard || false
+    const io = new ServerIo(Room.path, isShard ? {
+        parties: {
+            game: createServer
+        }
+    } : {})
     Room.prototype.throttleSync = 0
     Room.prototype.throttleStorage = 0
     Room.prototype.options = options
-    const server = new Server(io as any)
-    server.rooms = [Room]
+    
+    let server: Server | Shard;
+    if (options.shard) {
+        const shardServer = new Shard(io as any);
+        // Add subRoom property to Shard for compatibility with Server
+        (shardServer as any).subRoom = null;
+        server = shardServer;
+    } else {
+        server = await createServer(io as any);
+    }
+    
     await server.onStart()
+    
     return {
         server,
-        room: server.subRoom,
+        room: (server as any).subRoom,
         createClient: async () => {
-            const client = await io.connection(server)
+            const client = await io.connection(server as Server)
             return client
         }
     }

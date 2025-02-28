@@ -2,6 +2,10 @@ import { generateShortUUID } from "../../sync/src/utils";
 import { Server } from "./server";
 import { Storage } from "./storage";
 
+export class MockRequest {
+  headers = new Headers();
+}
+
 export class MockPartyClient {
     private events: Map<string, Function> = new Map();
     id = generateShortUUID()
@@ -28,18 +32,45 @@ export class MockPartyClient {
     }
 }
 
+class MockLobby {
+  constructor(public server: Server) {}
+
+  socket() {
+    return new MockPartyClient(this.server)
+  }
+}
+
+class MockContext {
+  parties: {
+    main: Map<string, any>
+  } = {
+    main: new Map()
+  }
+
+  constructor(public room: MockPartyRoom, options: any = {}) {
+   const parties = options.parties || {}
+   for (let lobbyId in parties) {
+    this.parties.main.set(lobbyId, new MockLobby(parties[lobbyId](room)))
+   }
+  }
+}
+
+
 class MockPartyRoom {
   clients: Map<string, MockPartyClient> = new Map();
   storage = new Storage();
-  env = {}
+  context: MockContext;
 
-  constructor(public id?: string) {
+  constructor(public id?: string, options: any = {}) {
     this.id = id || generateShortUUID()
+    this.context = new MockContext(this, {
+      parties: options.parties || {}
+    })
   }
 
   async connection(server: Server) {
     const socket = new MockPartyClient(server);
-    await server.onConnect(socket.conn as any, { request: {} } as any);
+    await server.onConnect(socket.conn as any, { request: new MockRequest() } as any);
     this.clients.set(socket.id, socket);
     return socket
   }
