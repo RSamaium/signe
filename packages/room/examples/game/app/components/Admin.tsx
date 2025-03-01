@@ -264,7 +264,7 @@ const ShardCard = ({ shard }: { shard: ShardInfo }) => {
 };
 
 // Formulaire pour créer une salle
-const CreateRoomForm = ({ worldId, onRoomCreated, connection }: { worldId: string; onRoomCreated: () => void; connection: any }) => {
+const CreateRoomForm = ({ worldId, onRoomCreated }: { worldId: string; onRoomCreated: () => void }) => {
   const [name, setName] = useState('');
   const [balancingStrategy, setBalancingStrategy] = useState<'round-robin' | 'least-connections' | 'random'>('round-robin');
   const [isPublic, setIsPublic] = useState(true);
@@ -280,18 +280,29 @@ const CreateRoomForm = ({ worldId, onRoomCreated, connection }: { worldId: strin
     setError('');
     
     try {
-      // Utiliser l'action registerRoom via la connexion
-      connection.emit('registerRoom', {
-        roomId: name,
-        config: {
-          name,
-          balancingStrategy,
-          public: isPublic,
-          maxPlayersPerShard: maxPlayers,
-          minShards,
-          maxShards
-        }
+      // Utiliser une requête HTTP
+      const response = await fetch(`/parties/world/world-default/register-room`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          roomId: name,
+          config: {
+            name,
+            balancingStrategy,
+            public: isPublic,
+            maxPlayersPerShard: maxPlayers,
+            minShards,
+            maxShards
+          }
+        })
       });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Échec de la création de la salle");
+      }
       
       onRoomCreated();
       
@@ -392,19 +403,7 @@ const CreateRoomForm = ({ worldId, onRoomCreated, connection }: { worldId: strin
           />
         </div>
         
-        <button type="submit" className="submit-button" disabled={isLoading} onClick={() => {
-          connection.emit('registerRoom', {
-            roomId: name,
-            config: {
-              name,
-              balancingStrategy,
-              public: isPublic,
-              maxPlayersPerShard: maxPlayers,
-              minShards,
-              maxShards
-            }
-          });
-        }}>
+        <button type="submit" className="submit-button" disabled={isLoading}>
           {isLoading ? 'Création...' : 'Créer la salle'}
         </button>
       </form>
@@ -477,7 +476,7 @@ const CreateRoomForm = ({ worldId, onRoomCreated, connection }: { worldId: strin
 };
 
 // Formulaire pour le scaling d'une salle
-const ScaleRoomForm = ({ worldId, room, onScaled, connection }: { worldId: string; room: RoomInfo; onScaled: () => void; connection: any }) => {
+const ScaleRoomForm = ({ worldId, room, onScaled }: { worldId: string; room: RoomInfo; onScaled: () => void }) => {
   const [targetShardCount, setTargetShardCount] = useState(room.shards.length);
   const [urlTemplate, setUrlTemplate] = useState('wss://shard-{shardId}.example.com');
   const [maxConnections, setMaxConnections] = useState(room.config.maxPlayersPerShard);
@@ -501,15 +500,26 @@ const ScaleRoomForm = ({ worldId, room, onScaled, connection }: { worldId: strin
     setError('');
     
     try {
-      // Utiliser l'action scaleRoom via la connexion
-      connection.emit('scaleRoom', {
-        roomId: room.roomId,
-        targetShardCount,
-        shardTemplate: {
-          urlTemplate,
-          maxConnections
-        }
+      // Utiliser une requête HTTP
+      const response = await fetch(`/api/world/scale-room`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          roomId: room.roomId,
+          targetShardCount,
+          shardTemplate: {
+            urlTemplate,
+            maxConnections
+          }
+        })
       });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Échec de la mise à jour des shards");
+      }
       
       onScaled();
     } catch (err: any) {
@@ -703,7 +713,7 @@ const WorldAdmin = () => {
   const worldClient = useRef<WorldClient>(new WorldClient());
   const connection = useRef<any>(null);
   
-  // Se connecter au world
+  // Se connecter au world via WebSocket
   useEffect(() => {
     const connectToWorld = async () => {
       setIsLoading(true);
@@ -830,10 +840,7 @@ const WorldAdmin = () => {
   
   // Gestion du rafraîchissement manuel
   const handleRefresh = () => {
-    if (connection.current) {
-      // Demander explicitement les informations du world
-      connection.current.emit('getWorldInfo');
-    }
+   
   };
   
   // Handler pour la création d'une salle
@@ -880,7 +887,6 @@ const WorldAdmin = () => {
             <CreateRoomForm 
               worldId={worldId} 
               onRoomCreated={handleRoomCreated}
-              connection={connection.current}
             />
             
             {worldInfo?.rooms.map(room => (
@@ -935,7 +941,6 @@ const WorldAdmin = () => {
                   worldId={worldId}
                   room={selectedRoom}
                   onScaled={handleRoomScaled}
-                  connection={connection.current}
                 />
                 
                 <h3>Shards ({selectedRoom.shards.length})</h3>

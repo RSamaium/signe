@@ -1,7 +1,7 @@
 import type * as Party from "./types/party"
 import type { z } from "zod"
-type GuardFn = (sender: Party.Connection, value: any) => boolean | Promise<boolean>;
-type RoomGuardFn = (conn: Party.Connection, ctx: Party.ConnectionContext) => boolean | Promise<boolean>;
+type GuardFn = (sender: Party.Connection, value: any | Party.Request, room: Party.Room) => boolean | Promise<boolean | Response>;
+type RoomGuardFn = (conn: Party.Connection, ctx: Party.ConnectionContext, room: Party.Room) => boolean | Promise<boolean | Response>;
 
 export function Action(name: string, bodyValidation?: z.ZodSchema) {
   return function (target: any, propertyKey: string) {
@@ -97,25 +97,5 @@ export function Guard(guards: GuardFn[]) {
       guards = [guards]
     }
     target.constructor['_actionGuards'].set(propertyKey, guards);
-  };
-}
-
-/**
- * Request guard decorator
- * @param guards Array of guard functions to check before handling the HTTP request
- */
-export function RequestGuard(guards: GuardFn[]) {
-  return function (
-    target: any,
-    propertyKey: string,
-    descriptor: PropertyDescriptor
-  ) {
-    if (!target.constructor['_requestGuards']) {
-      target.constructor['_requestGuards'] = new Map();
-    }
-    if (!Array.isArray(guards)) {
-      guards = [guards]
-    }
-    target.constructor['_requestGuards'].set(propertyKey, guards);
   };
 }

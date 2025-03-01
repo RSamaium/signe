@@ -529,7 +529,9 @@ describe("Server", () => {
 
         await server.onMessage(message, conn as any);
 
-        expect(isRoomGuard).toHaveBeenCalledWith(conn, testValue);
+        expect(isRoomGuard).toHaveBeenCalledWith(conn, testValue, expect.objectContaining({
+          id: 'game'
+        }));
       });
     });
 

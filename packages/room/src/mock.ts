@@ -60,12 +60,14 @@ class MockPartyRoom {
   clients: Map<string, MockPartyClient> = new Map();
   storage = new Storage();
   context: MockContext;
+  env = {}
 
   constructor(public id?: string, options: any = {}) {
     this.id = id || generateShortUUID()
     this.context = new MockContext(this, {
       parties: options.parties || {}
     })
+    this.env = options.env || {}
   }
 
   async connection(server: Server) {

@@ -218,3 +218,10 @@ export function buildObject(valuesMap: Map<string, any>, allMemory: Record<strin
   }
   return memoryObj;
 }
+
+export function response(status: number, body: any): Response {
+  return new Response(JSON.stringify(body), { 
+    status,
+    headers: { 'Content-Type': 'application/json' }
+  });
+}

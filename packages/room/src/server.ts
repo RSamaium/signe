@@ -511,7 +511,7 @@ export class Server implements Party.Server {
     // Check room guards
     const roomGuards = subRoom.constructor['_roomGuards'] || [];
     for (const guard of roomGuards) {
-      const isAuthorized = await guard(sender, result.data.value);
+      const isAuthorized = await guard(sender, result.data.value, this.room);
       if (!isAuthorized) {
         return;
       }
@@ -913,9 +913,12 @@ export class Server implements Party.Server {
         // Extract path params if any
         const params = this.extractPathParams(pathname, handlerPath);  
         // Check request guards if they exist
-        const guards = subRoom.constructor['_requestGuards']?.get(handler.key) || [];
+        const guards = subRoom.constructor['_actionGuards']?.get(handler.key) || [];
         for (const guard of guards) {
-          const isAuthorized = await guard(null, req);
+          const isAuthorized = await guard(null, req, this.room);
+          if (isAuthorized instanceof Response) {
+            return isAuthorized;
+          }
           if (!isAuthorized) {
             return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 403 });
           }

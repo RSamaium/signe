@@ -1,4 +1,5 @@
 import type * as Party from "./types/party";
+import { response } from "./utils";
 
 // Interface for WebSocket compatibility with Party.js
 interface PartyWebSocket {
@@ -207,7 +208,8 @@ export class Shard {
       const response = await worldRoom.fetch('/update-shard', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'x-access-shard': this.room.env.SHARD_SECRET as string
         },
         body: JSON.stringify({
           shardId: this.room.id,
@@ -223,7 +225,6 @@ export class Shard {
 
       // Mettre à jour le dernier nombre rapporté
       this.lastReportedConnections = currentConnections;
-      console.log(`Updated World stats: ${this.room.id} now has ${currentConnections} connections`);
       return true;
     } catch (error) {
       console.error('Error updating World stats:', error);
@@ -240,7 +241,7 @@ export class Shard {
    */
   async onRequest(req: Party.Request): Promise<Response> {
     if (!this.mainServerStub) {
-      return new Response('Shard not connected to main server', { status: 503 });
+      return response(503, { error: 'Shard not connected to main server' });
     }
 
     try {
@@ -281,8 +282,7 @@ export class Shard {
       const response = await this.mainServerStub.fetch(path, requestInit);
       return response;
     } catch (error) {
-      console.error('Error forwarding request to main server:', error);
-      return new Response('Error forwarding request', { status: 500 });
+      return response(500, { error: 'Error forwarding request' });
     }
   }
   
@@ -292,8 +292,6 @@ export class Shard {
    * @description Executed periodically, used to perform maintenance tasks
    */
   async onAlarm() {
-    // Mettre à jour les statistiques même si elles n'ont pas changé
-    // Cela sert de "heartbeat" pour le World service
     await this.updateWorldStats();
   }
 }

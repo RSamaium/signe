@@ -3,6 +3,8 @@ import { Room, Action, Guard, Request } from "./decorators";
 import { sync, id, persist } from "@signe/sync";
 import { z } from "zod";
 import * as Party from "./types/party";
+import { guardManageWorld } from "./world.guard";
+import { response } from "./utils";
 
 // Types definitions
 type BalancingStrategy = 'round-robin' | 'least-connections' | 'random';
@@ -80,9 +82,15 @@ export class WorldRoom {
   // Configuration
   defaultShardUrlTemplate = signal("{shardId}");
   defaultMaxConnectionsPerShard = signal(100);
-  
-  // Lifecycle hooks
-  async onCreate(id: string) {
+
+  constructor(private room: Party.Room) {
+    const { AUTH_JWT_SECRET, SHARD_SECRET } = this.room.env;
+    if (!AUTH_JWT_SECRET) {
+      throw new Error("AUTH_JWT_SECRET env variable is not set");
+    }
+    if (!SHARD_SECRET) {
+      throw new Error("SHARD_SECRET env variable is not set");
+    }
     setTimeout(() => this.cleanupInactiveShards(), 60000);
   }
   
@@ -110,6 +118,7 @@ export class WorldRoom {
     path: 'register-room',
     method: 'POST',
   })
+  @Guard([guardManageWorld])
   async registerRoom(req: Party.Request) {
     const roomConfig: z.infer<typeof RoomConfigSchema> = await req.json();
     const roomId = roomConfig.name;
@@ -147,6 +156,7 @@ export class WorldRoom {
     path: 'update-shard',
     method: 'POST',
   })
+  @Guard([guardManageWorld])
   async updateShardStats(req: Party.Request) {
     const body: { shardId: string; connections: number; status: ShardStatus } = await req.json();
     const { shardId, connections, status } = body;
@@ -167,6 +177,7 @@ export class WorldRoom {
     path: 'scale-room',
     method: 'POST',
   })
+  @Guard([guardManageWorld])
   async scaleRoom(req: Party.Request) {
     const data: z.infer<typeof ScaleRoomSchema> = await req.json();
     const { targetShardCount, shardTemplate, roomId } = data;
@@ -250,33 +261,17 @@ export class WorldRoom {
         // Handle potential empty body or malformed JSON
         const body = await req.text();
         if (!body || body.trim() === '') {
-          return new Response(JSON.stringify({ 
-            error: "Request body is empty" 
-          }), { 
-            status: 400,
-            headers: { 'Content-Type': 'application/json' }
-          });
+          return response(400, { error: "Request body is empty" });
         }
         
         data = JSON.parse(body);
       } catch (parseError) {
-        console.error('JSON parsing error:', parseError);
-        return new Response(JSON.stringify({ 
-          error: "Invalid JSON in request body" 
-        }), { 
-          status: 400,
-          headers: { 'Content-Type': 'application/json' }
-        });
+        return response(400, { error: "Invalid JSON in request body" });
       }
       
       // Verify roomId is provided
       if (!data.roomId) {
-        return new Response(JSON.stringify({ 
-          error: "roomId parameter is required" 
-        }), { 
-          status: 400,
-          headers: { 'Content-Type': 'application/json' }
-        });
+        return response(400, { error: "roomId parameter is required" });
       }
       
       // Determine if auto-creation is enabled (default to true)
@@ -287,32 +282,18 @@ export class WorldRoom {
  
       // Check for errors
       if ('error' in result) {
-        return new Response(JSON.stringify({ 
-          error: result.error 
-        }), { 
-          status: 404,
-          headers: { 'Content-Type': 'application/json' }
-        });
+        return response(404, { error: result.error });
       }
       
       // Return shard information to the client
-      return new Response(JSON.stringify({
+      return response(200, {
         success: true,
         shardId: result.shardId,
         url: result.url
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
       });
     } catch (error) {
       console.error('Error connecting to shard:', error);
-      return new Response(JSON.stringify({ 
-        error: "Internal server error",
-        details: error instanceof Error ? error.message : String(error)
-      }), { 
-        status: 500,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return response(500, { error: "Internal server error", details: error instanceof Error ? error.message : String(error) });
     }
   }
   
@@ -325,8 +306,6 @@ export class WorldRoom {
     let room = this.rooms()[roomId];
     if (!room) {
       if (autoCreate) {
-        // Auto-create room with default settings
-        // Créer un mock Request avec un body pour registerRoom
         const mockRequest = {
           json: async () => ({
             name: roomId,
@@ -340,10 +319,8 @@ export class WorldRoom {
         
         await this.registerRoom(mockRequest);
         
-        // Récupérer la salle après l'avoir créée
         room = this.rooms()[roomId];
         
-        // Vérifier que la salle existe maintenant
         if (!room) {
           return { error: `Failed to create room ${roomId}` };
         }

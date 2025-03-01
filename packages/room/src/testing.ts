@@ -29,7 +29,8 @@ import { Shard } from "./shard"
  */
 export async function testRoom(Room, options: {
     hibernate?: boolean,
-    shard?: boolean
+    shard?: boolean,
+    env?: Record<string, string>
 } = {}) {
 
     const createServer = (io: any) => {
@@ -42,8 +43,11 @@ export async function testRoom(Room, options: {
     const io = new ServerIo(Room.path, isShard ? {
         parties: {
             game: createServer
-        }
-    } : {})
+        },
+        env: options.env
+    } : {
+        env: options.env
+    })
     Room.prototype.throttleSync = 0
     Room.prototype.throttleStorage = 0
     Room.prototype.options = options

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Server, testRoom, Room, Request, RequestGuard, Action } from "../../packages/room/src";
+import { Server, testRoom, Room, Request, Action, Guard } from "../../packages/room/src";
 import { sync } from "@signe/sync";
 import { signal } from "@signe/reactive";
 import { z } from "zod";
@@ -51,14 +51,14 @@ class ApiRoom {
   
   // Request with guard
   @Request({ path: "/protected" })
-  @RequestGuard([mockGuard])
+  @Guard([mockGuard])
   protected(req: any) {
     return { access: "granted" };
   }
   
   // Request with rejecting guard
   @Request({ path: "/rejected" })
-  @RequestGuard([mockRejectGuard])
+  @Guard([mockRejectGuard])
   rejected(req: any) {
     return { access: "granted" }; // This should never be reached
   }

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Server, testRoom, Room, WorldRoom, request } from "../../packages/room/src";
 import { sync } from "@signe/sync";
 import { signal } from "@signe/reactive";
+import { JWTAuth } from "../../packages/room/src/jwt";
 
 const baseUrl = '/parties/world/world-default'
 
@@ -13,16 +14,28 @@ if (!Request.prototype.json) {
   };
 }
 
+const AUTH_JWT_SECRET = 'test-secret'
+const SHARD_SECRET = 'shard-secret'
+let jwtSecret: string = ''
+
 describe('WorldRoom', () => {
   let client: any
   let room: WorldRoom
   let server: any
 
   beforeEach(async () => {
-    const test = await testRoom(WorldRoom);
+    const test = await testRoom(WorldRoom, {
+      env: {
+        AUTH_JWT_SECRET,
+        SHARD_SECRET
+      }
+    });
     client = await test.createClient();
     room = test.room
     server = test.server
+    jwtSecret = await (new JWTAuth(AUTH_JWT_SECRET)).sign({
+      worlds: ['world-default']
+    })
   })
 
   /**
@@ -33,6 +46,9 @@ describe('WorldRoom', () => {
       it('should create a room with minimal parameters', async () => {
         const response = await request(server, `${baseUrl}/register-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             name: 'minimal-room',
             balancingStrategy: 'round-robin',
@@ -51,6 +67,9 @@ describe('WorldRoom', () => {
       it('should create a room with full parameters including maxShards', async () => {
         const response = await request(server, `${baseUrl}/register-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             name: 'full-room',
             balancingStrategy: 'least-connections',
@@ -70,6 +89,9 @@ describe('WorldRoom', () => {
       it('should automatically create minimum shards when specified', async () => {
         const response = await request(server, `${baseUrl}/register-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             name: 'min-shards-room',
             balancingStrategy: 'round-robin',
@@ -94,6 +116,9 @@ describe('WorldRoom', () => {
         // First create a room
         await request(server, `${baseUrl}/register-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             name: 'update-test-room',
             balancingStrategy: 'round-robin',
@@ -106,6 +131,9 @@ describe('WorldRoom', () => {
         // Then update it
         const response = await request(server, `${baseUrl}/register-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             name: 'update-test-room',
             balancingStrategy: 'least-connections',
@@ -128,6 +156,9 @@ describe('WorldRoom', () => {
         // First create a room with 1 shard
         await request(server, `${baseUrl}/register-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             name: 'increase-shards-room',
             balancingStrategy: 'round-robin',
@@ -146,6 +177,9 @@ describe('WorldRoom', () => {
         // Update to increase minShards
         await request(server, `${baseUrl}/register-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             name: 'increase-shards-room',
             balancingStrategy: 'round-robin',
@@ -163,6 +197,9 @@ describe('WorldRoom', () => {
         // We need to scale the room manually to reach the new minShards
         await request(server, `${baseUrl}/scale-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             roomId: 'increase-shards-room',
             targetShardCount: 3
@@ -187,6 +224,9 @@ describe('WorldRoom', () => {
         // First register a room with a shard
         await request(server, `${baseUrl}/register-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             name: 'stats-test-room',
             balancingStrategy: 'round-robin',
@@ -205,6 +245,9 @@ describe('WorldRoom', () => {
         // Update the shard stats
         const response = await request(server, `${baseUrl}/update-shard`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             shardId: shard!.id,
             connections: 42,
@@ -219,6 +262,9 @@ describe('WorldRoom', () => {
       it('should fail to update a non-existent shard', async () => {
         const response = await request(server, `${baseUrl}/update-shard`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             shardId: 'non-existent-shard',
             connections: 42,
@@ -236,6 +282,9 @@ describe('WorldRoom', () => {
         // First register a room with a shard
         await request(server, `${baseUrl}/register-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             name: 'drain-test-room',
             balancingStrategy: 'round-robin',
@@ -253,6 +302,9 @@ describe('WorldRoom', () => {
         // Update the shard status to draining
         await request(server, `${baseUrl}/update-shard`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             shardId: shard!.id,
             connections: 5,
@@ -269,6 +321,9 @@ describe('WorldRoom', () => {
         // First register a room with a shard
         await request(server, `${baseUrl}/register-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             name: 'scale-test-room',
             balancingStrategy: 'round-robin',
@@ -288,6 +343,9 @@ describe('WorldRoom', () => {
         // Scale the room to 3 shards
         const response = await request(server, `${baseUrl}/scale-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             roomId: 'scale-test-room',
             targetShardCount: 3,
@@ -318,6 +376,9 @@ describe('WorldRoom', () => {
         // First register a room with max of 2 shards
         await request(server, `${baseUrl}/register-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             name: 'max-shards-room',
             balancingStrategy: 'round-robin',
@@ -331,6 +392,9 @@ describe('WorldRoom', () => {
         // Try to scale beyond the maximum
         const response = await request(server, `${baseUrl}/scale-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             roomId: 'max-shards-room',
             targetShardCount: 5,
@@ -352,6 +416,9 @@ describe('WorldRoom', () => {
         // First register a room with 3 shards
         await request(server, `${baseUrl}/register-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             name: 'scale-down-room',
             balancingStrategy: 'round-robin',
@@ -370,6 +437,9 @@ describe('WorldRoom', () => {
         // Scale down to 1 shard
         await request(server, `${baseUrl}/scale-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             roomId: 'scale-down-room',
             targetShardCount: 1
@@ -387,6 +457,9 @@ describe('WorldRoom', () => {
         // First register a room with 3 shards
         await request(server, `${baseUrl}/register-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             name: 'drain-priority-room',
             balancingStrategy: 'round-robin',
@@ -405,6 +478,9 @@ describe('WorldRoom', () => {
         // Mark one shard as draining
         await request(server, `${baseUrl}/update-shard`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             shardId: shards[1].id,
             connections: 5,
@@ -415,6 +491,9 @@ describe('WorldRoom', () => {
         // Scale down to 2 shards
         await request(server, `${baseUrl}/scale-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             roomId: 'drain-priority-room',
             targetShardCount: 2
@@ -440,6 +519,9 @@ describe('WorldRoom', () => {
         // Register a room with round-robin balancing and 3 shards
         await request(server, `${baseUrl}/register-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             name: 'round-robin-room',
             balancingStrategy: 'round-robin',
@@ -488,6 +570,9 @@ describe('WorldRoom', () => {
         // Register a room with least-connections balancing
         await request(server, `${baseUrl}/register-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             name: 'least-conn-room',
             balancingStrategy: 'least-connections',
@@ -505,6 +590,9 @@ describe('WorldRoom', () => {
         // Update the shards with different connection counts
         await request(server, `${baseUrl}/update-shard`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             shardId: shards[0].id,
             connections: 20,
@@ -514,6 +602,9 @@ describe('WorldRoom', () => {
         
         await request(server, `${baseUrl}/update-shard`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             shardId: shards[1].id,
             connections: 5,
@@ -523,6 +614,9 @@ describe('WorldRoom', () => {
         
         await request(server, `${baseUrl}/update-shard`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             shardId: shards[2].id,
             connections: 10,
@@ -549,6 +643,9 @@ describe('WorldRoom', () => {
         // Register a room with random balancing and many shards
         await request(server, `${baseUrl}/register-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             name: 'random-room',
             balancingStrategy: 'random',
@@ -603,6 +700,9 @@ describe('WorldRoom', () => {
         // Create a room first
         await request(server, `${baseUrl}/register-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             name: 'connect-test-room',
             balancingStrategy: 'round-robin',
@@ -681,6 +781,9 @@ describe('WorldRoom', () => {
         // Create a room first
         await request(server, `${baseUrl}/register-room`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             name: 'inactive-shards-room',
             balancingStrategy: 'round-robin',
@@ -698,6 +801,9 @@ describe('WorldRoom', () => {
         // Mark the shard as maintenance
         await request(server, `${baseUrl}/update-shard`, {
           method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
           body: JSON.stringify({
             shardId: shard!.id,
             connections: 0,
@@ -729,6 +835,9 @@ describe('WorldRoom', () => {
       // Create a room with a shard
       await request(server, `${baseUrl}/register-room`, {
         method: 'POST',
+        headers: {
+          'Authorization': jwtSecret
+        },
         body: JSON.stringify({
           name: 'cleanup-test-room',
           balancingStrategy: 'round-robin',
@@ -779,6 +888,9 @@ describe('WorldRoom', () => {
       // Missing required fields
       const response1 = await request(server, `${baseUrl}/register-room`, {
         method: 'POST',
+        headers: {
+          'Authorization': jwtSecret
+        },
         body: JSON.stringify({
           name: 'invalid-room',
           // Missing balancingStrategy
@@ -793,6 +905,9 @@ describe('WorldRoom', () => {
       // Invalid enum value
       const response2 = await request(server, `${baseUrl}/register-room`, {
         method: 'POST',
+        headers: {
+          'Authorization': jwtSecret
+        },
         body: JSON.stringify({
           name: 'invalid-room',
           balancingStrategy: 'invalid-strategy', // Not a valid strategy
@@ -807,6 +922,9 @@ describe('WorldRoom', () => {
       // Negative values for numeric fields
       const response3 = await request(server, `${baseUrl}/register-room`, {
         method: 'POST',
+        headers: {
+          'Authorization': jwtSecret
+        },
         body: JSON.stringify({
           name: 'invalid-room',
           balancingStrategy: 'round-robin',
@@ -823,6 +941,9 @@ describe('WorldRoom', () => {
       // Create a room with a shard first
       await request(server, `${baseUrl}/register-room`, {
         method: 'POST',
+        headers: {
+          'Authorization': jwtSecret
+        },
         body: JSON.stringify({
           name: 'validation-test-room',
           balancingStrategy: 'round-robin',
@@ -840,6 +961,9 @@ describe('WorldRoom', () => {
       // Try to update with negative connections
       const response = await request(server, `${baseUrl}/update-shard`, {
         method: 'POST',
+        headers: {
+          'Authorization': jwtSecret
+        },
         body: JSON.stringify({
           shardId: shard!.id,
           connections: -5, // Negative value
@@ -852,6 +976,9 @@ describe('WorldRoom', () => {
       // Try to update with invalid status
       const response2 = await request(server, `${baseUrl}/update-shard`, {
         method: 'POST',
+        headers: {
+          'Authorization': jwtSecret
+        },
         body: JSON.stringify({
           shardId: shard!.id,
           connections: 10,
