@@ -83,6 +83,6 @@ export async function request(room: Server, path: string, options: {
 }) {
     const url = new URL('http://localhost' + path)
     const request = new Request(url.toString(), options)
-    const response = await room.onRequest(request)
+    const response = await room.onRequest(request as any)
     return response
 }

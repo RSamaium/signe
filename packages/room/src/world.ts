@@ -313,7 +313,6 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
     }
   }
   
-  // Méthode privée pour trouver un shard optimal sans connexion
   private async findOptimalShard(
     roomId: string, 
     autoCreate: boolean = true
@@ -423,12 +422,12 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
     }
     
     // Generate shard ID
-    const shardId = `${roomId}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+    const shardId = `${roomId}:${Date.now()}-${Math.floor(Math.random() * 10000)}`;
     
     // Generate URL from template
     const template = urlTemplate || this.defaultShardUrlTemplate();
-    const url = template.replace('{shardId}', shardId).replace('{roomId}', shardId);
-    
+    const url = template.replace('{shardId}', shardId).replace('{roomId}', roomId);
+
     // Set max connections
     const max = maxConnections || room.maxPlayersPerShard();
     

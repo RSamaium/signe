@@ -1,18 +1,16 @@
 import type * as Party from "./types/party";
 import { response } from "./utils";
 
-// Interface for WebSocket compatibility with Party.js
 interface PartyWebSocket {
   send: (data: string | ArrayBufferLike | Blob | ArrayBufferView) => void;
   addEventListener: (type: string, listener: (event: any) => void) => void;
   close: () => void;
 }
 
-// Options fournies au shard lors de la création
 export interface ShardOptions {
-  worldUrl?: string;        // URL du service World pour les mises à jour
-  worldId?: string;         // ID du monde dans le service World
-  statsInterval?: number;   // Intervalle en ms pour la mise à jour périodique des stats (défaut: 30000)
+  worldUrl?: string;
+  worldId?: string;
+  statsInterval?: number;
 }
 
 export class Shard {
@@ -22,52 +20,16 @@ export class Shard {
   worldUrl: string | null = null;
   worldId: string = 'default';
   lastReportedConnections: number = 0;
-  statsInterval: number = 30000; // 30 secondes par défaut
-  statsIntervalId: NodeJS.Timeout | null = null;
+  statsInterval: number = 30000; 
+  statsIntervalId: any = null;
 
-  constructor(private room: Party.Party) {
-    this.initializeShardOptions();
-  }
-
-  /**
-   * Initialise les options du shard à partir du contexte
-   */
-  private initializeShardOptions() {
-    // Essayer de récupérer les options depuis différents emplacements possibles
-    let options: ShardOptions | undefined;
-
-    // Vérifier d'abord le contexte direct de la room
-    if ((this.room.context as any).options?.shard) {
-      options = (this.room.context as any).options.shard;
-    } 
-    // Vérifier ensuite les metadata de la room
-    else if ((this.room as any).metadata?.shardOptions) {
-      options = (this.room as any).metadata.shardOptions;
-    }
-    // Vérifier enfin les env vars (si disponibles)
-    else if (typeof process !== 'undefined' && process.env) {
-      const worldUrl = process.env.WORLD_SERVICE_URL;
-      const worldId = process.env.WORLD_SERVICE_ID;
-      const statsInterval = process.env.SHARD_STATS_INTERVAL ? 
-        parseInt(process.env.SHARD_STATS_INTERVAL, 10) : undefined;
-      
-      if (worldUrl) {
-        options = { worldUrl, worldId, statsInterval };
-      }
-    }
-
-    // Appliquer les options si elles existent
-    if (options) {
-      this.worldUrl = options.worldUrl || null;
-      this.worldId = options.worldId || 'default';
-      this.statsInterval = options.statsInterval || 30000;
-    }
-  }
+  constructor(private room: Party.Room) {}
 
   async onStart() {
-    const roomStub = this.room.context.parties.main.get('game');
+    const roomId = this.room.id.split(':')[0];
+    const roomStub = this.room.context.parties.main.get(roomId);
     if (!roomStub) {
-      console.warn('No game room stub found in main party context');
+      console.warn('No room room stub found in main party context');
       return;
     }
     
@@ -100,19 +62,12 @@ export class Shard {
       }
     });
 
-    // Initialiser les statistiques au démarrage
     await this.updateWorldStats();
-
-    // Démarrer la mise à jour périodique des statistiques
     this.startPeriodicStatsUpdates();
   }
 
-  /**
-   * Démarre les mises à jour périodiques des statistiques
-   */
   private startPeriodicStatsUpdates() {
     if (!this.worldUrl) {
-      console.log(`Shard ${this.room.id} - Periodic stats updates disabled (no worldUrl configured)`);
       return;
     }
 
@@ -120,7 +75,6 @@ export class Shard {
       clearInterval(this.statsIntervalId);
     }
 
-    console.log(`Shard ${this.room.id} - Starting periodic stats updates every ${this.statsInterval}ms`);
     this.statsIntervalId = setInterval(() => {
       this.updateWorldStats().catch(error => {
         console.error('Error in periodic stats update:', error);
@@ -128,9 +82,6 @@ export class Shard {
     }, this.statsInterval);
   }
 
-  /**
-   * Arrête les mises à jour périodiques des statistiques
-   */
   private stopPeriodicStatsUpdates() {
     if (this.statsIntervalId) {
       clearInterval(this.statsIntervalId);
@@ -153,7 +104,6 @@ export class Shard {
       }
     }));
 
-    // Mettre à jour les statistiques du World service
     this.updateWorldStats();
   }
 
@@ -188,14 +138,9 @@ export class Shard {
       publicId: (conn.state as any)?.publicId
     }));
 
-    // Mettre à jour les statistiques du World service
     this.updateWorldStats();
   }
 
-  /**
-   * Envoie une mise à jour des statistiques au service World
-   * @returns {Promise<boolean>} Succès de la mise à jour
-   */
   async updateWorldStats(): Promise<boolean> {
     const currentConnections = this.connectionMap.size;
     

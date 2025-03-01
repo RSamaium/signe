@@ -2,10 +2,6 @@ import { generateShortUUID } from "../../sync/src/utils";
 import { Server } from "./server";
 import { Storage } from "./storage";
 
-export class MockRequest {
-  headers = new Headers();
-}
-
 export class MockPartyClient {
     private events: Map<string, Function> = new Map();
     id = generateShortUUID()
@@ -72,7 +68,14 @@ class MockPartyRoom {
 
   async connection(server: Server) {
     const socket = new MockPartyClient(server);
-    await server.onConnect(socket.conn as any, { request: new MockRequest() } as any);
+    const url = new URL('http://localhost')
+    const request = new Request(url.toString(), {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    })
+    await server.onConnect(socket.conn as any, { request } as any);
     this.clients.set(socket.id, socket);
     return socket
   }
