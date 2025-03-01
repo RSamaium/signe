@@ -61,25 +61,43 @@ export class Server implements Party.Server {
    * const server = new MyServer(new ServerIo("game"));
    * ```
    */
-  constructor(readonly room: Party.Room) {}
+  constructor(readonly room: Party.Room) { }
 
- /**
-   * @readonly
-   * @property {boolean} isHibernate - Indicates whether the server is in hibernate mode.
-   * 
-   * @example
-   * ```typescript
-   * if (!server.isHibernate) {
-   *   console.log("Server is active");
-   * }
-   * ```
-   */
+  /**
+    * @readonly
+    * @property {boolean} isHibernate - Indicates whether the server is in hibernate mode.
+    * 
+    * @example
+    * ```typescript
+    * if (!server.isHibernate) {
+    *   console.log("Server is active");
+    * }
+    * ```
+    */
   get isHibernate(): boolean {
     return !!this["options"]?.hibernate;
   }
 
   get roomStorage(): Party.Storage {
     return this.room.storage
+  }
+
+  async send(conn: Party.Connection, obj: any, subRoom: any) {
+    obj = structuredClone(obj);
+    if (subRoom.interceptorPacket) {
+      const signal = this.getUsersProperty(subRoom);
+      const { publicId } = conn.state as any;
+      const user = signal?.()[publicId];
+      obj = await awaitReturn(subRoom["interceptorPacket"]?.(user, obj, conn));
+      if (obj === null) return;
+    }
+    conn.send(JSON.stringify(obj));
+  }
+
+  broadcast(obj: any, subRoom: any) {
+    for (let conn of this.room.getConnections()) {
+      this.send(conn, obj, subRoom);
+    }
   }
 
   /**
@@ -122,7 +140,7 @@ export class Server implements Party.Server {
       // Store valid publicIds from sessions
       const validPublicIds = new Set<string>();
       const expiredPublicIds = new Set<string>();
-      const SESSION_EXPIRY_TIME = options.sessionExpiryTime 
+      const SESSION_EXPIRY_TIME = options.sessionExpiryTime
       const now = Date.now();
 
       for (const [key, session] of sessions) {
@@ -130,15 +148,15 @@ export class Server implements Party.Server {
         if (!key.startsWith('session:')) continue;
 
         const privateId = key.replace('session:', '');
-        const typedSession = session as {publicId: string, created: number, connected: boolean};
-        
+        const typedSession = session as { publicId: string, created: number, connected: boolean };
+
         // Check if session should be deleted based on:
         // 1. Connection is not active
         // 2. Session is marked as disconnected
         // 3. Session is older than expiry time
-        if (!activePrivateIds.has(privateId) && 
-            !typedSession.connected && 
-            (now - typedSession.created) > SESSION_EXPIRY_TIME) {
+        if (!activePrivateIds.has(privateId) &&
+          !typedSession.connected &&
+          (now - typedSession.created) > SESSION_EXPIRY_TIME) {
           // Delete expired session
           await this.deleteSession(privateId);
           expiredPublicIds.add(typedSession.publicId);
@@ -159,7 +177,7 @@ export class Server implements Party.Server {
           }
         }
       }
-     
+
     } catch (error) {
       console.error('Error in garbage collector:', error);
     }
@@ -229,11 +247,12 @@ export class Server implements Party.Server {
         return;
       }
       const packet = buildObject(values, instance.$memoryAll);
-      this.room.broadcast(
-        JSON.stringify({
+      this.broadcast(
+        {
           type: "sync",
           value: packet,
-        })
+        },
+        instance
       );
       values.clear();
     }
@@ -247,7 +266,7 @@ export class Server implements Party.Server {
       for (let [path, value] of values) {
         const _instance =
           path == "." ? instance : getByPath(instance, path);
-        const itemValue = createStatesSnapshot(_instance); 
+        const itemValue = createStatesSnapshot(_instance);
         if (value == DELETE_TOKEN) {
           await this.room.storage.delete(path);
         } else {
@@ -327,17 +346,17 @@ export class Server implements Party.Server {
     return meta?.get("users")
   }
 
-  private async getSession(privateId: string): Promise<{publicId: string, state?: any, created?: number, connected?: boolean} | null> {
+  private async getSession(privateId: string): Promise<{ publicId: string, state?: any, created?: number, connected?: boolean } | null> {
     if (!privateId) return null;
     try {
       const session = await this.room.storage.get(`session:${privateId}`);
-      return session as {publicId: string, state?: any, created: number, connected: boolean} | null;
+      return session as { publicId: string, state?: any, created: number, connected: boolean } | null;
     } catch (e) {
       return null;
     }
   }
 
-  private async saveSession(privateId: string, data: {publicId: string, state?: any, created?: number, connected?: boolean}) {
+  private async saveSession(privateId: string, data: { publicId: string, state?: any, created?: number, connected?: boolean }) {
     const sessionData = {
       ...data,
       created: data.created || Date.now(),
@@ -381,7 +400,7 @@ export class Server implements Party.Server {
     }
 
     // Check for existing session
-    const existingSession = await this.getSession(conn.id) 
+    const existingSession = await this.getSession(conn.id)
 
     // Generate IDs
     const publicId = existingSession?.publicId || generateShortUUID();
@@ -392,7 +411,7 @@ export class Server implements Party.Server {
 
     if (signal) {
       const { classType } = signal.options;
-     
+
       // Restore state if exists
       if (!existingSession?.publicId) {
         user = isClass(classType) ? new classType() : classType(conn, ctx);
@@ -400,7 +419,7 @@ export class Server implements Party.Server {
         const snapshot = createStatesSnapshot(user);
         this.room.storage.put(`${usersPropName}.${publicId}`, snapshot);
       }
-      
+
       // Only store new session if it doesn't exist
       if (!existingSession) {
         await this.saveSession(conn.id, {
@@ -414,23 +433,21 @@ export class Server implements Party.Server {
 
     // Call the room's onJoin method if it exists
     await awaitReturn(subRoom["onJoin"]?.(user, conn, ctx));
-    
+
     // Store both IDs in connection state
-    conn.setState({ 
+    conn.setState({
       ...conn.state,
       publicId
-     });
+    });
 
     // Send initial sync data with both IDs to the new connection
-    conn.send(
-      JSON.stringify({
-        type: "sync",
-        value: {
-          pId: publicId,
-          ...subRoom.$memoryAll,
-        },
-      })
-    );
+    this.send(conn, {
+      type: "sync",
+      value: {
+        pId: publicId,
+        ...subRoom.$memoryAll,
+      },
+    }, subRoom)
   }
 
   /**
@@ -490,7 +507,7 @@ export class Server implements Party.Server {
       await this.handleShardMessage(message, sender);
       return;
     }
-    
+
     // Regular client message handling
     let json
     try {
@@ -499,15 +516,15 @@ export class Server implements Party.Server {
     catch (e) {
       return;
     }
-    
+
     // Validate incoming messages
     const result = Message.safeParse(json);
     if (!result.success) {
       return;
     }
-    
+
     const subRoom = await this.getSubRoom()
-    
+
     // Check room guards
     const roomGuards = subRoom.constructor['_roomGuards'] || [];
     for (const guard of roomGuards) {
@@ -568,31 +585,31 @@ export class Server implements Party.Server {
       console.error("Error parsing shard message:", e);
       return;
     }
-    
+
     const shardState = shardConnection.state as any;
     const clients = shardState.clients;
-    
+
     switch (parsedMessage.type) {
       case 'shard.clientConnected':
         // Handle new client connection through shard
         await this.handleShardClientConnect(parsedMessage, shardConnection);
         break;
-        
+
       case 'shard.clientMessage':
         // Handle message from a client through shard
         await this.handleShardClientMessage(parsedMessage, shardConnection);
         break;
-        
+
       case 'shard.clientDisconnected':
         // Handle client disconnection through shard
         await this.handleShardClientDisconnect(parsedMessage, shardConnection);
         break;
-        
+
       default:
         console.warn(`Unknown shard message type: ${parsedMessage.type}`);
     }
   }
-  
+
   /**
    * @method handleShardClientConnect
    * @private
@@ -605,7 +622,7 @@ export class Server implements Party.Server {
   private async handleShardClientConnect(message: any, shardConnection: Party.Connection) {
     const { privateId, connectionInfo } = message;
     const shardState = shardConnection.state as any;
-    
+
     // Create a virtual connection context for the client
     const virtualContext: Party.ConnectionContext = {
       request: {
@@ -618,7 +635,7 @@ export class Server implements Party.Server {
         url: ''
       } as unknown as Party.Request
     };
-    
+
     // Create a virtual connection for the client
     const virtualConnection: Partial<Party.Connection> = {
       id: privateId,
@@ -636,7 +653,7 @@ export class Server implements Party.Server {
         const currentState = clients.get(privateId) || {};
         const mergedState = Object.assign({}, currentState, state as object);
         clients.set(privateId, mergedState);
-        
+
         // Update our virtual connection's state reference
         virtualConnection.state = clients.get(privateId);
         return virtualConnection.state as any;
@@ -647,23 +664,23 @@ export class Server implements Party.Server {
           type: 'shard.closeClient',
           privateId
         }));
-        
+
         // Clean up virtual connection
         if (shardState.clients) {
           shardState.clients.delete(privateId);
         }
       }
     };
-    
+
     // Initialize the client's state in the shard state
     if (!shardState.clients.has(privateId)) {
       shardState.clients.set(privateId, {});
     }
-    
+
     // Now handle this virtual connection as a regular client connection
     await this.onConnectClient(virtualConnection as Party.Connection, virtualContext);
   }
-  
+
   /**
    * @method handleShardClientMessage
    * @private
@@ -677,13 +694,13 @@ export class Server implements Party.Server {
     const { privateId, publicId, payload } = message;
     const shardState = shardConnection.state as any;
     const clients = shardState.clients;
-    
+
     // Get or create virtual connection for this client
     if (!clients.has(privateId)) {
       console.warn(`Received message from unknown client ${privateId}, creating virtual connection`);
       clients.set(privateId, { publicId });
     }
-    
+
     // Create a virtual connection for the client
     const virtualConnection: Partial<Party.Connection> = {
       id: privateId,
@@ -707,18 +724,18 @@ export class Server implements Party.Server {
           type: 'shard.closeClient',
           privateId
         }));
-        
+
         if (shardState.clients) {
           shardState.clients.delete(privateId);
         }
       }
     };
-    
+
     // Process the payload using the regular message handler
     const payloadString = typeof payload === 'string' ? payload : JSON.stringify(payload);
     await this.onMessage(payloadString, virtualConnection as Party.Connection);
   }
-  
+
   /**
    * @method handleShardClientDisconnect
    * @private
@@ -732,29 +749,29 @@ export class Server implements Party.Server {
     const { privateId, publicId } = message;
     const shardState = shardConnection.state as any;
     const clients = shardState.clients;
-    
+
     // Get client state
     const clientState = clients.get(privateId);
     if (!clientState) {
       console.warn(`Disconnection for unknown client ${privateId}`);
       return;
     }
-    
+
     // Create a virtual connection for the client one last time
     const virtualConnection: Partial<Party.Connection> = {
       id: privateId,
-      send: () => {}, // No-op since client is disconnecting
+      send: () => { }, // No-op since client is disconnecting
       state: clientState,
       setState: () => {
         // No-op since client is disconnecting
         return {} as any;
       },
-      close: () => {}
+      close: () => { }
     };
-    
+
     // Handle disconnection with the regular onClose handler
     await this.onClose(virtualConnection as Party.Connection);
-    
+
     // Clean up
     clients.delete(privateId);
   }
@@ -799,12 +816,10 @@ export class Server implements Party.Server {
     await this.updateSessionConnection(privateId, false);
 
     // Broadcast user disconnection
-    this.room.broadcast(
-      JSON.stringify({
-        type: "user_disconnected",
-        value: { publicId }
-      })
-    );
+    this.broadcast({
+      type: "user_disconnected",
+      value: { publicId }
+    }, subRoom);
   }
 
   async onAlarm() {
@@ -828,15 +843,15 @@ export class Server implements Party.Server {
     // Check if the request is coming from a shard
     const isFromShard = req.headers.has('x-forwarded-by-shard');
     const shardId = req.headers.get('x-shard-id');
- 
+
     if (isFromShard) {
       return this.handleShardRequest(req, shardId);
     }
-    
+
     // Handle regular client request
     return this.handleDirectRequest(req);
   }
-  
+
   /**
    * @method handleDirectRequest
    * @private
@@ -850,7 +865,7 @@ export class Server implements Party.Server {
     const res = (body: any, status: number) => {
       return new Response(JSON.stringify(body), { status });
     };
-    
+
     if (!subRoom) {
       return res({
         error: "Not found"
@@ -911,7 +926,7 @@ export class Server implements Party.Server {
       // Simple path matching (could be enhanced with path params)
       if (this.pathMatches(pathname, handlerPath)) {
         // Extract path params if any
-        const params = this.extractPathParams(pathname, handlerPath);  
+        const params = this.extractPathParams(pathname, handlerPath);
         // Check request guards if they exist
         const guards = subRoom.constructor['_actionGuards']?.get(handler.key) || [];
         for (const guard of guards) {
@@ -934,7 +949,7 @@ export class Server implements Party.Server {
               const validation = handler.bodyValidation.safeParse(body);
               if (!validation.success) {
                 return new Response(
-                  JSON.stringify({ error: "Invalid request body", details: validation.error }), 
+                  JSON.stringify({ error: "Invalid request body", details: validation.error }),
                   { status: 400 }
                 );
               }
@@ -942,7 +957,7 @@ export class Server implements Party.Server {
             }
           } catch (error) {
             return new Response(
-              JSON.stringify({ error: "Failed to parse request body" }), 
+              JSON.stringify({ error: "Failed to parse request body" }),
               { status: 400 }
             );
           }
@@ -960,7 +975,7 @@ export class Server implements Party.Server {
 
           return new Response(
             typeof result === 'string' ? result : JSON.stringify(result),
-            { 
+            {
               status: 200,
               headers: { 'Content-Type': typeof result === 'string' ? 'text/plain' : 'application/json' }
             }
@@ -968,7 +983,7 @@ export class Server implements Party.Server {
         } catch (error) {
           console.error('Error executing request handler:', error);
           return new Response(
-            JSON.stringify({ error: "Internal server error" }), 
+            JSON.stringify({ error: "Internal server error" }),
             { status: 500 }
           );
         }
@@ -1007,7 +1022,7 @@ export class Server implements Party.Server {
    */
   private extractPathParams(requestPath: string, handlerPath: string): Record<string, string> {
     const params: Record<string, string> = {};
-    
+
     // Extract parameter names from handler path
     const paramNames: string[] = [];
     handlerPath.split('/').forEach(segment => {
@@ -1015,25 +1030,25 @@ export class Server implements Party.Server {
         paramNames.push(segment.substring(1));
       }
     });
-    
+
     // Extract parameter values from request path
     const pathRegexString = handlerPath
       .replace(/\//g, '\\/') // Escape slashes
       .replace(/:([^\/]+)/g, '([^/]+)'); // Convert :params to capture groups
-      
+
     const pathRegex = new RegExp(`^${pathRegexString}$`);
     const matches = requestPath.match(pathRegex);
-    
+
     if (matches && matches.length > 1) {
       // Skip the first match (the full string)
       for (let i = 0; i < paramNames.length; i++) {
         params[paramNames[i]] = matches[i + 1];
       }
     }
-    
+
     return params;
   }
-  
+
   /**
    * @method handleShardRequest
    * @private
@@ -1045,40 +1060,40 @@ export class Server implements Party.Server {
    */
   private async handleShardRequest(req: Party.Request, shardId: string | null): Promise<Response> {
     const subRoom = await this.getSubRoom();
-    
+
     if (!subRoom) {
       return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
     }
-    
+
     // Create a context that preserves original client information
     const originalClientIp = req.headers.get('x-original-client-ip');
     const enhancedReq = this.createEnhancedRequest(req, originalClientIp);
-    
+
     try {
       // First try to match using the registered @Request handlers
       const response = await this.tryMatchRequestHandler(enhancedReq, subRoom);
       if (response) {
         return response;
       }
-      
+
       // Fall back to the legacy onRequest handler
       const legacyResponse = await awaitReturn(subRoom["onRequest"]?.(enhancedReq, this.room));
-      
+
       if (!legacyResponse) {
         return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
       }
-      
+
       if (legacyResponse instanceof Response) {
         return legacyResponse;
       }
-      
+
       return new Response(JSON.stringify(legacyResponse), { status: 200 });
     } catch (error) {
       console.error(`Error processing request from shard ${shardId}:`, error);
       return new Response(JSON.stringify({ error: "Internal server error" }), { status: 500 });
     }
   }
-  
+
   /**
    * @method createEnhancedRequest
    * @private
@@ -1090,15 +1105,15 @@ export class Server implements Party.Server {
   private createEnhancedRequest(originalReq: Party.Request, originalClientIp: string | null): Party.Request {
     // Clone the original request to avoid mutating it
     const clonedReq = originalReq.clone();
-    
+
     // Add a custom property to the request to indicate it came via a shard
     (clonedReq as any).viaShard = true;
-    
+
     // If we have the original client IP, we can use it for things like rate limiting or geolocation
     if (originalClientIp) {
       (clonedReq as any).originalClientIp = originalClientIp;
     }
-    
+
     return clonedReq;
   }
 }

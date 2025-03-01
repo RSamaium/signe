@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import Room from './Room';
-import { connection as connectionRoom } from '../../../../../sync/src/client';
+import { connectionRoom } from '../../../../../sync/src/client';
 import { signal, effect } from '@signe/reactive';
 
 // Classe client pour représenter le world côté client
@@ -727,7 +727,10 @@ const WorldAdmin = () => {
         const conn = await connectionRoom({
           host: window.location.origin,
           room: `world-default`,
-          party: 'world'
+          party: 'world',
+          query: {
+            'world-auth-token': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTUxNjIzOTAyMn0.KMUFsIDTnFmyG3nMiGM6H9FNFUROf3wh7SmqJp-QV30'
+          }
         }, worldClient.current);
         
         connection.current = conn;

@@ -5,6 +5,7 @@ import { z } from "zod";
 import * as Party from "./types/party";
 import { guardManageWorld } from "./world.guard";
 import { response } from "./utils";
+import { RoomInterceptorPacket, RoomOnJoin } from "./interfaces";
 
 // Types definitions
 type BalancingStrategy = 'round-robin' | 'least-connections' | 'random';
@@ -71,7 +72,7 @@ class ShardInfo {
   throttleStorage: 2000, // Throttle storage updates (ms)
   throttleSync: 500, // Throttle sync updates (ms)
 })
-export class WorldRoom {
+export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
   // Synchronized state
   @sync(RoomConfig) rooms = signal<Record<string, RoomConfig>>({});
   @sync(ShardInfo) shards = signal<Record<string, ShardInfo>>({});
@@ -92,6 +93,21 @@ export class WorldRoom {
       throw new Error("SHARD_SECRET env variable is not set");
     }
     setTimeout(() => this.cleanupInactiveShards(), 60000);
+  }
+
+  async onJoin(user: any, conn: Party.Connection, ctx: Party.ConnectionContext) {
+    const canConnect = await guardManageWorld(user, ctx.request, this.room);
+    conn.setState({
+      ...conn.state,
+      isAdmin: canConnect
+    })
+  }
+
+  interceptorPacket(_, obj: any, conn: Party.Connection) {
+    if (!conn.state['isAdmin']) {
+      return null;
+    }
+    return obj;
   }
   
   // Helper methods

@@ -88,7 +88,7 @@ class MockPartyRoom {
   }
 
   getConnections() {
-    return this.clients; 
+    return Array.from(this.clients.values()).map((client) => client.conn); 
   }
 
   clear() {

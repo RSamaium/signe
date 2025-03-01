@@ -13,18 +13,12 @@ interface ConnectionOptions extends PartySocketOptions {
   };
 }
 
-// Interface dédiée pour la connexion via World
 export interface WorldConnectionOptions {
-  // URL du service World
   worldUrl: string;
-  // ID de la salle à joindre
   roomId: string;
-  // ID du monde (défaut: "default")
   worldId?: string;
-  // Options de retry
   retryCount?: number;
   retryDelay?: number;
-  // Options supplémentaires à transmettre à PartySocket
   socketOptions?: Omit<PartySocketOptions, 'host' | 'room' | 'party'>;
   autoCreate?: boolean; // Whether to auto-create room and shards if they don't exist
 }
@@ -109,7 +103,7 @@ function createConnection(options: PartySocketOptions, roomInstance: RoomInstanc
  * @param roomInstance Instance to receive state updates
  * @returns Connection result with methods to interact with the room
  */
-export async function connection(options: ConnectionOptions, roomInstance: RoomInstance): Promise<ConnectionResult> {
+export async function connectionRoom(options: ConnectionOptions, roomInstance: RoomInstance): Promise<ConnectionResult> {
   return createConnection(options, roomInstance);
 }
 

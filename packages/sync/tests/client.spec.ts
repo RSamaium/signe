@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { connection, connectionWorld, WorldConnectionOptions } from "../src/client";
+import { connectionRoom, connectionWorld, WorldConnectionOptions } from "../src/client";
 import { load } from "@signe/sync";
 import PartySocket from "partysocket";
 import { TokenStorage } from "../src/client/storage";
@@ -107,7 +107,7 @@ describe("Sync Client", () => {
       const options = { ...defaultOptions, url: "test-url" };
       const roomInstance = {};
       
-      const conn = await connection(options, roomInstance);
+      const conn = await connectionRoom(options, roomInstance);
       
       expect(PartySocket).toHaveBeenCalledWith(options);
       expect(conn.conn).toBe(mockSocket);
@@ -115,7 +115,7 @@ describe("Sync Client", () => {
 
     it("should set up message handling for sync messages", async () => {
       const roomInstance = {};
-      await connection(defaultOptions, roomInstance);
+      await connectionRoom(defaultOptions, roomInstance);
       
       // Simulate receiving a sync message
       const messageData = {
@@ -136,7 +136,7 @@ describe("Sync Client", () => {
 
     it("should ignore non-sync messages in the default handler", async () => {
       const roomInstance = {};
-      await connection(defaultOptions, roomInstance);
+      await connectionRoom(defaultOptions, roomInstance);
       
       // Simulate receiving a non-sync message
       const messageData = {
@@ -156,7 +156,7 @@ describe("Sync Client", () => {
     });
 
     it("should emit messages with correct format", async () => {
-      const conn = await connection(defaultOptions, {});
+      const conn = await connectionRoom(defaultOptions, {});
       
       // Emit a test message
       conn.emit("test-action", { data: "test" });
@@ -171,7 +171,7 @@ describe("Sync Client", () => {
     });
 
     it("should register event listeners properly", async () => {
-      const conn = await connection(defaultOptions, {});
+      const conn = await connectionRoom(defaultOptions, {});
       const callback = vi.fn();
       
       // Register a callback
@@ -198,7 +198,7 @@ describe("Sync Client", () => {
     });
 
     it("should not trigger listeners for non-matching events", async () => {
-      const conn = await connection(defaultOptions, {});
+      const conn = await connectionRoom(defaultOptions, {});
       const callback = vi.fn();
       
       // Register a callback
@@ -222,7 +222,7 @@ describe("Sync Client", () => {
     });
 
     it("should remove event listeners correctly", async () => {
-      const conn = await connection(defaultOptions, {});
+      const conn = await connectionRoom(defaultOptions, {});
       const callback = vi.fn();
       
       // Register and then remove a callback
@@ -234,7 +234,7 @@ describe("Sync Client", () => {
     });
 
     it("should close the connection", async () => {
-      const conn = await connection(defaultOptions, {});
+      const conn = await connectionRoom(defaultOptions, {});
       
       // Close the connection
       conn.close();

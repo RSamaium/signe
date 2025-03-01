@@ -250,6 +250,20 @@ class GameRoom {
 
 The World Service provides optimal room and shard assignment for distributed applications. It handles load balancing and allows clients to connect to the most appropriate server.
 
+#### Environment Variables
+
+To use the Signe room system, you need to configure two essential environment variables:
+
+```env
+# Required for JWT authentication
+AUTH_JWT_SECRET=a-string-secret-at-least-256-bits-long
+
+# Required for secure communication between shards
+SHARD_SECRET=your_shard_secret
+```
+
+These secrets should be strong, unique values and kept secure.
+
 #### Server Configuration
 
 To use the World service, you need to:
@@ -317,6 +331,34 @@ connection.emit('increment', { value: 1 });
 connection.close();
 ```
 
+For connecting to a standard room (not through World service), use the `connectionRoom` function:
+
+```js
+import { connectionRoom } from '@signe/sync/client';
+
+// Initialize your room instance
+const room = new YourRoomSchema();
+
+// Connect directly to a room
+const connection = await connectionRoom({
+  host: window.location.origin,
+  room: 'your-room-name',
+  party: 'your-party-name', // Optional, defaults to main party
+  query: {} // Optional query parameters
+}, room);
+
+// For connecting to a World room with authentication
+const worldConnection = await connectionRoom({
+  host: window.location.origin,
+  room: 'world-default',
+  party: 'world',
+  query: {
+    // Use pre-generated JWT token for authentication
+    'world-auth-token': 'your-jwt-token'
+  }
+}, worldRoom);
+```
+
 The `connectionWorld` function:
 1. Queries the World service to find the optimal shard for the requested room
 2. Establishes a WebSocket connection to the assigned shard
@@ -328,13 +370,43 @@ This approach offers several benefits:
 - Built-in retry logic for reliability
 - Room creation on demand
 
+### Packet Interception
+
+You can implement the `interceptorPacket` method in your room to inspect and modify packets before they're sent to users:
+
+```ts
+class GameRoom {
+  // Intercept packets before they're sent to users
+  async interceptorPacket(user: Player, packet: any, conn: Party.Connection) {
+    // Modify the packet based on user-specific logic
+    if (user.role === 'spectator') {
+      delete modifiedPacket.secretData;
+      return modifiedPacket;
+    }
+    
+    // Return null to prevent the packet from being sent to this user
+    if (user.isBlocked) {
+      return null;
+    }
+    
+    // Return the packet as is or with modifications
+    return packet;
+  }
+}
+```
+
+The `interceptorPacket` method allows you to:
+- Modify packets on a per-user basis before they're sent
+- Return a modified packet to change what the user receives
+- Return `null` to prevent the packet from being sent to that user
+- Implement user-specific filtering or censoring of data
+
 ### Lifecycle Hooks
 
 Rooms provide several lifecycle hooks:
 
 ```ts
 class GameRoom {
-  async onCreate()
   async onJoin(player: Player, conn: Connection, ctx: ConnectionContext) {}
   async onLeave(player: Player, conn: Connection) {}
 }
