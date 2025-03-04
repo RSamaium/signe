@@ -272,7 +272,7 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
     try {
       // Extract request data
       let data: { roomId: string; autoCreate?: boolean };
-      
+ 
       try {
         // Handle potential empty body or malformed JSON
         const body = await req.text();

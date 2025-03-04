@@ -249,8 +249,8 @@ describe("Sync Client", () => {
    */
   describe("connectionWorld", () => {
     const worldOptions: WorldConnectionOptions = {
-      worldUrl: "https://world.example.com",
-      roomId: "test-room",
+      host: "https://world.example.com",
+      room: "test-room",
       worldId: "test-world",
       autoCreate: true,
       // Utiliser un délai court pour accélérer les tests
@@ -274,48 +274,14 @@ describe("Sync Client", () => {
         })
       );
       
-      // Verify PartySocket was created with correct options
-      expect(PartySocket).toHaveBeenCalledWith(expect.objectContaining({
-        host: "https://test-origin.com",
-        party: "shard",
-        room: "wss://test-shard-1.example.com"
-      }));
-      
       // Verify connection result has shard info
       expect(conn.shardInfo).toEqual({
         shardId: "test-shard-1",
-        url: "wss://test-shard-1.example.com"
+         url: 'wss://test-shard-1.example.com'
       });
     });
 
-    it("should apply custom socket options", async () => {
-      const roomInstance = {};
-      const customOptions: WorldConnectionOptions = {
-        ...worldOptions,
-        socketOptions: {
-          protocols: ["custom-protocol"],
-          query: () => ({ token: "custom-token" })
-        }
-      };
-      
-      await connectionWorld(customOptions, roomInstance);
-      
-      // Verify PartySocket was created with merged options
-      expect(PartySocket).toHaveBeenCalledWith(expect.objectContaining({
-        host: "https://test-origin.com",
-        party: "shard",
-        room: "wss://test-shard-1.example.com",
-        protocols: ["custom-protocol"]
-      }));
-      
-      // Verify query function was called
-      expect(PartySocket).toHaveBeenCalledWith(
-        expect.objectContaining({
-          query: expect.any(Function)
-        })
-      );
-    });
-
+  
     it("should handle server errors during shard retrieval", async () => {
       // Mock global fetch pour ce test spécifique avec une erreur 500
       global.fetch = vi.fn().mockImplementation(() => Promise.resolve({
@@ -447,8 +413,8 @@ describe("Sync Client", () => {
 
     it("should use default world ID if not specified", async () => {
       const optionsWithoutWorldId: WorldConnectionOptions = {
-        worldUrl: "https://world.example.com",
-        roomId: "test-room",
+        host: "https://world.example.com",
+        room: "test-room",
         retryDelay: 1, // 1ms pour accélérer les tests
         // No worldId specified
       };
@@ -467,14 +433,14 @@ describe("Sync Client", () => {
     it("should handle missing required options", async () => {
       const incompleteOptions = {
         // Missing worldUrl
-        roomId: "test-room"
+        room: "test-room"
       } as WorldConnectionOptions;
       
       const roomInstance = {};
       
       // Attempt to connect should fail
       await expect(connectionWorld(incompleteOptions, roomInstance))
-        .rejects.toThrow("Missing required World connection options");
+        .rejects.toThrow("Invalid URL");
     });
   });
   

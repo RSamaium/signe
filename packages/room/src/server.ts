@@ -527,6 +527,11 @@ export class Server implements Party.Server {
 
     const subRoom = await this.getSubRoom()
 
+    if (!subRoom) {
+      console.warn("Room not found");
+      return;
+    }
+
     // Check room guards
     const roomGuards = subRoom.constructor['_roomGuards'] || [];
     for (const guard of roomGuards) {
@@ -845,9 +850,16 @@ export class Server implements Party.Server {
     // Check if the request is coming from a shard
     const isFromShard = req.headers.has('x-forwarded-by-shard');
     const shardId = req.headers.get('x-shard-id');
+    
+    // Create a response with proper CORS configuration
     const res = new ServerResponse([
       createCorsInterceptor()
     ]);
+
+    if (req.method === 'OPTIONS') {
+      // For OPTIONS requests, just return a 200 OK with CORS headers
+      return res.status(200).send({});
+    }
 
     if (isFromShard) {
       return this.handleShardRequest(req, res, shardId);

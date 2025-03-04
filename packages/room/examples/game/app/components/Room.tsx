@@ -22,8 +22,8 @@ export default function Room() {
       
       // Connect to the room through the World service with auto-creation enabled
       socketRef.current = await connectionWorld({
-        worldUrl: 'http://localhost:1999',
-        roomId: roomId,
+        host: 'http://localhost:1999',
+        room: roomId,
         autoCreate: true // Enable auto-creation of room and shards
       }, roomRef.current);
       

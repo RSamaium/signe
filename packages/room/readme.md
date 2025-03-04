@@ -316,15 +316,12 @@ const room = new YourRoomSchema();
 
 // Connect through the World service
 const connection = await connectionWorld({
-  worldUrl: 'https://your-app-url.com', // Your application URL
-  roomId: 'unique-room-id',             // Room identifier
+  host: 'https://your-app-url.com', // Your application URL
+  room: 'unique-room-id',             // Room identifier
   worldId: 'your-world-id',             // Optional, defaults to 'world-default'
   autoCreate: true,                     // Auto-create room if it doesn't exist
   retryCount: 3,                        // Number of connection attempts
-  retryDelay: 1000,                     // Delay between retries in ms
-  socketOptions: {                      // Optional PartySocket configuration
-    protocols: ['your-protocol']
-  }
+  retryDelay: 1000                    // Delay between retries in ms
 }, room);
 
 // Listen for events

@@ -1,26 +1,13 @@
 import { load } from "@signe/sync";
 import PartySocket, { PartySocketOptions } from "partysocket";
 
-interface ConnectionOptions extends PartySocketOptions {
-  // Options for connecting via World - maintenue pour compatibilité
-  world?: {
-    enabled: boolean;
-    worldUrl: string;
-    roomId: string;
-    worldId?: string;
-    retryCount?: number;
-    retryDelay?: number;
-  };
-}
-
 export interface WorldConnectionOptions {
-  worldUrl: string;
-  roomId: string;
+  host: string;
+  room: string;
   worldId?: string;
   retryCount?: number;
   retryDelay?: number;
-  socketOptions?: Omit<PartySocketOptions, 'host' | 'room' | 'party'>;
-  autoCreate?: boolean; // Whether to auto-create room and shards if they don't exist
+  autoCreate?: boolean;
 }
 
 interface RoomInstance {
@@ -103,7 +90,7 @@ function createConnection(options: PartySocketOptions, roomInstance: RoomInstanc
  * @param roomInstance Instance to receive state updates
  * @returns Connection result with methods to interact with the room
  */
-export async function connectionRoom(options: ConnectionOptions, roomInstance: RoomInstance): Promise<ConnectionResult> {
+export async function connectionRoom(options: PartySocketOptions, roomInstance: RoomInstance): Promise<ConnectionResult> {
   return createConnection(options, roomInstance);
 }
 
@@ -121,8 +108,7 @@ export async function connectionWorld(
   const shardInfo = await getOptimalShard(options);
   // Create options for PartySocket
   const socketOptions: PartySocketOptions = {
-    ...(options.socketOptions || {}),
-    host: location.origin,
+    host: options.host,
     party: 'shard',
     room: shardInfo.url
   };
@@ -141,14 +127,10 @@ export async function connectionWorld(
  * @param worldOptions Options for connecting to the World
  * @returns Information about the selected shard
  */
-async function getOptimalShard(worldOptions: WorldConnectionOptions | ConnectionOptions['world']): Promise<{ shardId: string, url: string }> {
-  if (!worldOptions || !('worldUrl' in worldOptions) || !worldOptions.worldUrl || !worldOptions.roomId) {
-    throw new Error('Missing required World connection options');
-  }
-  
+async function getOptimalShard(worldOptions: WorldConnectionOptions): Promise<{ shardId: string, url: string }> {
   const { 
-    worldUrl, 
-    roomId, 
+    host, 
+    room, 
     worldId = 'world-default', // Default World ID is "default"
     retryCount = 3, 
     retryDelay = 1000,
@@ -158,7 +140,7 @@ async function getOptimalShard(worldOptions: WorldConnectionOptions | Connection
   let attempts = 0;
 
   // Build URL in expected format
-  const url = new URL(`${worldUrl}/parties/world/${encodeURIComponent(worldId)}/connect`);
+  const url = new URL(`${host}/parties/world/${encodeURIComponent(worldId)}/connect`);
   const requestUrl = url.toString();
   
   // Try to get a shard with retries
@@ -170,7 +152,7 @@ async function getOptimalShard(worldOptions: WorldConnectionOptions | Connection
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          roomId,
+          roomId: room,
           autoCreate
         })
       });

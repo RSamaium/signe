@@ -2,7 +2,8 @@ export function cors(res: Response, options: CorsOptions = {}) {
   const newHeaders = new Headers(res.headers);
   
   // Set default CORS headers
-  newHeaders.set('Access-Control-Allow-Origin', options.origin || '*');
+  const requestOrigin = options.origin || '*';
+  newHeaders.set('Access-Control-Allow-Origin', requestOrigin);
   
   if (options.credentials) {
     newHeaders.set('Access-Control-Allow-Credentials', 'true');
@@ -27,6 +28,9 @@ export function cors(res: Response, options: CorsOptions = {}) {
   
   if (options.maxAge) {
     newHeaders.set('Access-Control-Max-Age', options.maxAge.toString());
+  } else {
+    // Default max-age to 86400 seconds (24 hours)
+    newHeaders.set('Access-Control-Max-Age', '86400');
   }
   
   return new Response(res.body, {
