@@ -75,7 +75,7 @@ The `@Request` decorator allows you to handle HTTP requests with specific routes
 
 ```ts
 import { z } from "zod";
-import { Room, Request, RequestGuard } from "@signe/room";
+import { Room, Request, RequestGuard, ServerResponse } from "@signe/room";
 
 @Room({
   path: "api"
@@ -97,10 +97,10 @@ class ApiRoom {
 
   // Handle requests with path parameters
   @Request({ path: "/players/:id" })
-  getPlayer(req: Party.Request, body: any, params: { id: string }) {
-    const player = this.players()[params.id];
+  getPlayer(req: Party.Request, res: ServerResponse) {
+    const player = this.players()[req.params.id];
     if (!player) {
-      return new Response(JSON.stringify({ error: "Player not found" }), { status: 404 });
+      return res.notFound("Player not found");
     }
     return player;
   }
@@ -113,10 +113,10 @@ class ApiRoom {
       score: z.number().min(0)
     })
   )
-  @RequestGuard([isAuthenticated])
-  submitScore(req: Party.Request, body: { playerId: string; score: number }) {
-    this.scores.update(scores => [...scores, body]);
-    return { success: true };
+  @Guard([isAuthenticated])
+  submitScore(req: Party.Request, res: ServerResponse) {
+    this.scores.update(scores => [...scores, req.data]);
+    return res.success({ success: true });
   }
 }
 ```
@@ -177,7 +177,7 @@ class AdminRoom {
   }
   
   @Request({ path: "/admin/users", method: "DELETE" })
-  @RequestGuard([isAdmin]) // Applied only to this request handler
+  @Guard([isAdmin]) // Applied only to this request handler
   async deleteUserViaHttp(req: Party.Request) {
     // Only authenticated admins can access this endpoint
   }
@@ -281,7 +281,15 @@ export default class MainServer extends Server {
 }
 ```
 
-2. Configure your `partykit.json` file:
+2. Add `Shard` to your server in `party/shard.ts`:
+
+```ts
+import { Shard } from '@signe/room';
+
+export default class ShardServer extends Shard {}
+```
+
+3. Configure your `partykit.json` file:
 
 ```json
 {

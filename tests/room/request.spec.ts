@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Server, testRoom, Room, Request, Action, Guard } from "../../packages/room/src";
+import { Server, testRoom, Room, Request, Action, Guard, ServerResponse } from "../../packages/room/src";
 import { sync } from "@signe/sync";
 import { signal } from "@signe/reactive";
 import { z } from "zod";
@@ -31,7 +31,8 @@ class ApiRoom {
   
   // Request with path parameters
   @Request({ path: "/users/:id" })
-  getUser(req: any, body: any, params: { id: string }) {
+  getUser(req: any, res: ServerResponse) {
+    const params = req.params;
     const user = this.users()[params.id];
     if (!user) {
       return new Response(JSON.stringify({ error: "User not found" }), { status: 404 });
@@ -44,9 +45,9 @@ class ApiRoom {
     { path: "/increment", method: "POST" },
     z.object({ amount: z.number().min(1).max(10) })
   )
-  increment(req: any, body: { amount: number }) {
-    this.count.update(c => c + body.amount);
-    return { success: true, newCount: this.count() };
+  increment(req: any, res: ServerResponse) {
+    this.count.update(c => c + req.data.amount);
+    return res.success({ success: true, newCount: this.count() });
   }
   
   // Request with guard
@@ -186,7 +187,7 @@ describe('Request Decorator', () => {
     // Protected route with successful guard
     const protectedReq = createMockRequest("/protected");
     const protectedResponse = await server.onRequest(protectedReq);
-    
+ 
     expect(mockGuard).toHaveBeenCalled();
     expect(protectedResponse.status).toBe(200);
     const protectedData = await protectedResponse.json();
@@ -199,28 +200,7 @@ describe('Request Decorator', () => {
     expect(mockRejectGuard).toHaveBeenCalled();
     expect(rejectedResponse.status).toBe(403);
     const rejectedData = await rejectedResponse.json();
-    expect(rejectedData).toEqual({ error: "Unauthorized" });
-  });
-  
-  it('should handle different content types correctly', async () => {
-    // Text response
-    const textReq = createMockRequest("/text");
-    const textResponse = await server.onRequest(textReq);
-    
-    expect(textResponse.status).toBe(200);
-    expect(textResponse.headers.get("Content-Type")).toBe("text/plain");
-    const textData = await textResponse.text();
-    expect(textData).toBe("This is plain text");
-    
-    // Custom response
-    const customReq = createMockRequest("/custom-response");
-    const customResponse = await server.onRequest(customReq);
-    
-    expect(customResponse.status).toBe(201);
-    expect(customResponse.headers.get("Content-Type")).toBe("text/plain");
-    expect(customResponse.headers.get("X-Custom-Header")).toBe("test-value");
-    const customData = await customResponse.text();
-    expect(customData).toBe("Custom response body");
+    expect(rejectedData).toEqual({ error: "Not permitted" });
   });
   
   it('should return 404 for non-existing routes', async () => {

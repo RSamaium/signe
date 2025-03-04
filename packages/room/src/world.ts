@@ -6,6 +6,7 @@ import * as Party from "./types/party";
 import { guardManageWorld } from "./world.guard";
 import { response } from "./utils";
 import { RoomInterceptorPacket, RoomOnJoin } from "./interfaces";
+import { ServerResponse } from "./request/response";
 
 // Types definitions
 type BalancingStrategy = 'round-robin' | 'least-connections' | 'random';
@@ -173,13 +174,13 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
     method: 'POST',
   })
   @Guard([guardManageWorld])
-  async updateShardStats(req: Party.Request) {
+  async updateShardStats(req: Party.Request, res: ServerResponse) {
     const body: { shardId: string; connections: number; status: ShardStatus } = await req.json();
     const { shardId, connections, status } = body;
     const shard = this.shards()[shardId];
 
     if (!shard) {
-      return { error: `Shard ${shardId} not found` };
+      return res.notFound(`Shard ${shardId} not found`);
     }
     
     shard.currentConnections.set(connections);
@@ -194,14 +195,14 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
     method: 'POST',
   })
   @Guard([guardManageWorld])
-  async scaleRoom(req: Party.Request) {
+  async scaleRoom(req: Party.Request, res: ServerResponse) {
     const data: z.infer<typeof ScaleRoomSchema> = await req.json();
     const { targetShardCount, shardTemplate, roomId } = data;
     
     // Validate room exists
     const room = this.rooms()[roomId];
     if (!room) {
-      return { error: `Room ${roomId} does not exist` };
+      return res.notFound(`Room ${roomId} does not exist`);
     }
     
     const roomShards = Object.values(this.shards())
@@ -211,11 +212,10 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
     
     // Check max shards constraint
     if (room.maxShards() !== undefined && targetShardCount > room.maxShards()!) {
-      return {
-        error: `Cannot scale beyond maximum allowed shards (${room.maxShards()})`,
+      return res.badRequest(`Cannot scale beyond maximum allowed shards (${room.maxShards()})`, {
         roomId,
         currentShardCount: previousShardCount
-      };
+      });
     }
     
     // Handle scaling down
@@ -268,7 +268,7 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
     path: 'connect',
     method: 'POST',
   })
-  async connect(req: Party.Request) {
+  async connect(req: Party.Request, res: ServerResponse) {
     try {
       // Extract request data
       let data: { roomId: string; autoCreate?: boolean };
@@ -277,17 +277,17 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
         // Handle potential empty body or malformed JSON
         const body = await req.text();
         if (!body || body.trim() === '') {
-          return response(400, { error: "Request body is empty" });
+          return res.badRequest("Request body is empty");
         }
         
         data = JSON.parse(body);
       } catch (parseError) {
-        return response(400, { error: "Invalid JSON in request body" });
+        return res.badRequest("Invalid JSON in request body");
       }
       
       // Verify roomId is provided
       if (!data.roomId) {
-        return response(400, { error: "roomId parameter is required" });
+        return res.badRequest("roomId parameter is required");
       }
       
       // Determine if auto-creation is enabled (default to true)
@@ -298,18 +298,18 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
  
       // Check for errors
       if ('error' in result) {
-        return response(404, { error: result.error });
+        return res.notFound(result.error);
       }
       
       // Return shard information to the client
-      return response(200, {
+      return res.success({
         success: true,
         shardId: result.shardId,
         url: result.url
       });
     } catch (error) {
       console.error('Error connecting to shard:', error);
-      return response(500, { error: "Internal server error", details: error instanceof Error ? error.message : String(error) });
+      return res.serverError();
     }
   }
   

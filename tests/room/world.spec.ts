@@ -272,7 +272,7 @@ describe('WorldRoom', () => {
           })
         });
         
-        expect(response.status).toBe(200); // API returns 200 with error object
+        expect(response.status).toBe(404);
         const data = await response.json();
         expect(data.error).toBeDefined();
         expect(data.error).toContain('not found');
@@ -406,7 +406,7 @@ describe('WorldRoom', () => {
         });
         
         // Should return an error in the response
-        expect(response.status).toBe(200); // API returns 200 with error object
+        expect(response.status).toBe(400);
         const data = await response.json();
         expect(data.error).toBeDefined();
         expect(data.error).toContain('Cannot scale beyond maximum');

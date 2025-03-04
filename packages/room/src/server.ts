@@ -16,6 +16,8 @@ import {
   isClass,
   throttle,
 } from "./utils";
+import { ServerResponse } from "./request/response";
+import { createCorsInterceptor } from "./request/cors";
 
 const Message = z.object({
   action: z.string(),
@@ -843,13 +845,16 @@ export class Server implements Party.Server {
     // Check if the request is coming from a shard
     const isFromShard = req.headers.has('x-forwarded-by-shard');
     const shardId = req.headers.get('x-shard-id');
+    const res = new ServerResponse([
+      createCorsInterceptor()
+    ]);
 
     if (isFromShard) {
-      return this.handleShardRequest(req, shardId);
+      return this.handleShardRequest(req, res, shardId);
     }
 
     // Handle regular client request
-    return this.handleDirectRequest(req);
+    return this.handleDirectRequest(req, res);
   }
 
   /**
@@ -860,35 +865,27 @@ export class Server implements Party.Server {
    * @description Processes requests received directly from clients
    * @returns {Promise<Response>} The response to return to the client
    */
-  private async handleDirectRequest(req: Party.Request): Promise<Response> {
+  private async handleDirectRequest(req: Party.Request, res: ServerResponse): Promise<Response> {
     const subRoom = await this.getSubRoom();
-    const res = (body: any, status: number) => {
-      return new Response(JSON.stringify(body), { status });
-    };
-
     if (!subRoom) {
-      return res({
-        error: "Not found"
-      }, 404);
+      return res.notFound();
     }
 
     // First try to match using the registered @Request handlers
-    const response = await this.tryMatchRequestHandler(req, subRoom);
+    const response = await this.tryMatchRequestHandler(req, res, subRoom);
     if (response) {
       return response;
     }
 
     // Fall back to the legacy onRequest method if no handler matched
-    const legacyResponse = await awaitReturn(subRoom["onRequest"]?.(req, this.room));
+    const legacyResponse = await awaitReturn(subRoom["onRequest"]?.(req, res));
     if (!legacyResponse) {
-      return res({
-        error: "Not found"
-      }, 404);
+      return res.notFound();
     }
     if (legacyResponse instanceof Response) {
       return legacyResponse;
     }
-    return res(legacyResponse, 200);
+    return res.success(legacyResponse);
   }
 
   /**
@@ -900,7 +897,7 @@ export class Server implements Party.Server {
    * @description Attempts to match the request to a registered @Request handler
    * @returns {Promise<Response | null>} The response or null if no handler matched
    */
-  private async tryMatchRequestHandler(req: Party.Request, subRoom: any): Promise<Response | null> {
+  private async tryMatchRequestHandler(req: Party.Request, res: ServerResponse, subRoom: any): Promise<Response | null> {
     const requestHandlers = subRoom.constructor["_requestMetadata"];
     if (!requestHandlers) {
       return null;
@@ -935,7 +932,7 @@ export class Server implements Party.Server {
             return isAuthorized;
           }
           if (!isAuthorized) {
-            return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 403 });
+            return res.notPermitted();
           }
         }
 
@@ -948,44 +945,33 @@ export class Server implements Party.Server {
               const body = await req.json();
               const validation = handler.bodyValidation.safeParse(body);
               if (!validation.success) {
-                return new Response(
-                  JSON.stringify({ error: "Invalid request body", details: validation.error }),
-                  { status: 400 }
-                );
+                return res.badRequest("Invalid request body", {
+                  details: validation.error
+                });
               }
               bodyData = validation.data;
             }
           } catch (error) {
-            return new Response(
-              JSON.stringify({ error: "Failed to parse request body" }),
-              { status: 400 }
-            );
+            return res.badRequest("Failed to parse request body");
           }
         }
 
         // Execute the handler method
         try {
+          req['data'] = bodyData;
+          req['params'] = params;
           const result = await awaitReturn(
-            subRoom[handler.key](req, bodyData, params, this.room)
+            subRoom[handler.key](req, res)
           );
 
           if (result instanceof Response) {
             return result;
           }
 
-          return new Response(
-            typeof result === 'string' ? result : JSON.stringify(result),
-            {
-              status: 200,
-              headers: { 'Content-Type': typeof result === 'string' ? 'text/plain' : 'application/json' }
-            }
-          );
+          return res.success(result);
         } catch (error) {
           console.error('Error executing request handler:', error);
-          return new Response(
-            JSON.stringify({ error: "Internal server error" }),
-            { status: 500 }
-          );
+          return res.serverError();
         }
       }
     }
@@ -1058,11 +1044,11 @@ export class Server implements Party.Server {
    * @description Processes requests forwarded by shards, preserving client context
    * @returns {Promise<Response>} The response to return to the shard (which will forward it to the client)
    */
-  private async handleShardRequest(req: Party.Request, shardId: string | null): Promise<Response> {
+  private async handleShardRequest(req: Party.Request, res: ServerResponse, shardId: string | null): Promise<Response> {
     const subRoom = await this.getSubRoom();
 
     if (!subRoom) {
-      return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+      return res.notFound();
     }
 
     // Create a context that preserves original client information
@@ -1071,26 +1057,26 @@ export class Server implements Party.Server {
 
     try {
       // First try to match using the registered @Request handlers
-      const response = await this.tryMatchRequestHandler(enhancedReq, subRoom);
+      const response = await this.tryMatchRequestHandler(enhancedReq, res, subRoom);
       if (response) {
         return response;
       }
 
       // Fall back to the legacy onRequest handler
-      const legacyResponse = await awaitReturn(subRoom["onRequest"]?.(enhancedReq, this.room));
+      const legacyResponse = await awaitReturn(subRoom["onRequest"]?.(enhancedReq, res));
 
       if (!legacyResponse) {
-        return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+        return res.notFound();
       }
 
       if (legacyResponse instanceof Response) {
         return legacyResponse;
       }
 
-      return new Response(JSON.stringify(legacyResponse), { status: 200 });
+      return res.success(legacyResponse);
     } catch (error) {
       console.error(`Error processing request from shard ${shardId}:`, error);
-      return new Response(JSON.stringify({ error: "Internal server error" }), { status: 500 });
+      return res.serverError();
     }
   }
 
