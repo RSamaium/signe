@@ -136,3 +136,29 @@ export function persist(): PropertyDecorator {
     syncToClient: false,
   });
 }
+
+/**
+ * A decorator to mark a property for connection status tracking.
+ * 
+ * @returns {PropertyDecorator} - The property decorator function.
+ * @example
+ * ```typescript
+ * import { signal } from '@signe/reactive'
+ * import { connected } from '@signe/sync'
+ * 
+ * class User {
+ *   @connected() isConnected = signal(false);
+ * }
+ * ```
+ */
+export function connected(): PropertyDecorator {
+  return function (target: any, propertyKey: string) {
+    if (!target.constructor._propertyMetadata) {
+      target.constructor._propertyMetadata = new Map();
+    }
+    target.constructor._propertyMetadata.set("connected", propertyKey);
+    sync({
+      persist: false
+    })(target, propertyKey);
+  };
+}

@@ -18,6 +18,7 @@ import {
 } from "./utils";
 import { ServerResponse } from "./request/response";
 import { createCorsInterceptor } from "./request/cors";
+import { Signal, WritableSignal } from "@signe/reactive";
 
 const Message = z.object({
   action: z.string(),
@@ -344,8 +345,48 @@ export class Server implements Party.Server {
   }
 
   private getUsersPropName(subRoom) {
-    const meta = subRoom.constructor["_propertyMetadata"];
-    return meta?.get("users")
+    if (!subRoom) return null;
+    const metadata = subRoom.constructor._propertyMetadata;
+    if (!metadata) return null;
+    return metadata.get("users");
+  }
+
+  /**
+   * Retrieves the connection status property from a user object.
+   * 
+   * @param {any} user - The user object to get the connection property from.
+   * @returns {Function|null} - The connection property signal function or null if not found.
+   * @private
+   */
+  private getUserConnectionProperty(user: any): WritableSignal<boolean> | null {
+    if (!user) return null;
+    
+    const metadata = user.constructor._propertyMetadata;
+    if (!metadata) return null;
+    
+    const connectedPropName = metadata.get("connected");
+    if (!connectedPropName) return null;
+
+    return user[connectedPropName];
+  }
+  
+  /**
+   * Updates a user's connection status in the signal.
+   * 
+   * @param {any} user - The user object to update.
+   * @param {boolean} isConnected - The new connection status.
+   * @returns {boolean} - Whether the update was successful.
+   * @private
+   */
+  private updateUserConnectionStatus(user: any, isConnected: boolean): boolean {
+    const connectionSignal = this.getUserConnectionProperty(user);
+
+    if (connectionSignal) {
+      connectionSignal.set(isConnected);
+      return true;
+    }
+    
+    return false;
   }
 
   /**
@@ -458,6 +499,8 @@ export class Server implements Party.Server {
         await this.updateSessionConnection(conn.id, true);
       }
     }
+    // Update user connection status if applicable
+    this.updateUserConnectionStatus(user, true);
 
     // Call the room's onJoin method if it exists
     await awaitReturn(subRoom["onJoin"]?.(user, conn, ctx));
@@ -843,16 +886,22 @@ export class Server implements Party.Server {
 
     if (!user) return;
 
-    await awaitReturn(subRoom["onLeave"]?.(user, conn));
-
     // Mark session as disconnected instead of deleting it
     await this.updateSessionConnection(privateId, false);
 
-    // Broadcast user disconnection
-    this.broadcast({
-      type: "user_disconnected",
-      value: { publicId }
-    }, subRoom);
+    // Update user connection status in the signal
+    const connectionUpdated = this.updateUserConnectionStatus(user, false);
+
+    await awaitReturn(subRoom["onLeave"]?.(user, conn));
+    
+    // Only broadcast disconnection if we couldn't update the connection signal
+    if (!connectionUpdated) {
+      // Broadcast user disconnection the old way
+      this.broadcast({
+        type: "user_disconnected",
+        value: { publicId }
+      }, subRoom);
+    }
   }
 
   async onAlarm() {

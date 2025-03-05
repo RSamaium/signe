@@ -92,6 +92,25 @@ class MyClass {
 }
 ```
 
+#### @connected()
+Marks a property for tracking user connection status:
+
+```typescript
+class User {
+  @id() id = signal('user-1')
+  @connected() isConnected = signal(false)
+  name = signal('User Name')
+}
+```
+
+This decorator automatically tracks and synchronizes a user's connection state. When a user connects to a room, the property is automatically set to `true`. When they disconnect, it's set to `false`. This state is synchronized with all clients, allowing real-time connection status updates without manual management.
+
+Benefits:
+- Automatically updated when users connect/disconnect
+- Synchronized to all clients in real-time
+- Can be used in UI to show online/offline indicators
+- No need to manually track connection status with custom events
+
 ### Client Connection
 
 Set up a WebSocket connection for real-time synchronization:
