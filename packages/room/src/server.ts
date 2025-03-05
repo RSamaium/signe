@@ -696,20 +696,16 @@ export class Server implements Party.Server {
    * @returns {Promise<void>}
    */
   private async handleShardClientConnect(message: any, shardConnection: Party.Connection) {
-    const { privateId, connectionInfo } = message;
+    const { privateId, requestInfo } = message;
     const shardState = shardConnection.state as any;
 
     // Create a virtual connection context for the client
     const virtualContext: Party.ConnectionContext = {
-      request: {
-        headers: new Headers({
-          'x-forwarded-for': connectionInfo.ip,
-          'user-agent': connectionInfo.userAgent,
-          // Add other headers as needed
-        }),
-        method: 'GET',
-        url: ''
-      } as unknown as Party.Request
+      request: requestInfo ? {
+        headers: new Headers(requestInfo.headers),
+        method: requestInfo.method,
+        url: requestInfo.url
+      } as unknown as Party.Request : undefined
     };
 
     // Create a virtual connection for the client

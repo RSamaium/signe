@@ -92,15 +92,27 @@ export class Shard {
   onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
     // Store connection mapping
     this.connectionMap.set(conn.id, conn);
-    // Notify the main server about the new connection with connection metadata
+    
+    // Capture all headers and request information
+    const headers: Record<string, string> = {};
+    if (ctx.request?.headers) {
+      ctx.request.headers.forEach((value, key) => {
+        headers[key] = value;
+      });
+    }
+
+    // Prepare connection context information
+    const requestInfo = ctx.request ? {
+      headers,
+      url: ctx.request.url,
+      method: ctx.request.method
+    } : null;
+
+    // Notify the main server about the new connection with complete connection metadata
     this.ws.send(JSON.stringify({
       type: 'shard.clientConnected',
       privateId: conn.id,
-      connectionInfo: {
-        ip: ctx.request?.headers.get('x-forwarded-for') || 'unknown',
-        userAgent: ctx.request?.headers.get('user-agent') || 'unknown',
-        // Add any other relevant connection info
-      }
+      requestInfo
     }));
 
     this.updateWorldStats();
