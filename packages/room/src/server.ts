@@ -348,7 +348,19 @@ export class Server implements Party.Server {
     return meta?.get("users")
   }
 
-  private async getSession(privateId: string): Promise<{ publicId: string, state?: any, created?: number, connected?: boolean } | null> {
+  /**
+   * @method getSession
+   * @private
+   * @param {string} privateId - The private ID of the session.
+   * @returns {Promise<Object|null>} The session object, or null if not found.
+   * 
+   * @example
+   * ```typescript
+   * const session = await server.getSession("privateId");
+   * console.log(session);
+   * ```
+   */
+  async getSession(privateId: string): Promise<{ publicId: string, state?: any, created?: number, connected?: boolean } | null> {
     if (!privateId) return null;
     try {
       const session = await this.room.storage.get(`session:${privateId}`);
@@ -374,7 +386,18 @@ export class Server implements Party.Server {
     }
   }
 
-  private async deleteSession(privateId: string) {
+  /**
+   * @method deleteSession
+   * @private
+   * @param {string} privateId - The private ID of the session to delete.
+   * @returns {Promise<void>}
+   * 
+   * @example
+   * ```typescript
+   * await server.deleteSession("privateId");
+   * ```
+   */
+  async deleteSession(privateId: string) {
     await this.room.storage.delete(`session:${privateId}`);
   }
 
@@ -420,6 +443,9 @@ export class Server implements Party.Server {
         signal()[publicId] = user;
         const snapshot = createStatesSnapshot(user);
         this.room.storage.put(`${usersPropName}.${publicId}`, snapshot);
+      }
+      else {
+        user = signal()[existingSession.publicId];
       }
 
       // Only store new session if it doesn't exist

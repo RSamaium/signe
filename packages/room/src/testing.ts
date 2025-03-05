@@ -67,8 +67,8 @@ export async function testRoom(Room, options: {
     return {
         server,
         room: (server as any).subRoom,
-        createClient: async () => {
-            const client = await io.connection(server as Server)
+        createClient: async (id?: string) => {
+            const client = await io.connection(server as Server, id)
             return client
         }
     }

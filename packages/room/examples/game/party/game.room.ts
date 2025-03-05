@@ -6,7 +6,6 @@ import { RoomSchema } from "../shared/room.schema";
     sessionExpiryTime: 5000 
 })
 export class GameRoom extends RoomSchema {
-    
     @Action('increment')
     increment(player) {
         this.count.update((count) => count + 1); 

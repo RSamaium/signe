@@ -10,4 +10,5 @@
     - [] Transfer state room to room with world authority
     - [] Manage many world. For moment, we use "default" name
     - [] Update shard pool when minShards is changed
-    - [] Add guard with token to manage world
+    - [X] Add guard with token to manage world
+    - [] Fix: Shard foward ctx request

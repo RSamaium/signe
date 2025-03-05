@@ -4,10 +4,11 @@ import { Storage } from "./storage";
 
 export class MockPartyClient {
     private events: Map<string, Function> = new Map();
-    id = generateShortUUID()
+    id : string
     conn: MockConnection;
 
-    constructor(public server: Server) {
+    constructor(public server: Server, id?: string) {
+      this.id = id || generateShortUUID()
       this.conn = new MockConnection(this)
     }
     
@@ -66,8 +67,8 @@ class MockPartyRoom {
     this.env = options.env || {}
   }
 
-  async connection(server: Server) {
-    const socket = new MockPartyClient(server);
+  async connection(server: Server, id?: string) {
+    const socket = new MockPartyClient(server, id);
     const url = new URL('http://localhost')
     const request = new Request(url.toString(), {
       method: 'GET',
