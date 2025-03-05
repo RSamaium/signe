@@ -92,7 +92,6 @@ export class Shard {
   onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
     // Store connection mapping
     this.connectionMap.set(conn.id, conn);
-    
     // Notify the main server about the new connection with connection metadata
     this.ws.send(JSON.stringify({
       type: 'shard.clientConnected',
@@ -222,7 +221,6 @@ export class Shard {
         headers,
         body
       };
-
       // Forward the request to the main server
       const response = await this.mainServerStub.fetch(path, requestInit);
       return response;

@@ -58,6 +58,9 @@ export async function testRoom(Room, options: {
         // Add subRoom property to Shard for compatibility with Server
         (shardServer as any).subRoom = null;
         server = shardServer;
+        for (const lobby of io.context.parties.main.values()) {
+            await lobby.server.onStart();
+        }
     } else {
         server = await createServer(io as any);
     }
@@ -74,7 +77,7 @@ export async function testRoom(Room, options: {
     }
 }
 
-export async function request(room: Server, path: string, options: {
+export async function request(room: Server | Shard, path: string, options: {
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
     body?: any,
     headers?: Record<string, string>

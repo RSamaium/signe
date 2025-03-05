@@ -1141,7 +1141,7 @@ export class Server implements Party.Server {
     // Create a context that preserves original client information
     const originalClientIp = req.headers.get('x-original-client-ip');
     const enhancedReq = this.createEnhancedRequest(req, originalClientIp);
-
+    
     try {
       // First try to match using the registered @Request handlers
       const response = await this.tryMatchRequestHandler(enhancedReq, res, subRoom);

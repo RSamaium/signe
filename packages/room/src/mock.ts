@@ -1,6 +1,7 @@
 import { generateShortUUID } from "../../sync/src/utils";
 import { Server } from "./server";
 import { Storage } from "./storage";
+import { request } from "./testing";
 
 export class MockPartyClient {
     private events: Map<string, Function> = new Map();
@@ -35,6 +36,10 @@ class MockLobby {
   socket() {
     return new MockPartyClient(this.server)
   }
+
+  fetch(url: string, options: any) {
+    return request(this.server, url, options)
+  }
 }
 
 class MockContext {
@@ -51,7 +56,6 @@ class MockContext {
    }
   }
 }
-
 
 class MockPartyRoom {
   clients: Map<string, MockPartyClient> = new Map();
