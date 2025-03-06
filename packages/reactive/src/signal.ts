@@ -3,13 +3,71 @@ import { ArraySubject } from "./ArraySubject";
 import { ObjectSubject } from "./ObjectSubject";
 import type { ComputedSignal, WritableArraySignal, WritableObjectSignal, WritableSignal } from "./types";
 
-let currentDependencyTracker: ((signal) => void) | null = null;
-let currentSubscriptionsTracker: ((subscription) => void) | null = null;
-
-const trackDependency = (signal) => {
-    if (currentDependencyTracker) {
-        currentDependencyTracker(signal);
+/**
+ * Creates a global store that works across all JavaScript environments
+ * @returns The global reactive store singleton
+ * 
+ * @example
+ * const store = getGlobalReactiveStore();
+ * store.currentDependencyTracker = myTrackerFunction;
+ */
+const getGlobalReactiveStore = () => {
+  const globalKey = '__REACTIVE_STORE__';
+  
+  if (typeof globalThis !== 'undefined') {
+    if (!globalThis[globalKey]) {
+      globalThis[globalKey] = {
+        currentDependencyTracker: null,
+        currentSubscriptionsTracker: null
+      };
     }
+    return globalThis[globalKey];
+  }
+  
+  // Fallback for older environments
+  let globalObj;
+  
+  // Browser
+  if (typeof window !== 'undefined') {
+    globalObj = window;
+  } 
+  // Node.js
+  else if (typeof global !== 'undefined') {
+    globalObj = global;
+  }
+  // Web Worker or other environments
+  else if (typeof self !== 'undefined') {
+    globalObj = self;
+  }
+  // Really unusual environment
+  else {
+    // Create a local object as a last resort
+    // This will work in the current context but will not be shared
+    console.warn('Unable to find global object, using local instance');
+    return {
+      currentDependencyTracker: null,
+      currentSubscriptionsTracker: null
+    };
+  }
+  
+  if (!globalObj[globalKey]) {
+    globalObj[globalKey] = {
+      currentDependencyTracker: null,
+      currentSubscriptionsTracker: null
+    };
+  }
+  
+  return globalObj[globalKey];
+};
+
+// Obtenir le store global une seule fois
+const reactiveStore = getGlobalReactiveStore();
+
+// Remplacer les variables globales du module par des accès au store
+const trackDependency = (signal) => {
+  if (reactiveStore.currentDependencyTracker) {
+    reactiveStore.currentDependencyTracker(signal);
+  }
 };
 
 /**
@@ -122,20 +180,25 @@ export function isComputed(value: any): boolean {
  */
 export function computed<T = any>(computeFunction: () => T, disposableFn?: () => void): ComputedSignal<T> {
     const dependencies: Set<WritableSignal<any>> = new Set();
-    let init = true
+    let init = true;
     let lastComputedValue;
-
-    currentDependencyTracker = (signal) => {
+    
+    // Sauvegarder l'état précédent
+    const previousTracker = reactiveStore.currentDependencyTracker;
+    
+    // Définir notre tracker temporaire
+    reactiveStore.currentDependencyTracker = (signal) => {
         dependencies.add(signal);
     };
-
+    
     lastComputedValue = computeFunction();
     if (computeFunction['isEffect']) {
-        disposableFn = lastComputedValue as any
+        disposableFn = lastComputedValue as any;
     }
-
-    currentDependencyTracker = null;
-
+    
+    // Restaurer l'état précédent
+    reactiveStore.currentDependencyTracker = previousTracker;
+    
     const computedObservable = combineLatest([...dependencies].map(signal => signal.observable))
         .pipe(
             filter(() => !init),
@@ -156,7 +219,7 @@ export function computed<T = any>(computeFunction: () => T, disposableFn?: () =>
 
     fn.dependencies = dependencies
 
-    currentSubscriptionsTracker?.(fn.subscription);
+    reactiveStore.currentSubscriptionsTracker?.(fn.subscription);
 
     init = false
 
