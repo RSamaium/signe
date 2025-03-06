@@ -1,7 +1,7 @@
 import { load } from "@signe/sync";
 import PartySocket, { PartySocketOptions } from "partysocket";
 
-export interface WorldConnectionOptions {
+export interface WorldConnectionOptions extends PartySocketOptions {
   host: string;
   room: string;
   worldId?: string;
@@ -39,9 +39,7 @@ interface WorldConnectionResult extends ConnectionResult {
   };
 }
 
-// Implémentation synchrone de la connexion (sans feature world)
 function createConnection(options: PartySocketOptions, roomInstance: RoomInstance): ConnectionResult {
-  // Créer la connexion
   const conn = new PartySocket(options);
   
   // Set up message handling
@@ -106,16 +104,12 @@ export async function connectionWorld(
 ): Promise<WorldConnectionResult> {
 
   const shardInfo = await getOptimalShard(options);
-  // Create options for PartySocket
-  const socketOptions: PartySocketOptions = {
-    host: options.host,
+  const result = createConnection({
+    ...options,
     party: 'shard',
     room: shardInfo.url
-  };
-  // Establish connection with configured options
-  const result = createConnection(socketOptions, roomInstance);
+  }, roomInstance);
 
-  // Add shard info to result
   return {
     ...result,
     shardInfo

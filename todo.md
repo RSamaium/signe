@@ -2,6 +2,10 @@
 
 [] Verify if `computed` in sync with client
 
+# signe
+
+[] effect not works if package signal is not same
+
 # rooms
 
 [X] Create shard
@@ -11,4 +15,4 @@
     - [] Manage many world. For moment, we use "default" name
     - [] Update shard pool when minShards is changed
     - [X] Add guard with token to manage world
-    - [] Fix: Shard foward ctx request
+    - [X] Fix: Shard foward ctx request
