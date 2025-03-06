@@ -14,6 +14,8 @@ import type { ComputedSignal, WritableArraySignal, WritableObjectSignal, Writabl
 const getGlobalReactiveStore = () => {
   const globalKey = '__REACTIVE_STORE__';
   
+  // Use globalThis (ES2020) which is supported in modern environments
+  // including browsers, Node.js and Edge environments
   if (typeof globalThis !== 'undefined') {
     if (!globalThis[globalKey]) {
       globalThis[globalKey] = {
@@ -25,15 +27,17 @@ const getGlobalReactiveStore = () => {
   }
   
   // Fallback for older environments
-  let globalObj;
+  let globalObj: any;
   
   // Browser
   if (typeof window !== 'undefined') {
     globalObj = window;
   } 
-  // Node.js
-  else if (typeof global !== 'undefined') {
-    globalObj = global;
+  // Node.js - avoid using 'global' directly to prevent type errors
+  else if (typeof process !== 'undefined' && process.versions && process.versions.node) {
+    // In Node.js, 'global' is equivalent to globalThis
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    globalObj = (Function('return this')()) as any;
   }
   // Web Worker or other environments
   else if (typeof self !== 'undefined') {
@@ -60,10 +64,10 @@ const getGlobalReactiveStore = () => {
   return globalObj[globalKey];
 };
 
-// Obtenir le store global une seule fois
+// Get the global store only once
 const reactiveStore = getGlobalReactiveStore();
 
-// Remplacer les variables globales du module par des accès au store
+// Replace module global variables with store access
 const trackDependency = (signal) => {
   if (reactiveStore.currentDependencyTracker) {
     reactiveStore.currentDependencyTracker(signal);

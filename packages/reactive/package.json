@@ -23,5 +23,8 @@
   "publishConfig": {
     "access": "public"
   },
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "^22.13.9"
+  }
 }
