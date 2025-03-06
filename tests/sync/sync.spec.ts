@@ -1,4 +1,4 @@
-import { signal } from "@signe/reactive";
+import { signal, computed } from "@signe/reactive";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createStatesSnapshot,
@@ -78,6 +78,105 @@ describe("onSync", () => {
         ["count", 1],
         ["name", "updated"],
       ])
+    );
+  });
+
+  it("should sync computed properties", () => {
+    class TestClass {
+      @sync() count = signal(0);
+      @sync() name = signal("test");
+      @sync() fullDescription = computed(() => `${this.name()}-${this.count()}`);
+    }
+
+    const instance = new TestClass();
+    const onSync = vi.fn();
+
+    syncClass(instance, { onSync });
+
+    // Initial sync should include the computed value
+    expect(onSync).toHaveBeenCalledWith(
+      new Map<string, any>([
+        ["count", 0],
+        ["name", "test"],
+        ["fullDescription", "test-0"],
+      ])
+    );
+
+    // Update signals that affect the computed value
+    instance.count.set(5);
+    
+    // Check that the computed property was synced with updated value
+    expect(onSync).toHaveBeenCalledWith(
+      new Map<string, any>([
+        ["count", 5],
+        ["name", "test"],
+        ["fullDescription", "test-5"],
+      ])
+    );
+
+    // Update another dependency
+    instance.name.set("new");
+    
+    // Check that the computed property was synced with updated value
+    expect(onSync).toHaveBeenCalledWith(
+      new Map<string, any>([
+        ["count", 5],
+        ["name", "new"],
+        ["fullDescription", "new-5"],
+      ])
+    );
+  });
+
+  it("should sync computed properties with nested dependencies", () => {
+    class NestedClass {
+      @sync() value = signal(10);
+      @sync() name = signal("nested");
+    }
+
+    class TestClass {
+      @sync(NestedClass) nested = signal<NestedClass>({} as NestedClass);
+      @sync() counter = signal(1);
+      @sync() nestedSummary = computed(() => {
+        const nestedObj = this.nested();
+        return `${nestedObj.name?.()}-${nestedObj?.value?.() ?? ''} (counter: ${this.counter()})`;
+      });
+    }
+
+    const instance = new TestClass();
+    const onSync = vi.fn();
+
+    syncClass(instance, { onSync });
+
+    instance.nested.set(new NestedClass())
+    
+    const nestedObj = instance.nested();
+    nestedObj.value.set(20);
+    
+    // Check that the computed property was synced with updated nested value
+    expect(onSync).toHaveBeenCalledWith(
+      expect.objectContaining(new Map<string, any>([
+        ["nestedSummary", "nested-20 (counter: 1)"],
+      ]))
+    );
+
+    // Update another nested property
+    nestedObj.name.set("updated");
+    
+    // Check that the computed property was synced with all updated values
+    expect(onSync).toHaveBeenCalledWith(
+      expect.objectContaining(new Map<string, any>([
+        ["nestedSummary", "updated-20 (counter: 1)"],
+      ]))
+    );
+
+    // Update parent property
+    instance.counter.set(5);
+    
+    // Check that the computed property was synced with parent property update
+    expect(onSync).toHaveBeenCalledWith(
+      expect.objectContaining(new Map<string, any>([
+        ["nestedSummary", "updated-20 (counter: 5)"],
+      ]))
     );
   });
 
@@ -328,6 +427,48 @@ describe("onSync", () => {
     );
   });
 
+  it("should sync object with signal properties", () => {
+    class TestClass {
+      @sync() count = signal(0);
+      @sync() address = {
+        city: signal("Paris"),
+        country: signal("France")
+      };
+      @sync() fullInfo = computed(() => `${this.count()} - ${this.address.city()}, ${this.address.country()}`);
+    }
+
+    const instance = new TestClass();
+    const onSync = vi.fn();
+
+    syncClass(instance, { onSync });
+    
+    expect(onSync).toHaveBeenCalledWith(
+      expect.objectContaining(new Map<string, any>([
+        ["count", 0],
+        ["address.city", "Paris"],
+        ["address.country", "France"],
+        ["fullInfo", "0 - Paris, France"]
+      ]))
+    );
+
+    instance.address.city.set("London");
+    
+    expect(onSync).toHaveBeenCalledWith(
+      expect.objectContaining(new Map<string, any>([
+        ["address.city", "London"],
+        ["fullInfo", "0 - London, France"]
+      ]))
+    );
+
+    instance.count.set(5);
+    
+    expect(onSync).toHaveBeenCalledWith(
+      expect.objectContaining(new Map<string, any>([
+        ["count", 5],
+        ["fullInfo", "5 - London, France"]
+      ]))
+    );
+  });
 });
 
 

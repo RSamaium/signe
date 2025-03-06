@@ -4,6 +4,7 @@ import {
   isArraySubject,
   isObjectSubject,
   isSignal,
+  isComputed,
   type WritableSignal,
 } from "@signe/reactive";
 import { isInstanceOfClass, isObject } from "./utils";
@@ -20,14 +21,15 @@ interface TypeOptions {
   classType?: any;
 }
 
-interface ExtendedWritableSignal<T> extends Omit<WritableSignal<T>, 'observable'> {
+interface ExtendedWritableSignal<T>
+  extends Omit<WritableSignal<T>, "observable"> {
   options?: TypeOptions;
   _subject?: ObjectSubject<T> | ArraySubject<T>;
   observable: Observable<SubjectValue<T>>;
 }
 
 interface SubjectValue<T = any> {
-  type: 'add' | 'update' | 'remove' | 'reset';
+  type: "add" | "update" | "remove" | "reset";
   value: T;
   key?: string;
   index?: number;
@@ -45,7 +47,7 @@ interface SyncInstance {
   };
 }
 
-export const DELETE_TOKEN = '$delete';
+export const DELETE_TOKEN = "$delete";
 
 /**
  * Synchronizes an instance by adding `$valuesChanges` methods for state management.
@@ -115,7 +117,9 @@ export const syncClass = (instance: any, options: SyncOptions = {}) => {
  * console.log(snapshot); // { count: 0, text: 'hello' }
  * ```
  */
-export function createStatesSnapshot(instance: Record<string, any>): Record<string, any> {
+export function createStatesSnapshot(
+  instance: Record<string, any>
+): Record<string, any> {
   let persistObject: any = {};
   if (instance?.$snapshot) {
     for (const key of instance.$snapshot.keys()) {
@@ -161,18 +165,31 @@ export const createSyncClass = (
   if (currentClass.$snapshot) {
     for (const key of currentClass.$snapshot.keys()) {
       const signal = currentClass.$snapshot.get(key);
-      const syncToClient = signal.options.syncToClient ?? true;
-      const persist = signal.options.persist ?? true;
-      let value = signal();
-      if (isObject(value) || Array.isArray(value)) {
-        value = { ...value };
+      const syncToClient = signal.options?.syncToClient ?? true;
+      const persist = signal.options?.persist ?? true;
+      let signalValue = signal();
+
+      if (isObject(signalValue) || Array.isArray(signalValue)) {
+        signalValue = { ...signalValue };
       }
+
       const newPath = (path ? path + "." : "") + key;
       if (syncToClient) {
-        currentClass.$valuesChanges.set(newPath, value);
+        currentClass.$valuesChanges.set(newPath, signalValue);
       }
       if (persist) {
-        if (parentClass) currentClass.$valuesChanges.setPersist(path, value);
+        if (parentClass)
+          currentClass.$valuesChanges.setPersist(path, signalValue);
+      }
+
+      // Handle computed signals specifically
+      if (isComputed(signal)) {
+        // Subscribe to the computed signal's observable to sync changes
+        signal.observable.subscribe((newValue: any) => {
+          if (syncToClient) {
+            currentClass.$valuesChanges.set(newPath, newValue);
+          }
+        });
       }
     }
   }
@@ -186,25 +203,27 @@ export const type = <T>(
 ): ExtendedWritableSignal<T> => {
   const { syncToClient = true, persist = true } = options;
   let init = true;
-  _signal.options = options;
 
   const handleObjectSubject = (value: SubjectValue, propPath: string) => {
-    const newPath = `${propPath}${value.key ? `.${value.key}` : ''}`;
-    if (['add', 'reset', 'update'].includes(value.type)) {
+    const newPath = `${propPath}${value.key ? `.${value.key}` : ""}`;
+    if (["add", "reset", "update"].includes(value.type)) {
       if (isInstanceOfClass(value.value)) {
         createSyncClass(value.value, value.key, currentInstance, newPath);
-      } else if (value.type === 'update' && (isObject(value.value) || Array.isArray(value.value))) {
+      } else if (
+        value.type === "update" &&
+        (isObject(value.value) || Array.isArray(value.value))
+      ) {
         createSyncClass(value.value, value.key, currentInstance, newPath);
       } else {
         savePath(newPath, value.value);
       }
-    } else if (value.type === 'remove') {
+    } else if (value.type === "remove") {
       savePath(newPath, DELETE_TOKEN);
     }
   };
 
   const handleArraySubject = (value: SubjectValue, propPath: string) => {
-    if (value.type === 'reset' && Array.isArray(value.items)) {
+    if (value.type === "reset" && Array.isArray(value.items)) {
       value.items.forEach((item, index) => {
         const newPath = `${propPath}.${index}`;
         if (isInstanceOfClass(item)) {
@@ -219,15 +238,18 @@ export const type = <T>(
     const newPath = `${propPath}.${value.index}`;
     const firstItem = value.items?.[0];
 
-    if (['add', 'update'].includes(value.type) && firstItem !== undefined) {
+    if (["add", "update"].includes(value.type) && firstItem !== undefined) {
       if (isInstanceOfClass(firstItem)) {
         createSyncClass(firstItem, value.key, currentInstance, newPath);
-      } else if (value.type === 'update' && (isObject(firstItem) || Array.isArray(firstItem))) {
+      } else if (
+        value.type === "update" &&
+        (isObject(firstItem) || Array.isArray(firstItem))
+      ) {
         createSyncClass(firstItem, value.key, currentInstance, newPath);
       } else {
         savePath(newPath, firstItem);
       }
-    } else if (value.type === 'remove') {
+    } else if (value.type === "remove") {
       savePath(newPath, DELETE_TOKEN);
     }
   };
@@ -238,35 +260,87 @@ export const type = <T>(
     }
     if (persist && currentInstance.$path !== undefined) {
       currentInstance.$valuesChanges.setPersist(
-        value == DELETE_TOKEN ? propPath : currentInstance.$path, 
+        value == DELETE_TOKEN ? propPath : currentInstance.$path,
         value
       );
     }
   };
 
-  _signal.observable.subscribe((value: SubjectValue<T>) => {
-    if (init) {
-      init = false;
-      return;
+  /**
+   * Common function to handle subscription to a signal
+   * Uses the same logic for all signal types
+   */
+  const setupSubscription = (signal: any, signalPath: string) => {
+    if (!isSignal(signal)) return;
+
+    // For initial sync of direct property values
+    if (syncToClient && currentInstance.$valuesChanges) {
+      const initialValue = signal();
+      currentInstance.$valuesChanges.set(signalPath, initialValue);
     }
 
-    if (currentInstance.$path !== undefined) {
-      const propPath = `${currentInstance.$path ? currentInstance.$path + '.' : ''}${path}`;
-      if (isObjectSubject(_signal._subject)) {
-        handleObjectSubject(value, propPath);
-      } else if (isArraySubject(_signal._subject)) {
-        handleArraySubject(value, propPath);
-      } else {
-        savePath(propPath, value);
+    signal.options = options;
+
+    signal.observable.subscribe((value: any) => {
+      if (init) return; // Skip initial value
+
+      if (currentInstance.$path !== undefined) {
+        const fullPath = `${
+          currentInstance.$path ? currentInstance.$path + "." : ""
+        }${signalPath}`;
+
+        if (isComputed(signal)) {
+          savePath(fullPath, value);
+        } else if (isObjectSubject(signal._subject)) {
+          handleObjectSubject(value, fullPath);
+        } else if (isArraySubject(signal._subject)) {
+          handleArraySubject(value, fullPath);
+        } else {
+          savePath(fullPath, value);
+        }
       }
+    });
+
+    if (!currentInstance.$snapshot) {
+      currentInstance.$snapshot = new Map();
     }
-  });
+    currentInstance.$snapshot.set(path, signal);
+  };
 
-  if (!currentInstance.$snapshot) {
-    currentInstance.$snapshot = new Map();
+  // If not a signal, handle appropriately
+  if (!isSignal(_signal)) {
+    // If it's an object (not null or array), process its signal properties
+    if (_signal && typeof _signal === "object" && !Array.isArray(_signal)) {
+      // Process each property in the object
+      for (const key in _signal) {
+        if (Object.prototype.hasOwnProperty.call(_signal, key)) {
+          const value = _signal[key];
+          const propertyPath = `${path}.${key}`;
+
+          // If property is a signal, set up syncing
+          if (isSignal(value)) {
+            setupSubscription(value, propertyPath);
+          }
+          // Recursively process nested objects
+          else if (
+            value &&
+            typeof value === "object" &&
+            !Array.isArray(value)
+          ) {
+            type(value as any, propertyPath, options, currentInstance);
+          }
+        }
+      }
+
+      init = false;
+    }
+    // For primitive values or arrays, just return as is
+    return _signal as any;
   }
+  // Set up subscription for the main signal
+  setupSubscription(_signal, path);
 
-  currentInstance.$snapshot.set(path, _signal);
+  init = false;
 
   return _signal;
 };

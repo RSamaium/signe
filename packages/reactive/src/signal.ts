@@ -105,6 +105,15 @@ export function isSignal(value: any): boolean {
 }
 
 /**
+ * Checks if a value is a computed signal.
+ * @param {any} value The value to check
+ * @returns {boolean} True if the value is a computed signal, false otherwise
+ */
+export function isComputed(value: any): boolean {
+    return isSignal(value) && !!value.dependencies;
+}
+
+/**
  * Creates a computed signal based on a compute function.
  * @template T The type of the computed value
  * @param {() => T} computeFunction The function to compute the value

@@ -44,6 +44,7 @@ syncClass(instance, {
 ### Property Decorators
 
 #### @sync()
+
 Synchronizes a property with optional settings:
 
 ```typescript
@@ -51,44 +52,105 @@ class MyClass {
   // Basic sync with default options
   @sync()
   basicProp = signal(0)
-
-  // Sync with custom class type and persistence options
-  @sync({ 
-    classType: MyClass,
-    persist: false,
-    syncToClient: true 
-  })
-  customProp = signal({})
 }
 ```
+
+##### Syncing Collections
+
+You can synchronize collections of objects by specifying the class type:
+
+```typescript
+class Player {
+  @id() id = signal('player-1')
+  @sync() name = signal('Player Name')
+}
+
+class MyClass {
+  // Synchronize a collection of Player objects
+  @sync(Player) players = signal<Record<string, Player>>({})
+  
+  addPlayer(playerId: string) {
+    // Dynamic key synchronization
+    // The Player instance automatically gets the id from the key
+    this.players()[playerId] = new Player()
+  }
+}
+```
+
+In the example above, when you add a player with `players.value['player-123'] = new Player()`, the `@id()` decorator ensures the Player instance automatically takes 'player-123' as its ID.
+
+##### Object Synchronization Options
+
+There are two ways to synchronize objects:
+
+1. **Entire object synchronization**:
+```typescript
+class MyClass {
+  // The entire object is synchronized as one unit
+  @sync() myObj = signal({ val: 1, count: 2 })
+}
+```
+
+2. **Granular property synchronization**:
+```typescript
+class MyClass {
+  // Individual properties with signals are synchronized separately
+  @sync() myObject = { 
+    val: signal(1), 
+    count: signal(2) 
+  }
+}
+```
+
+The key difference:
+- In the first approach, changing any property triggers synchronization of the entire object
+- In the second approach, only the changed property is synchronized, providing finer-grained control
 
 #### @id()
-Marks a property as an identifier:
+
+Marks a property as the unique identifier for an instance:
 
 ```typescript
-class MyClass {
-  @id()
-  myId = signal(0)
+class Player {
+  // Will automatically receive the key value when added to a collection
+  @id() id = signal('')
+  @sync() name = signal('Player Name')
 }
 ```
+
+The `@id()` decorator is especially useful for dynamic collections where the key in the collection should be reflected in the object's ID property.
 
 #### @users()
-Marks a property for user synchronization:
+
+Marks a property for special user collection synchronization:
 
 ```typescript
-class MyClass {
-  @users(UserClass)
-  myUsers = signal({})
+class User {
+  @id() id = signal('')
+  @sync() name = signal('')
+  @connected() isConnected = signal(false)
+}
+
+class Room {
+  // Special collection that automatically populates based on user connections
+  @users(User) connectedUsers = signal<Record<string, User>>({})
 }
 ```
+
+The `@users()` decorator creates a special collection that:
+- Automatically populates with user instances when they connect to the room
+- Automatically removes users when they disconnect
+- Links to the user's session information
+- Updates all clients in real-time with connection status
+
+This is ideal for building features like user presence indicators, online user lists, or real-time collaboration tools.
 
 #### @persist()
 Marks a property for persistence only (no client sync):
 
 ```typescript
 class MyClass {
-  @persist()
-  myPersistentProp = signal(0)
+  @persist() myPersistentProp = signal(0)
 }
 ```
 
@@ -116,10 +178,10 @@ Benefits:
 Set up a WebSocket connection for real-time synchronization:
 
 ```typescript
-import { connection } from '@signe/sync/client'
+import { connectionRoom } from '@signe/sync/client'
 
 const room = new Room()
-const conn = connection({
+const conn = connectionRoom({
   host: 'your-server-url',
   room: 'room-id'
 }, room)

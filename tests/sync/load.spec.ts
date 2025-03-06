@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { signal } from "../../packages/reactive/src";
+import { signal, computed } from "../../packages/reactive/src";
 import { load, sync } from "../../packages/sync/src";
 
 describe("load function", () => {
@@ -172,5 +172,67 @@ describe("load function", () => {
     expect(room.questions()[0].text()).toBe("What is the capital of France?");
     expect(room.questions()[0].options()).toEqual(["London", "Paris", "Berlin", "Madrid"]);
     expect(room.questions()[0].correctOptionIndex()).toBe(1);
+  });
+
+  it("should update computed values after loading data", () => {
+    class ComputedTestClass {
+      @sync() firstName = signal("John");
+      @sync() lastName = signal("Doe");
+      @sync() age = signal(30);
+      @sync() fullInfo = computed(() => `${this.firstName()}, ${this.lastName()}, ${this.age()} years old`);
+    }
+
+    const instance = new ComputedTestClass();
+    
+    expect(instance.fullInfo()).toBe("John, Doe, 30 years old");
+    
+    load(instance, {
+      firstName: "Jane",
+      lastName: "Smith",
+      age: 25
+    }, true);
+    
+    expect(instance.fullInfo()).toBe("Jane, Smith, 25 years old");
+    
+    load(instance, {
+      "firstName": "Robert",
+      "age": 40
+    });
+    
+    expect(instance.fullInfo()).toBe("Robert, Smith, 40 years old");
+  });
+
+  it("should update computed values with nested objects after loading data", () => {
+    class ComputedNestedClass {
+      @sync() name = signal("John");
+      @sync() address = {
+        city: signal("Paris"),
+        country: signal("France")
+      }
+      @sync() fullLocation = computed(() => {
+        const addressObj = this.address;
+        return `${this.name?.() ?? ''} lives in ${addressObj.city?.() ?? ''}, ${addressObj.country?.() ?? ''}`;
+      });
+    }
+    
+    const instance = new ComputedNestedClass();
+    expect(instance.fullLocation()).toBe("John lives in Paris, France");
+    
+    load(instance, {
+      name: "Jane",
+      address: {
+        city: "London",
+        country: "UK"
+      }
+    }, true);
+
+    expect(instance.fullLocation()).toBe("Jane lives in London, UK");
+    
+    load(instance, {
+      "name": "Robert",
+      "address.city": "Berlin"
+    });
+    
+    expect(instance.fullLocation()).toBe("Robert lives in Berlin, UK");
   });
 });
