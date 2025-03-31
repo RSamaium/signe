@@ -12,6 +12,8 @@ import { ServerResponse } from "./request/response";
 type BalancingStrategy = 'round-robin' | 'least-connections' | 'random';
 type ShardStatus = 'active' | 'maintenance' | 'draining';
 
+const MAX_PLAYERS_PER_SHARD = 75;
+
 // Schema validations
 const RoomConfigSchema = z.object({
   name: z.string(),
@@ -49,7 +51,7 @@ class RoomConfig {
   @sync() name = signal("");
   @sync() balancingStrategy = signal<BalancingStrategy>("round-robin");
   @sync() public = signal(true);
-  @sync() maxPlayersPerShard = signal(100);
+  @sync() maxPlayersPerShard = signal(MAX_PLAYERS_PER_SHARD);
   @sync() minShards = signal(1);
   @sync() maxShards = signal<number | undefined>(undefined);
 }
@@ -61,7 +63,7 @@ class ShardInfo {
   @sync({
     persist: false
   }) currentConnections = signal(0);
-  @sync() maxConnections = signal(100);
+  @sync() maxConnections = signal(MAX_PLAYERS_PER_SHARD);
   @sync() status = signal<ShardStatus>("active");
   @sync() lastHeartbeat = signal(0);
 }
@@ -83,7 +85,7 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
   
   // Configuration
   defaultShardUrlTemplate = signal("{shardId}");
-  defaultMaxConnectionsPerShard = signal(100);
+  defaultMaxConnectionsPerShard = signal(MAX_PLAYERS_PER_SHARD);
 
   constructor(private room: Party.Room) {
     const { AUTH_JWT_SECRET, SHARD_SECRET } = this.room.env;
@@ -93,7 +95,8 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
     if (!SHARD_SECRET) {
       throw new Error("SHARD_SECRET env variable is not set");
     }
-    setTimeout(() => this.cleanupInactiveShards(), 60000);
+    // TODO
+    //setTimeout(() => this.cleanupInactiveShards(), 60000);
   }
 
   async onJoin(user: any, conn: Party.Connection, ctx: Party.ConnectionContext) {
