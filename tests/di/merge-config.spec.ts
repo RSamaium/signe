@@ -162,4 +162,82 @@ describe('mergeConfig', () => {
             useValue: 'new value 4'
         });
     });
+
+    it('should override base providers with nested array providers having the same token', () => {
+        const baseProviders = [
+            {
+                provide: 'serviceA',
+                useValue: 'base value A'
+            },
+            {
+                provide: 'serviceB',
+                useValue: 'base value B'
+            },
+            {
+                provide: 'serviceC',
+                useValue: 'base value C'
+            }
+        ];
+
+        // Create deeply nested providers array with an override
+        const nestedProviders = [
+            {
+                provide: 'serviceD',
+                useValue: 'new value D'
+            },
+            [
+                {
+                    provide: 'serviceE',
+                    useValue: 'new value E'
+                },
+                {
+                    provide: 'serviceB', // This should override the base serviceB
+                    useValue: 'deeply nested override B'
+                }
+            ]
+        ];
+
+        const baseConfig: AppConfig = {
+            providers: baseProviders
+        };
+        const config: AppConfig = {
+            providers: nestedProviders
+        };
+        
+        const result = mergeConfig(baseConfig, config);
+        
+        // Should have 5 providers total (3 from base, minus 1 overridden, plus 3 new ones)
+        expect(result.providers).toHaveLength(5);
+        
+        // Make sure original providers that weren't overridden are still there
+        expect(result.providers).toContainEqual({
+            provide: 'serviceA',
+            useValue: 'base value A'
+        });
+        expect(result.providers).toContainEqual({
+            provide: 'serviceC',
+            useValue: 'base value C'
+        });
+        
+        // Check that the deeply nested provider replaced the base one
+        expect(result.providers).toContainEqual({
+            provide: 'serviceB',
+            useValue: 'deeply nested override B'
+        });
+        // Verify it does NOT contain the original baseProvider
+        expect(result.providers).not.toContainEqual({
+            provide: 'serviceB',
+            useValue: 'base value B'
+        });
+        
+        // And the new ones were added
+        expect(result.providers).toContainEqual({
+            provide: 'serviceD',
+            useValue: 'new value D'
+        });
+        expect(result.providers).toContainEqual({
+            provide: 'serviceE',
+            useValue: 'new value E'
+        });
+    });
 }); 

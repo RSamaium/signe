@@ -21,6 +21,32 @@ export interface AppConfig {
 }
 
 /**
+ * Process a provider or nested provider array and add it to the merged config
+ * @param mergedConfig - Configuration being built
+ * @param baseConfig - Original base configuration 
+ * @param provider - Provider or nested provider array to process
+ */
+function processProvider(mergedConfig: AppConfig, baseConfig: AppConfig, provider: any) {
+    // Handle nested arrays of providers
+    if (Array.isArray(provider)) {
+        for (const nestedProvider of provider) {
+            processProvider(mergedConfig, baseConfig, nestedProvider);
+        }
+        return;
+    }
+
+    // Handle individual provider
+    const existingProvider = findProvider(baseConfig.providers, provider.provide);
+    if (existingProvider) {
+        // Replace existing provider
+        mergedConfig.providers = override(mergedConfig.providers, provider);
+    } else {
+        // Add new provider
+        mergedConfig.providers.push(provider);
+    }
+}
+
+/**
  * Merges two application configurations
  * @param baseConfig - Base configuration to merge into
  * @param config - Configuration to merge with base
@@ -36,14 +62,7 @@ export function mergeConfig(baseConfig: AppConfig, config: AppConfig): AppConfig
 
     // Process each provider from the config to merge
     for (const provider of config.providers) {
-        const existingProvider = findProvider(baseConfig.providers, provider.provide)
-        if (existingProvider) {
-            // Replace existing provider
-            mergedConfig.providers = override(mergedConfig.providers, provider)
-        } else {
-            // Add new provider
-            mergedConfig.providers.push(provider)
-        }
+        processProvider(mergedConfig, baseConfig, provider);
     }
 
     return mergedConfig;
