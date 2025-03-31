@@ -1,10 +1,10 @@
 # sync
 
-[] Verify if `computed` in sync with client
+[X] Verify if `computed` in sync with client
 
 # signe
 
-[] effect not works if package signal is not same
+[X] effect not works if package signal is not same
 
 # rooms
 
