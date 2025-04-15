@@ -11,3 +11,8 @@ export interface RoomOnJoin {
 export interface RoomOnLeave {
   onLeave(user: any, conn: Party.Connection, ctx: Party.ConnectionContext): Promise<any> | null | any;
 }
+
+export interface RoomMethods {
+  $send: (conn: Party.Connection, obj: any) => void;
+  $broadcast: (obj: any) => void;
+}

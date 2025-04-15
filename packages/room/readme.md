@@ -417,6 +417,34 @@ class GameRoom {
 }
 ```
 
+## Server Methods
+
+The server provides several methods to help you manage your room:
+
+```ts
+import { RoomMethods } from "@signe/room";
+
+export class GameRoom {
+  action(name: string, data: any) {
+    this.$send(conn, {
+      type: 'action',
+      name,
+      data
+    })
+  }
+  
+  broadcast(name: string, data: any) {
+    this.$broadcast({
+      type: 'action',
+      name,
+      data
+    })
+  }
+}
+
+export interface GameRoom extends RoomMethods {}
+
+
 ## Party.Connection
 
 Wraps a standard WebSocket, with a few additional PartyKit-specific properties.

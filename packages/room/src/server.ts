@@ -239,6 +239,12 @@ export class Server implements Party.Server {
     };
 
     instance.$memoryAll = {}
+    instance.$send = (conn: Party.Connection, obj: any) => {
+      return this.send(conn, obj, instance)
+    }
+    instance.$broadcast = (obj: any) => {
+      return this.broadcast(obj, instance)
+    }
 
     // Sync callback: Broadcast changes to all clients
     const syncCb = (values) => {
