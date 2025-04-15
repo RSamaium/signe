@@ -4,7 +4,7 @@ import { Storage } from "./storage";
 import { request } from "./testing";
 
 export class MockPartyClient {
-    private events: Map<string, Function> = new Map();
+    private events: Map<string, Function[]> = new Map();
     id : string
     conn: MockConnection;
 
@@ -14,15 +14,31 @@ export class MockPartyClient {
     }
     
     addEventListener(event, cb) {
-        this.events.set(event, cb);
+        if (!this.events.has(event)) {
+            this.events.set(event, []);
+        }
+        this.events.get(event).push(cb);
     }
 
     removeEventListener(event, cb) {
-        this.events.delete(event);
+        if (!this.events.has(event)) return;
+        const callbacks = this.events.get(event);
+        const index = callbacks.indexOf(cb);
+        if (index !== -1) {
+            callbacks.splice(index, 1);
+        }
+        if (callbacks.length === 0) {
+            this.events.delete(event);
+        }
     }
 
     _trigger(event, data) {
-        this.events.get(event)?.(data);
+        const callbacks = this.events.get(event);
+        if (callbacks) {
+            for (const cb of callbacks) {
+                cb(data);
+            }
+        }
     }
 
     send(data) {
