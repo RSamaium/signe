@@ -68,6 +68,21 @@ describe("isSignal", () => {
 });
 
 describe("computed", () => {
+
+  it("should create a computed with a primitive value", () => {
+    const arraySignal = computed(() => [1, 2, 3]);
+    expect(arraySignal()).toEqual([1, 2, 3]);
+  });
+
+  it("should create a computed with dependencies count", () => {
+    const arraySignal = computed(() => [1, 2, 3]);
+    expect(arraySignal.dependencies).toHaveLength(0);
+
+    const arraySignal2 = signal([1, 2, 3]);
+    const computedSignal = computed(() => arraySignal2());
+    expect(computedSignal.dependencies).toHaveLength(1);
+  });
+
   it("should create a computed signal based on other signals", () => {
     const numSignal1 = signal(1);
     const numSignal2 = signal(2);

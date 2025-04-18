@@ -221,7 +221,7 @@ export function computed<T = any>(computeFunction: () => T, disposableFn?: () =>
         lastComputedValue = value;
     });
 
-    fn.dependencies = dependencies
+    fn.dependencies = dependencies;
 
     reactiveStore.currentSubscriptionsTracker?.(fn.subscription);
 

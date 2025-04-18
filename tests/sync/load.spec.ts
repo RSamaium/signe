@@ -19,6 +19,7 @@ describe("load function", () => {
       }
       @sync(_class) nested = signal({});
       normalValue = 0;
+      graphics = signal([]);
     }
 
     testInstance = new TestClass();
@@ -52,6 +53,16 @@ describe("load function", () => {
     load(testInstance, { 'nested.id.value': 10});
     expect(testInstance.nested()['id']).instanceOf(_class)
     expect(testInstance.nested()['id'].value()).toBe(10);
+  });
+
+  it("should load an array", () => {
+    load(testInstance, { 'graphics': { '0': 'sprite1', '1': 'sprite2' } }, true);
+    expect(testInstance.graphics()).toEqual(['sprite1', 'sprite2']);
+  });
+
+  it("should load an array with a missing index", () => {
+    load(testInstance, { 'graphics': { '2': 'sprite1'} }, true);
+    expect(testInstance.graphics()).toEqual([undefined, undefined, 'sprite1']);
   });
 
   it("should delete a property if value is $delete", () => {
