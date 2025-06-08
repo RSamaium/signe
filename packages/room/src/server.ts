@@ -1191,4 +1191,91 @@ export class Server implements Party.Server {
 
     return clonedReq;
   }
+
+  /**
+   * Capture and persist the current state of this room
+   */
+  async captureCurrentState() {
+    const subRoom = await this.getSubRoom({ getMemoryAll: true });
+    if (!subRoom) return null;
+    const snapshot = createStatesSnapshot(subRoom);
+    subRoom.$valuesChanges?.setPersist('.', snapshot);
+    return snapshot;
+  }
+
+  /**
+   * Merge a provided state object into this room and persist
+   */
+  async mergeState(state: Record<string, any>) {
+    const subRoom = await this.getSubRoom({ getMemoryAll: true });
+    if (!subRoom) return;
+    load(subRoom, state, true);
+    const snapshot = createStatesSnapshot(subRoom);
+    subRoom.$valuesChanges?.setPersist('.', snapshot);
+  }
+
+  /**
+   * Capture a single user session by private ID
+   */
+  async captureUserSession(privateId: string) {
+    const subRoom = await this.getSubRoom({ getMemoryAll: true });
+    if (!subRoom) return null;
+    const session = await this.getSession(privateId);
+    if (!session) return null;
+    const usersSignal = this.getUsersProperty(subRoom);
+    const usersPropName = this.getUsersPropName(subRoom);
+    if (!usersSignal || !usersPropName) return null;
+    const user = usersSignal()[session.publicId];
+    if (!user) return null;
+    const snapshot = createStatesSnapshot(user);
+    subRoom.$valuesChanges?.setPersist(`${usersPropName}.${session.publicId}`, snapshot);
+    return { publicId: session.publicId, state: snapshot };
+  }
+
+  /**
+   * Merge a user session into this room and persist it
+   */
+  async mergeUserSession(privateId: string, publicId: string, state: Record<string, any>) {
+    const subRoom = await this.getSubRoom({ getMemoryAll: true });
+    if (!subRoom) return;
+    const usersSignal = this.getUsersProperty(subRoom);
+    const usersPropName = this.getUsersPropName(subRoom);
+    if (!usersSignal || !usersPropName) return;
+    let user = usersSignal()[publicId];
+    if (!user) {
+      const { classType } = usersSignal.options;
+      user = isClass(classType) ? new (classType as any)() : (classType as any)();
+      usersSignal()[publicId] = user;
+    }
+    load(user, state, true);
+    const snapshot = createStatesSnapshot(user);
+    subRoom.$valuesChanges?.setPersist(`${usersPropName}.${publicId}`, snapshot);
+    await this.saveSession(privateId, { publicId });
+  }
+
+  /**
+   * Transfer a serialized state from one room to another
+   */
+  async transferRoomState(fromRoomId: string, toRoomId: string, state: Record<string, any>) {
+    const fromLobby = this.room.context.parties.main.get(fromRoomId);
+    const toLobby = this.room.context.parties.main.get(toRoomId);
+    if (!fromLobby || !toLobby) return;
+
+    await fromLobby.server.captureCurrentState();
+    await toLobby.server.mergeState(state);
+  }
+
+  /**
+   * Transfer a user session from one room to another
+   */
+  async transferUserSession(fromRoomId: string, toRoomId: string, privateId: string) {
+    const fromLobby = this.room.context.parties.main.get(fromRoomId);
+    const toLobby = this.room.context.parties.main.get(toRoomId);
+    if (!fromLobby || !toLobby) return;
+
+    const data = await fromLobby.server.captureUserSession(privateId);
+    if (!data) return;
+    await fromLobby.server.deleteSession(privateId);
+    await toLobby.server.mergeUserSession(privateId, data.publicId, data.state);
+  }
 }

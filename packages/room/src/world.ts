@@ -45,6 +45,18 @@ const ScaleRoomSchema = z.object({
   }).optional(),
 });
 
+const TransferRoomStateSchema = z.object({
+  fromRoomId: z.string(),
+  toRoomId: z.string(),
+  state: z.record(z.any())
+});
+
+const TransferUserSessionSchema = z.object({
+  fromRoomId: z.string(),
+  toRoomId: z.string(),
+  sessionId: z.string()
+});
+
 // Model classes
 class RoomConfig {
   @id() id: string;
@@ -265,6 +277,54 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
         }
       }
     }
+  }
+
+  @Request({
+    path: 'transfer-room-state',
+    method: 'POST'
+  })
+  @Guard([guardManageWorld])
+  async transferRoomState(req: Party.Request, res: ServerResponse) {
+    const data: z.infer<typeof TransferRoomStateSchema> = await req.json();
+    const { fromRoomId, toRoomId, state } = data;
+
+    const fromLobby = this.room.context.parties.main.get(fromRoomId);
+    const toLobby = this.room.context.parties.main.get(toRoomId);
+
+    if (!fromLobby || !toLobby) {
+      return res.notFound('Room not found');
+    }
+
+    await fromLobby.server.captureCurrentState();
+    await toLobby.server.mergeState(state);
+
+    return res.success({ success: true });
+  }
+
+  @Request({
+    path: 'transfer-user-session',
+    method: 'POST'
+  })
+  @Guard([guardManageWorld])
+  async transferUserSession(req: Party.Request, res: ServerResponse) {
+    const data: z.infer<typeof TransferUserSessionSchema> = await req.json();
+    const { fromRoomId, toRoomId, sessionId } = data;
+
+    const fromLobby = this.room.context.parties.main.get(fromRoomId);
+    const toLobby = this.room.context.parties.main.get(toRoomId);
+
+    if (!fromLobby || !toLobby) {
+      return res.notFound('Room not found');
+    }
+
+    const dataSession = await fromLobby.server.captureUserSession(sessionId);
+    if (!dataSession) {
+      return res.notFound('Session not found');
+    }
+    await fromLobby.server.deleteSession(sessionId);
+    await toLobby.server.mergeUserSession(sessionId, dataSession.publicId, dataSession.state);
+
+    return res.success({ success: true });
   }
 
   @Request({

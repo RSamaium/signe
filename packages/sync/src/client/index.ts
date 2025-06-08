@@ -1,4 +1,4 @@
-import { load } from "@signe/sync";
+import { load, createStatesSnapshot } from "@signe/sync";
 import PartySocket, { PartySocketOptions } from "partysocket";
 
 export interface WorldConnectionOptions extends PartySocketOptions {
@@ -114,6 +114,38 @@ export async function connectionWorld(
     ...result,
     shardInfo
   };
+}
+
+/**
+ * Request a room change through the World service
+ */
+export async function requestRoomChange(
+  options: WorldConnectionOptions & { fromRoomId: string; toRoomId: string },
+  roomInstance: RoomInstance
+) {
+  const { host, worldId = 'world-default', fromRoomId, toRoomId } = options;
+  const snapshot = createStatesSnapshot(roomInstance);
+  const url = `${host}/parties/world/${encodeURIComponent(worldId)}/transfer-room-state`;
+  await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fromRoomId, toRoomId, state: snapshot })
+  });
+}
+
+/**
+ * Request a user session transfer through the World service
+ */
+export async function requestSessionTransfer(
+  options: WorldConnectionOptions & { fromRoomId: string; toRoomId: string; sessionId: string }
+) {
+  const { host, worldId = 'world-default', fromRoomId, toRoomId, sessionId } = options;
+  const url = `${host}/parties/world/${encodeURIComponent(worldId)}/transfer-user-session`;
+  await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fromRoomId, toRoomId, sessionId })
+  });
 }
 
 /**

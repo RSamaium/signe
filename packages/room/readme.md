@@ -336,6 +336,36 @@ connection.emit('increment', { value: 1 });
 connection.close();
 ```
 
+### Switching Rooms
+
+You can transfer a room's state to another one via the World service:
+
+```ts
+import { requestRoomChange } from '@signe/sync/client';
+
+// `room` is your current synchronized instance
+await requestRoomChange({
+  host: 'https://your-app-url.com',
+  worldId: 'your-world-id',
+  fromRoomId: 'lobby-1',
+  toRoomId: 'lobby-2'
+}, room);
+```
+
+To move a single user's session between rooms on the server, use `requestSessionTransfer`:
+
+```ts
+import { requestSessionTransfer } from '@signe/sync/client';
+
+await requestSessionTransfer({
+  host: 'https://your-app-url.com',
+  worldId: 'your-world-id',
+  fromRoomId: 'lobby-1',
+  toRoomId: 'lobby-2',
+  sessionId: 'private-session-id'
+});
+```
+
 For connecting to a standard room (not through World service), use the `connectionRoom` function:
 
 ```js
