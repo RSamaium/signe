@@ -288,8 +288,8 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
     const data: z.infer<typeof TransferRoomStateSchema> = await req.json();
     const { fromRoomId, toRoomId, state } = data;
 
-    const fromLobby = this.room.context.parties.main.get(fromRoomId);
-    const toLobby = this.room.context.parties.main.get(toRoomId);
+    const fromLobby = this.room.context.parties.main.get(fromRoomId) as any;
+    const toLobby = this.room.context.parties.main.get(toRoomId) as any;
 
     if (!fromLobby || !toLobby) {
       return res.notFound('Room not found');
@@ -310,8 +310,8 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
     const data: z.infer<typeof TransferUserSessionSchema> = await req.json();
     const { fromRoomId, toRoomId, sessionId } = data;
 
-    const fromLobby = this.room.context.parties.main.get(fromRoomId);
-    const toLobby = this.room.context.parties.main.get(toRoomId);
+    const fromLobby = this.room.context.parties.main.get(fromRoomId) as any;
+    const toLobby = this.room.context.parties.main.get(toRoomId) as any;
 
     if (!fromLobby || !toLobby) {
       return res.notFound('Room not found');

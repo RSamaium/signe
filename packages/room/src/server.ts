@@ -1257,8 +1257,8 @@ export class Server implements Party.Server {
    * Transfer a serialized state from one room to another
    */
   async transferRoomState(fromRoomId: string, toRoomId: string, state: Record<string, any>) {
-    const fromLobby = this.room.context.parties.main.get(fromRoomId);
-    const toLobby = this.room.context.parties.main.get(toRoomId);
+    const fromLobby = this.room.context.parties.main.get(fromRoomId) as any;
+    const toLobby = this.room.context.parties.main.get(toRoomId) as any;
     if (!fromLobby || !toLobby) return;
 
     await fromLobby.server.captureCurrentState();
@@ -1269,8 +1269,8 @@ export class Server implements Party.Server {
    * Transfer a user session from one room to another
    */
   async transferUserSession(fromRoomId: string, toRoomId: string, privateId: string) {
-    const fromLobby = this.room.context.parties.main.get(fromRoomId);
-    const toLobby = this.room.context.parties.main.get(toRoomId);
+    const fromLobby = this.room.context.parties.main.get(fromRoomId) as any;
+    const toLobby = this.room.context.parties.main.get(toRoomId) as any;
     if (!fromLobby || !toLobby) return;
 
     const data = await fromLobby.server.captureUserSession(privateId);
