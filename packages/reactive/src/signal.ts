@@ -229,3 +229,22 @@ export function computed<T = any>(computeFunction: () => T, disposableFn?: () =>
 
     return fn
 }
+
+/**
+ * Execute a function without tracking reactive dependencies.
+ * @template T
+ * @param {() => T} fn - The function to execute without tracking.
+ * @returns {T} The return value of the executed function.
+ */
+export function untracked<T>(fn: () => T): T {
+    const prevDepTracker = reactiveStore.currentDependencyTracker;
+    const prevSubTracker = reactiveStore.currentSubscriptionsTracker;
+    reactiveStore.currentDependencyTracker = null;
+    reactiveStore.currentSubscriptionsTracker = null;
+    try {
+        return fn();
+    } finally {
+        reactiveStore.currentDependencyTracker = prevDepTracker;
+        reactiveStore.currentSubscriptionsTracker = prevSubTracker;
+    }
+}
