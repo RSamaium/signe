@@ -70,8 +70,8 @@ export async function testRoom(Room, options: {
     return {
         server,
         room: (server as any).subRoom,
-        createClient: async (id?: string) => {
-            const client = await io.connection(server as Server, id)
+        createClient: async (id?: string, options?: { queryParams?: Record<string, string> }) => {
+            const client = await io.connection(server as Server, id, options)
             return client
         }
     }

@@ -187,7 +187,7 @@ describe('SessionTransferService - Core Tests', () => {
       expect(updatedSession.connected).toBe(true);
       expect(updatedSession.lastRoomId).toBe("test-room");
       expect(updatedSession.transferToken).toBeUndefined();
-      expect(updatedSession.transferData).toBeUndefined();
+      expect(updatedSession.transferData).toEqual({ playerLevel: 10 });
       expect(updatedSession.transferExpiry).toBeUndefined();
     });
   });

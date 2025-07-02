@@ -87,9 +87,17 @@ class MockPartyRoom {
     this.env = options.env || {}
   }
 
-  async connection(server: Server, id?: string) {
+  async connection(server: Server, id?: string, options?: { queryParams?: Record<string, string> }) {
     const socket = new MockPartyClient(server, id);
-    const url = new URL('http://localhost')
+    let url = new URL('http://localhost');
+    
+    // Add query parameters if provided
+    if (options?.queryParams) {
+      for (const [key, value] of Object.entries(options.queryParams)) {
+        url.searchParams.set(key, value);
+      }
+    }
+    
     const request = new Request(url.toString(), {
       method: 'GET',
       headers: {

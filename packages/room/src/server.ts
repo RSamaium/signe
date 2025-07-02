@@ -411,11 +411,11 @@ export class Server implements Party.Server {
    * console.log(session);
    * ```
    */
-  async getSession(privateId: string): Promise<{ publicId: string, state?: any, created?: number, connected?: boolean } | null> {
+  async getSession(privateId: string): Promise<{ publicId: string, state?: any, created?: number, connected?: boolean, transferData?: any } | null> {
     if (!privateId) return null;
     try {
       const session = await this.room.storage.get(`session:${privateId}`);
-      return session as { publicId: string, state?: any, created: number, connected: boolean } | null;
+      return session as { publicId: string, state?: any, created: number, connected: boolean, transferData?: any } | null;
     } catch (e) {
       return null;
     }
@@ -490,10 +490,16 @@ export class Server implements Party.Server {
       return false;
     }
 
+    // Store transfer data temporarily in the session for access during onConnect
+    const sessionWithTransferData = {
+      ...transferResult.sessionData,
+      transferData: transferResult.sessionData.transferData
+    };
+
     // Complete the transfer
     await this.sessionTransferService.completeSessionTransfer(
       conn.id, 
-      transferResult.sessionData
+      sessionWithTransferData
     );
 
     return true;
@@ -543,6 +549,7 @@ export class Server implements Party.Server {
     }
     
     let existingSession = await this.getSession(conn.id);
+    let transferData: any = null;
     
     // Handle session transfer if transfer token is provided
     if (transferToken && !existingSession) {
@@ -550,6 +557,8 @@ export class Server implements Party.Server {
       if (transferSuccessful) {
         // Get the transferred session
         existingSession = await this.getSession(conn.id);
+        // Extract transfer data from session before it's cleaned up
+        transferData = existingSession?.transferData;
       }
     }
 
@@ -589,6 +598,13 @@ export class Server implements Party.Server {
 
     // Call the room's onJoin method if it exists
     await awaitReturn(subRoom["onJoin"]?.(user, conn, ctx));
+
+    // Call onSessionTransfer if there is transfer data and the method exists
+    if (transferData && subRoom["onSessionTransfer"] && user) {
+      await awaitReturn(subRoom["onSessionTransfer"](user, conn, transferData));
+      // Clean up transfer data after processing
+      await this.sessionTransferService.cleanupSessionTransferData(conn.id);
+    }
 
     // Store both IDs in connection state
     conn.setState({

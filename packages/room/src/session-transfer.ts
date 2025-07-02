@@ -126,14 +126,15 @@ export class SessionTransferService {
       await this.cleanupTransfer(sessionData.transferToken, privateId);
     }
 
-    // Save session in current room without transfer data
+    // Save session in current room, keeping transfer data temporarily for onSessionTransfer
     const cleanSessionData: SessionData = {
       ...sessionData,
       connected: true,
-      transferData: undefined,
       transferToken: undefined,
       transferExpiry: undefined,
-      lastRoomId: this.roomId
+      lastRoomId: this.roomId,
+      // Keep transferData temporarily - it will be cleaned up after onSessionTransfer is called
+      transferData: sessionData.transferData
     };
 
     await this.saveSession(privateId, cleanSessionData);
@@ -156,6 +157,21 @@ export class SessionTransferService {
    */
   async getSessionForValidation(privateId: string): Promise<SessionData | null> {
     return await this.getSession(privateId);
+  }
+
+  /**
+   * Cleans up transfer data from a session after it has been processed
+   * @param privateId The private ID of the session
+   */
+  async cleanupSessionTransferData(privateId: string): Promise<void> {
+    const session = await this.getSession(privateId);
+    if (session && session.transferData) {
+      const cleanSession: SessionData = {
+        ...session,
+        transferData: undefined
+      };
+      await this.saveSession(privateId, cleanSession);
+    }
   }
 
   private async getSession(privateId: string): Promise<SessionData | null> {

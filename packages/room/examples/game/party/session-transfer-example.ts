@@ -7,10 +7,10 @@ import {
   requireSessionWithProperties,
   requireSessionFromRoom,
   combineSessionGuards
-} from "../src/index";
+} from "../../../src/index";
 import { signal } from "@signe/reactive";
 import { sync, persist, id } from "@signe/sync";
-import type * as Party from "../src/types/party";
+import type * as Party from "../../../src/types/party";
 
 // User class that will be stored in sessions
 class User {
@@ -197,7 +197,7 @@ export class VipRoom {
 }
 
 // Example server implementation
-export class GameServer extends Server {
+export default class GameServer extends Server {
   rooms = [LobbyRoom, GameRoom, PrivateRoom, BossRoom, EventRoom, VipRoom];
 }
 
