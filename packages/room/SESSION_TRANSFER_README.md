@@ -370,6 +370,7 @@ Sessions transfers can fail for several reasons:
 - Session doesn't exist
 - Target room doesn't match
 - Guard validation fails
+- Missing or invalid request context
 
 Always check for transfer success and provide fallback logic:
 
@@ -380,4 +381,35 @@ if (!transferSuccessful) {
   conn.close();
   return;
 }
+```
+
+### Robust Context Handling
+
+The system gracefully handles missing or incomplete request contexts:
+
+```typescript
+// ✅ These scenarios are safely handled:
+// - Missing request context: { request: undefined }
+// - Missing URL: { request: { url: undefined } }
+// - Invalid URL format: { request: { url: "not-a-valid-url" } }
+
+// The system will:
+// 1. Skip transfer token extraction
+// 2. Continue with normal session flow
+// 3. Log warnings for debugging
+// 4. Not throw errors or crash
+```
+
+### Testing Error Scenarios
+
+When writing tests, you can safely test with incomplete contexts:
+
+```typescript
+// Test with missing request
+const mockCtx = { request: undefined };
+await server.onConnectClient(mockConn, mockCtx); // Won't throw
+
+// Test with invalid URL
+const mockCtx = { request: { url: "invalid" } };
+await server.onConnectClient(mockConn, mockCtx); // Won't throw
 ```

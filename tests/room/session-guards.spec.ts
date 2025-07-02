@@ -118,30 +118,57 @@ describe('Session Guards - Unit Tests', () => {
       expect(result).toBe(true);
     });
 
-    it('should reject expired transfer tokens', async () => {
-      mockCtx.request.url = "ws://localhost/test-room?transfer_token=expired_token";
+         it('should reject expired transfer tokens', async () => {
+       mockCtx.request.url = "ws://localhost/test-room?transfer_token=expired_token";
 
-      // Setup expired transfer data
-      await mockStorage.put("session:other-connection-id", {
-        publicId: "user123",
-        created: Date.now(),
-        connected: true,
-        transferToken: "expired_token",
-        transferExpiry: Date.now() - 1000 // Expired
-      });
+       // Setup expired transfer data
+       await mockStorage.put("session:other-connection-id", {
+         publicId: "user123",
+         created: Date.now(),
+         connected: true,
+         transferToken: "expired_token",
+         transferExpiry: Date.now() - 1000 // Expired
+       });
 
-      await mockStorage.put("transfer:expired_token", {
-        sourceRoomId: "source-room",
-        targetRoomId: "test-room",
-        timestamp: Date.now(),
-        transferId: "expired_token"
-      });
+       await mockStorage.put("transfer:expired_token", {
+         sourceRoomId: "source-room",
+         targetRoomId: "test-room",
+         timestamp: Date.now(),
+         transferId: "expired_token"
+       });
 
-      const guard = requireSession({ autoCreateSession: false });
-      const result = await guard(mockConn, mockCtx, mockRoom);
-      
-      expect(result).toBe(false);
-    });
+       const guard = requireSession({ autoCreateSession: false });
+       const result = await guard(mockConn, mockCtx, mockRoom);
+       
+       expect(result).toBe(false);
+     });
+
+     it('should handle missing request context gracefully', async () => {
+       const mockCtxNoRequest = { request: undefined };
+
+       const guard = requireSession({ autoCreateSession: true });
+       const result = await guard(mockConn, mockCtxNoRequest as any, mockRoom);
+       
+       expect(result).toBe(true); // Should allow auto-creation
+     });
+
+     it('should handle missing request URL gracefully', async () => {
+       const mockCtxNoUrl = { request: { url: undefined } };
+
+       const guard = requireSession({ autoCreateSession: true });
+       const result = await guard(mockConn, mockCtxNoUrl as any, mockRoom);
+       
+       expect(result).toBe(true); // Should allow auto-creation
+     });
+
+     it('should handle invalid URL format gracefully', async () => {
+       const mockCtxInvalidUrl = { request: { url: "not-a-valid-url" } };
+
+       const guard = requireSession({ autoCreateSession: true });
+       const result = await guard(mockConn, mockCtxInvalidUrl as any, mockRoom);
+       
+       expect(result).toBe(true); // Should allow auto-creation despite invalid URL
+     });
   });
 
   describe('requireSessionWithProperties', () => {

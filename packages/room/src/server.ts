@@ -530,9 +530,17 @@ export class Server implements Party.Server {
       }
     }
 
-    // Check for transfer token first
-    const url = new URL(ctx.request.url);
-    const transferToken = url.searchParams.get('transfer_token');
+    // Check for transfer token first (safely handle missing request context)
+    let transferToken: string | null = null;
+    if (ctx.request?.url) {
+      try {
+        const url = new URL(ctx.request.url);
+        transferToken = url.searchParams.get('transfer_token');
+      } catch (error) {
+        // Invalid URL format, continue without transfer token
+        console.warn('Invalid URL format in request context:', error);
+      }
+    }
     
     let existingSession = await this.getSession(conn.id);
     

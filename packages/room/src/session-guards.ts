@@ -54,33 +54,38 @@ export function requireSession(options: SessionGuardOptions = {}) {
     }
 
     // If no existing session, check for transfer token
-    if (allowTransfers) {
-      const url = new URL(ctx.request.url);
-      const transferToken = url.searchParams.get('transfer_token');
-      
-      if (transferToken) {
-        const transferResult = await sessionService.validateTransferToken(
-          transferToken, 
-          room.id
-        );
+    if (allowTransfers && ctx.request?.url) {
+      try {
+        const url = new URL(ctx.request.url);
+        const transferToken = url.searchParams.get('transfer_token');
         
-        if (transferResult) {
-          // Complete the transfer
-          await sessionService.completeSessionTransfer(
-            transferResult.privateId, 
-            transferResult.sessionData
+        if (transferToken) {
+          const transferResult = await sessionService.validateTransferToken(
+            transferToken, 
+            room.id
           );
           
-          // Validate transferred session if custom validator is provided
-          if (validateSession) {
-            const isValid = await validateSession(transferResult.sessionData);
-            if (!isValid) {
-              return false;
+          if (transferResult) {
+            // Complete the transfer
+            await sessionService.completeSessionTransfer(
+              transferResult.privateId, 
+              transferResult.sessionData
+            );
+            
+            // Validate transferred session if custom validator is provided
+            if (validateSession) {
+              const isValid = await validateSession(transferResult.sessionData);
+              if (!isValid) {
+                return false;
+              }
             }
+            
+            return true;
           }
-          
-          return true;
         }
+      } catch (error) {
+        // Invalid URL format, continue without transfer token
+        console.warn('Invalid URL format in session guard:', error);
       }
     }
 
