@@ -19,6 +19,7 @@ import {
 import { ServerResponse } from "./request/response";
 import { createCorsInterceptor } from "./request/cors";
 import { Signal, WritableSignal } from "@signe/reactive";
+import { SessionTransferService, SessionData } from "./session-transfer";
 
 const Message = z.object({
   action: z.string(),
@@ -54,6 +55,7 @@ type CreateRoomOptions = {
 export class Server implements Party.Server {
   subRoom = null;
   rooms: any[] = [];
+  private sessionTransferService: SessionTransferService;
 
   /**
    * @constructor
@@ -64,7 +66,9 @@ export class Server implements Party.Server {
    * const server = new MyServer(new ServerIo("game"));
    * ```
    */
-  constructor(readonly room: Party.Room) { }
+  constructor(readonly room: Party.Room) { 
+    this.sessionTransferService = new SessionTransferService(room.storage, room.id);
+  }
 
   /**
     * @readonly
@@ -448,6 +452,61 @@ export class Server implements Party.Server {
     await this.room.storage.delete(`session:${privateId}`);
   }
 
+  /**
+   * Prepares a user session for transfer to another room
+   * @param privateId The private ID of the connection
+   * @param targetRoomId The target room ID
+   * @param transferData Additional data to transfer with the session
+   * @returns Transfer token for the session transfer
+   */
+  async prepareSessionTransfer(
+    privateId: string, 
+    targetRoomId: string, 
+    transferData?: any
+  ): Promise<string | null> {
+    return await this.sessionTransferService.prepareSessionTransfer(
+      privateId, 
+      targetRoomId, 
+      transferData
+    );
+  }
+
+  /**
+   * Handles a connection with a transfer token from another room
+   * @param conn The connection object
+   * @param transferToken The transfer token
+   * @returns True if transfer was successful, false otherwise
+   */
+  async handleSessionTransfer(
+    conn: Party.Connection, 
+    transferToken: string
+  ): Promise<boolean> {
+    const transferResult = await this.sessionTransferService.validateTransferToken(
+      transferToken, 
+      this.room.id
+    );
+
+    if (!transferResult) {
+      return false;
+    }
+
+    // Complete the transfer
+    await this.sessionTransferService.completeSessionTransfer(
+      conn.id, 
+      transferResult.sessionData
+    );
+
+    return true;
+  }
+
+  /**
+   * Gets the session transfer service for advanced operations
+   * @returns Session transfer service instance
+   */
+  getSessionTransferService(): SessionTransferService {
+    return this.sessionTransferService;
+  }
+
   async onConnectClient(conn: Party.Connection, ctx: Party.ConnectionContext) {
     const subRoom = await this.getSubRoom({
       getMemoryAll: true,
@@ -471,8 +530,20 @@ export class Server implements Party.Server {
       }
     }
 
-    // Check for existing session
-    const existingSession = await this.getSession(conn.id)
+    // Check for transfer token first
+    const url = new URL(ctx.request.url);
+    const transferToken = url.searchParams.get('transfer_token');
+    
+    let existingSession = await this.getSession(conn.id);
+    
+    // Handle session transfer if transfer token is provided
+    if (transferToken && !existingSession) {
+      const transferSuccessful = await this.handleSessionTransfer(conn, transferToken);
+      if (transferSuccessful) {
+        // Get the transferred session
+        existingSession = await this.getSession(conn.id);
+      }
+    }
 
     // Generate IDs
     const publicId = existingSession?.publicId || generateShortUUID();

@@ -6,3 +6,5 @@ export * from './shard';
 export * from './world';
 export * from './interfaces';
 export * from './request/response';
+export * from './session-transfer';
+export * from './session-guards';
