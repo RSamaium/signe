@@ -113,14 +113,67 @@ export function requireSessionWithProperties(requiredProperties: string[]) {
 
 /**
  * Guard that requires a session from a specific source room
- * @param allowedSourceRooms Array of room IDs that sessions can be transferred from
+ * @param allowedSourceRooms Array of room patterns that sessions can be transferred from
+ *                          Supports: exact strings, RegExp objects, and "*" for all rooms
  * @returns Guard function
+ * 
+ * @example
+ * ```typescript
+ * // Exact room names
+ * requireSessionFromRoom(["lobby", "tutorial"])
+ * 
+ * // With regex patterns
+ * requireSessionFromRoom([/^game-\d+$/, "lobby"])
+ * 
+ * // Accept any room
+ * requireSessionFromRoom(["*"])
+ * 
+ * // Mixed patterns
+ * requireSessionFromRoom(["lobby", /^tutorial-/, "*-special"])
+ * ```
  */
-export function requireSessionFromRoom(allowedSourceRooms: string[]) {
+export function requireSessionFromRoom(allowedSourceRooms: (string | RegExp)[]) {
   return requireSession({
     validateSession: (sessionData) => {
       if (!sessionData.lastRoomId) return false;
-      return allowedSourceRooms.includes(sessionData.lastRoomId);
+      
+      const lastRoomId = sessionData.lastRoomId;
+      
+      // Check each allowed pattern
+      for (const pattern of allowedSourceRooms) {
+        // Wildcard - accept all rooms
+        if (pattern === "*") {
+          return true;
+        }
+        
+        // RegExp pattern
+        if (pattern instanceof RegExp) {
+          if (pattern.test(lastRoomId)) {
+            return true;
+          }
+        }
+        
+        // String pattern (exact match or wildcard)
+        if (typeof pattern === "string") {
+          // Check for simple wildcards in string
+          if (pattern.includes("*")) {
+            const regexPattern = pattern
+              .replace(/[.*+?^${}()|[\]\\]/g, '\\$&') // Escape special chars
+              .replace(/\\\*/g, '.*'); // Convert * to .*
+            const regex = new RegExp(`^${regexPattern}$`);
+            if (regex.test(lastRoomId)) {
+              return true;
+            }
+          } else {
+            // Exact string match
+            if (pattern === lastRoomId) {
+              return true;
+            }
+          }
+        }
+      }
+      
+      return false;
     }
   });
 }

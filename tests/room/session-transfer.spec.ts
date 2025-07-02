@@ -417,6 +417,39 @@ describe('Session Guards', () => {
       const result = await guard(mockConn, mockCtx, mockRoom);
       expect(result).toBe(false);
     });
+
+    it('should allow session with wildcard pattern', async () => {
+      await storage.put("session:private123", {
+        publicId: "user123",
+        lastRoomId: "any-room-name"
+      });
+
+      const guard = requireSessionFromRoom(["*"]);
+      const result = await guard(mockConn, mockCtx, mockRoom);
+      expect(result).toBe(true);
+    });
+
+    it('should work with regex patterns', async () => {
+      await storage.put("session:private123", {
+        publicId: "user123",
+        lastRoomId: "game-level-42"
+      });
+
+      const guard = requireSessionFromRoom([/^game-level-\d+$/]);
+      const result = await guard(mockConn, mockCtx, mockRoom);
+      expect(result).toBe(true);
+    });
+
+    it('should work with string wildcard patterns', async () => {
+      await storage.put("session:private123", {
+        publicId: "user123",
+        lastRoomId: "tutorial-advanced"
+      });
+
+      const guard = requireSessionFromRoom(["tutorial-*", "lobby"]);
+      const result = await guard(mockConn, mockCtx, mockRoom);
+      expect(result).toBe(true);
+    });
   });
 
   describe('combineSessionGuards', () => {

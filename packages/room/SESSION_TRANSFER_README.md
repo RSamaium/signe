@@ -120,11 +120,36 @@ requireSessionWithProperties(["level", "score"])
 
 ### `requireSessionFromRoom(allowedRooms)`
 
-Only allow sessions transferred from specific rooms.
+Only allow sessions transferred from specific rooms. Supports multiple pattern types:
+
+**Pattern Types:**
+- **Exact strings**: `"lobby"` - matches exactly "lobby"
+- **RegExp objects**: `/^game-\d+$/` - matches "game-1", "game-42", etc.
+- **String wildcards**: `"tutorial-*"` - matches "tutorial-beginner", "tutorial-advanced", etc.
+- **Universal wildcard**: `"*"` - matches any room
 
 ```typescript
-// Only allow sessions from lobby or tutorial
+// Exact room names only
 requireSessionFromRoom(["lobby", "tutorial"])
+
+// Mixed patterns with regex and wildcards
+requireSessionFromRoom([
+  "lobby",                    // Exact match
+  /^game-level-\d+$/,        // Regex pattern
+  "tutorial-*",              // String wildcard
+  "*-special"                // Suffix wildcard
+])
+
+// Accept sessions from any room
+requireSessionFromRoom(["*"])
+
+// Complex VIP room access
+requireSessionFromRoom([
+  "lobby",
+  /^premium-\w+$/,           // Premium rooms
+  "vip-*",                   // VIP rooms
+  "*-exclusive"              // Any exclusive room
+])
 ```
 
 ### `requireFreshSession()`
@@ -179,6 +204,92 @@ ws.onmessage = (event) => {
 ```
 
 ## Advanced Usage
+
+### Advanced Pattern Matching Examples
+
+The pattern matching system allows for sophisticated room access control:
+
+```typescript
+// Game progression system
+@Room({
+  path: "final-boss",
+  guards: [requireSessionFromRoom([
+    /^level-[5-9]$/,           // Only from levels 5-9
+    /^level-1[0-9]$/,          // Or levels 10-19
+    "secret-level-*"           // Or any secret level
+  ])]
+})
+class FinalBossRoom {}
+
+// Event system with flexible access
+@Room({
+  path: "seasonal-event",
+  guards: [requireSessionFromRoom([
+    "*-premium",               // Any premium room
+    "lobby",                   // Main lobby
+    /^event-\d{4}-\d{2}$/     // Previous events (YYYY-MM format)
+  ])]
+})
+class SeasonalEventRoom {}
+
+// Hierarchical room system
+@Room({
+  path: "admin-panel",
+  guards: [
+    combineSessionGuards([
+      requireSessionFromRoom([
+        /^admin-/,             // Any admin room
+        "moderator-*",         // Moderator rooms
+        "*-management"         // Management rooms
+      ]),
+      requireSessionWithProperties(["adminLevel", "permissions"])
+    ])
+  ]
+})
+class AdminPanelRoom {}
+
+// Tournament system
+@Room({
+  path: "tournament-final",
+  guards: [requireSessionFromRoom([
+    /^tournament-semi-\d+$/,   // Semi-final rooms
+    /^tournament-quarter-\d+$/ // Quarter-final rooms (backup)
+  ])]
+})
+class TournamentFinalRoom {}
+```
+
+### Pattern Performance Notes
+
+- **Exact strings** are fastest (O(1) lookup)
+- **Simple wildcards** (`*`) are converted to regex internally
+- **Complex regex** patterns may have performance implications with many rooms
+- **Universal wildcard** `"*"` always matches first (short-circuits other patterns)
+
+### Pattern Security Considerations
+
+```typescript
+// ✅ Good: Specific patterns
+requireSessionFromRoom([
+  "lobby",
+  /^tutorial-level-[1-5]$/,
+  "training-basic"
+])
+
+// ⚠️ Caution: Too permissive
+requireSessionFromRoom(["*"])
+
+// ✅ Good: Controlled wildcard
+requireSessionFromRoom([
+  "verified-*",              // Only verified rooms
+  /^premium-\w{3,}$/        // Premium rooms with min length
+])
+
+// ❌ Avoid: Overly complex regex that could cause performance issues
+requireSessionFromRoom([
+  /^(?:(?!bad-room).)*$/    // Negative lookahead - can be slow
+])
+```
 
 ### Manual Session Transfer Service
 

@@ -209,63 +209,180 @@ describe('Session Guards - Unit Tests', () => {
     });
   });
 
-  describe('requireSessionFromRoom', () => {
-    it('should allow session from allowed source room', async () => {
-      await mockStorage.put("session:test-connection-id", {
-        publicId: "user123",
-        created: Date.now(),
-        connected: true,
-        lastRoomId: "lobby"
-      });
+     describe('requireSessionFromRoom', () => {
+     it('should allow session from allowed source room', async () => {
+       await mockStorage.put("session:test-connection-id", {
+         publicId: "user123",
+         created: Date.now(),
+         connected: true,
+         lastRoomId: "lobby"
+       });
 
-      const guard = requireSessionFromRoom(["lobby", "tutorial"]);
-      const result = await guard(mockConn, mockCtx, mockRoom);
-      
-      expect(result).toBe(true);
-    });
+       const guard = requireSessionFromRoom(["lobby", "tutorial"]);
+       const result = await guard(mockConn, mockCtx, mockRoom);
+       
+       expect(result).toBe(true);
+     });
 
-    it('should deny session from disallowed source room', async () => {
-      await mockStorage.put("session:test-connection-id", {
-        publicId: "user123",
-        created: Date.now(),
-        connected: true,
-        lastRoomId: "restricted-room"
-      });
+     it('should deny session from disallowed source room', async () => {
+       await mockStorage.put("session:test-connection-id", {
+         publicId: "user123",
+         created: Date.now(),
+         connected: true,
+         lastRoomId: "restricted-room"
+       });
 
-      const guard = requireSessionFromRoom(["lobby", "tutorial"]);
-      const result = await guard(mockConn, mockCtx, mockRoom);
-      
-      expect(result).toBe(false);
-    });
+       const guard = requireSessionFromRoom(["lobby", "tutorial"]);
+       const result = await guard(mockConn, mockCtx, mockRoom);
+       
+       expect(result).toBe(false);
+     });
 
-    it('should deny session with no lastRoomId', async () => {
-      await mockStorage.put("session:test-connection-id", {
-        publicId: "user123",
-        created: Date.now(),
-        connected: true
-        // No lastRoomId
-      });
+     it('should allow any room with wildcard "*"', async () => {
+       await mockStorage.put("session:test-connection-id", {
+         publicId: "user123",
+         created: Date.now(),
+         connected: true,
+         lastRoomId: "any-random-room-name"
+       });
 
-      const guard = requireSessionFromRoom(["lobby"]);
-      const result = await guard(mockConn, mockCtx, mockRoom);
-      
-      expect(result).toBe(false);
-    });
+       const guard = requireSessionFromRoom(["*"]);
+       const result = await guard(mockConn, mockCtx, mockRoom);
+       
+       expect(result).toBe(true);
+     });
 
-    it('should handle empty allowed rooms array', async () => {
-      await mockStorage.put("session:test-connection-id", {
-        publicId: "user123",
-        created: Date.now(),
-        connected: true,
-        lastRoomId: "any-room"
-      });
+     it('should match rooms with RegExp patterns', async () => {
+       await mockStorage.put("session:test-connection-id", {
+         publicId: "user123",
+         created: Date.now(),
+         connected: true,
+         lastRoomId: "game-room-123"
+       });
 
-      const guard = requireSessionFromRoom([]);
-      const result = await guard(mockConn, mockCtx, mockRoom);
-      
-      expect(result).toBe(false);
-    });
-  });
+       const guard = requireSessionFromRoom([/^game-room-\d+$/, "lobby"]);
+       const result = await guard(mockConn, mockCtx, mockRoom);
+       
+       expect(result).toBe(true);
+     });
+
+     it('should reject rooms that do not match RegExp patterns', async () => {
+       await mockStorage.put("session:test-connection-id", {
+         publicId: "user123",
+         created: Date.now(),
+         connected: true,
+         lastRoomId: "game-room-abc"
+       });
+
+       const guard = requireSessionFromRoom([/^game-room-\d+$/, "lobby"]);
+       const result = await guard(mockConn, mockCtx, mockRoom);
+       
+       expect(result).toBe(false);
+     });
+
+     it('should match rooms with string wildcard patterns', async () => {
+       await mockStorage.put("session:test-connection-id", {
+         publicId: "user123",
+         created: Date.now(),
+         connected: true,
+         lastRoomId: "tutorial-beginner"
+       });
+
+       const guard = requireSessionFromRoom(["tutorial-*", "lobby"]);
+       const result = await guard(mockConn, mockCtx, mockRoom);
+       
+       expect(result).toBe(true);
+     });
+
+     it('should handle complex wildcard patterns', async () => {
+       await mockStorage.put("session:test-connection-id", {
+         publicId: "user123",
+         created: Date.now(),
+         connected: true,
+         lastRoomId: "level-3-special"
+       });
+
+       const guard = requireSessionFromRoom(["level-*-special", "lobby"]);
+       const result = await guard(mockConn, mockCtx, mockRoom);
+       
+       expect(result).toBe(true);
+     });
+
+     it('should reject rooms that do not match wildcard patterns', async () => {
+       await mockStorage.put("session:test-connection-id", {
+         publicId: "user123",
+         created: Date.now(),
+         connected: true,
+         lastRoomId: "tutorial-advanced-extra"
+       });
+
+       const guard = requireSessionFromRoom(["tutorial-*", "lobby"]);
+       const result = await guard(mockConn, mockCtx, mockRoom);
+       
+       expect(result).toBe(true); // Should match tutorial-*
+     });
+
+     it('should handle mixed pattern types', async () => {
+       await mockStorage.put("session:test-connection-id", {
+         publicId: "user123",
+         created: Date.now(),
+         connected: true,
+         lastRoomId: "custom-room-999"
+       });
+
+       const guard = requireSessionFromRoom([
+         "lobby",                    // Exact match
+         /^game-\d+$/,              // RegExp pattern
+         "tutorial-*",              // String wildcard
+         "*-special"                // Suffix wildcard
+       ]);
+       const result = await guard(mockConn, mockCtx, mockRoom);
+       
+       expect(result).toBe(false); // Should not match any pattern
+     });
+
+     it('should escape special regex characters in string patterns', async () => {
+       await mockStorage.put("session:test-connection-id", {
+         publicId: "user123",
+         created: Date.now(),
+         connected: true,
+         lastRoomId: "room.with.dots"
+       });
+
+       const guard = requireSessionFromRoom(["room.with.dots"]);
+       const result = await guard(mockConn, mockCtx, mockRoom);
+       
+       expect(result).toBe(true);
+     });
+
+     it('should deny session with no lastRoomId', async () => {
+       await mockStorage.put("session:test-connection-id", {
+         publicId: "user123",
+         created: Date.now(),
+         connected: true
+         // No lastRoomId
+       });
+
+       const guard = requireSessionFromRoom(["lobby"]);
+       const result = await guard(mockConn, mockCtx, mockRoom);
+       
+       expect(result).toBe(false);
+     });
+
+     it('should handle empty allowed rooms array', async () => {
+       await mockStorage.put("session:test-connection-id", {
+         publicId: "user123",
+         created: Date.now(),
+         connected: true,
+         lastRoomId: "any-room"
+       });
+
+       const guard = requireSessionFromRoom([]);
+       const result = await guard(mockConn, mockCtx, mockRoom);
+       
+       expect(result).toBe(false);
+     });
+   });
 
   describe('requireFreshSession', () => {
     it('should create fresh session guard with correct configuration', async () => {

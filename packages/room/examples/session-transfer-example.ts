@@ -64,13 +64,13 @@ export class LobbyRoom {
   }
 }
 
-// Game room that requires session transferred from lobby
+// Game room that requires session transferred from lobby or tutorial rooms
 @Room({ 
   path: "game-{gameId}", 
   guards: [
     combineSessionGuards([
       requireSession({ allowTransfers: true }),
-      requireSessionFromRoom(["lobby"]),
+      requireSessionFromRoom(["lobby", /^tutorial-\d+$/, "training-*"]),
       requireSessionWithProperties(["level", "score"])
     ])
   ]
@@ -144,9 +144,61 @@ export class PrivateRoom {
   }
 }
 
+// Boss room that accepts sessions from any game room using regex
+@Room({
+  path: "boss-{bossId}",
+  guards: [requireSessionFromRoom([/^game-level-\d+$/])]
+})
+export class BossRoom {
+  @sync(User) challengers = signal<Record<string, User>>({});
+
+  async onJoin(user: User, conn: Party.Connection) {
+    user.connected.set(true);
+    console.log(`${user.name()} entered boss room from a game level`);
+  }
+}
+
+// Special event room that accepts sessions from any source using wildcard
+@Room({
+  path: "event-{eventId}",
+  guards: [requireSessionFromRoom(["*"])]
+})
+export class EventRoom {
+  @sync(User) participants = signal<Record<string, User>>({});
+
+  async onJoin(user: User, conn: Party.Connection) {
+    user.connected.set(true);
+    console.log(`${user.name()} joined event from any room`);
+  }
+}
+
+// VIP room with complex pattern matching
+@Room({
+  path: "vip-{vipId}",
+  guards: [
+    combineSessionGuards([
+      requireSessionFromRoom([
+        "lobby",                    // Exact match for lobby
+        /^premium-\w+$/,           // Regex for premium rooms
+        "vip-*",                   // Wildcard for other VIP rooms
+        "*-special"                // Wildcard for special suffix rooms
+      ]),
+      requireSessionWithProperties(["level", "membership"])
+    ])
+  ]
+})
+export class VipRoom {
+  @sync(User) vipMembers = signal<Record<string, User>>({});
+
+  async onJoin(user: User, conn: Party.Connection) {
+    user.connected.set(true);
+    console.log(`VIP ${user.name()} joined from authorized room`);
+  }
+}
+
 // Example server implementation
 export class GameServer extends Server {
-  rooms = [LobbyRoom, GameRoom, PrivateRoom];
+  rooms = [LobbyRoom, GameRoom, PrivateRoom, BossRoom, EventRoom, VipRoom];
 }
 
 // Usage example:

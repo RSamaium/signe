@@ -50,6 +50,13 @@ This file contains comprehensive tests that cover:
 - **requireSessionFromRoom**:
   - ✅ Allows sessions from allowed source rooms
   - ✅ Denies sessions from disallowed rooms
+  - ✅ Allows any room with wildcard "*"
+  - ✅ Matches rooms with RegExp patterns
+  - ✅ Rejects rooms that don't match RegExp patterns
+  - ✅ Matches rooms with string wildcard patterns
+  - ✅ Handles complex wildcard patterns
+  - ✅ Handles mixed pattern types (string, regex, wildcard)
+  - ✅ Escapes special regex characters in string patterns
   - ✅ Denies sessions with no lastRoomId
   - ✅ Handles empty allowed rooms array
 
@@ -203,6 +210,16 @@ Tutorial → Lobby → Game → Private Room
 - Expired token cleanup
 - Connection drop handling
 - Invalid state recovery
+```
+
+### 5. Pattern Matching Scenarios
+```
+Exact Match: "lobby" → "lobby" ✅
+Regex Match: /^game-\d+$/ → "game-123" ✅
+String Wildcard: "tutorial-*" → "tutorial-advanced" ✅
+Universal Wildcard: "*" → "any-room-name" ✅
+Complex Pattern: "*-special" → "room-special" ✅
+Mixed Patterns: ["lobby", /^game-/, "test-*"] → various matches ✅
 ```
 
 ## Running the Tests
