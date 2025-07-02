@@ -162,7 +162,7 @@ export class SessionTransferService {
     if (!privateId) return null;
     try {
       const session = await this.storage.get(`session:${privateId}`);
-      return session as SessionData | null;
+      return session ? (session as SessionData) : null;
     } catch (e) {
       return null;
     }

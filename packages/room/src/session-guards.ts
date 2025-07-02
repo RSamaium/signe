@@ -37,6 +37,12 @@ export function requireSession(options: SessionGuardOptions = {}) {
       autoCreateSession = false
     } = options;
 
+    // Ensure room and room.storage exist before creating service
+    if (!room || !room.storage) {
+      // If no room or storage available, allow auto-creation if enabled, deny otherwise
+      return autoCreateSession;
+    }
+
     const sessionService = new SessionTransferService(room.storage, room.id);
     
     // Check for existing session

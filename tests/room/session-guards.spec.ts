@@ -169,6 +169,24 @@ describe('Session Guards - Unit Tests', () => {
        
        expect(result).toBe(true); // Should allow auto-creation despite invalid URL
      });
+
+     it('should handle missing storage gracefully', async () => {
+       const mockRoomNoStorage = { id: "test-room", storage: undefined };
+
+       const guard = requireSession({ autoCreateSession: true });
+       const result = await guard(mockConn, mockCtx, mockRoomNoStorage as any);
+       
+       expect(result).toBe(true); // Should allow auto-creation when no storage
+     });
+
+     it('should deny connection when no storage and autoCreate is false', async () => {
+       const mockRoomNoStorage = { id: "test-room", storage: undefined };
+
+       const guard = requireSession({ autoCreateSession: false });
+       const result = await guard(mockConn, mockCtx, mockRoomNoStorage as any);
+       
+       expect(result).toBe(false); // Should deny when no storage and no auto-create
+     });
   });
 
   describe('requireSessionWithProperties', () => {
