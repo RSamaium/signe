@@ -584,7 +584,7 @@ export class Server implements Party.Server {
     // Check room guards
     const roomGuards = subRoom.constructor['_roomGuards'] || [];
     for (const guard of roomGuards) {
-      const isAuthorized = await guard(conn, ctx);
+      const isAuthorized = await guard(conn, ctx, this.room);
       if (!isAuthorized) {
         conn.close();
         return;
@@ -592,8 +592,11 @@ export class Server implements Party.Server {
     }
 
     // Handle session transfer
-    const url = new URL(ctx.request.url);
-    const transferToken = url.searchParams.get('transferToken');
+    let transferToken = null;
+    if (ctx.request?.url) {
+      const url = new URL(ctx.request.url);
+      transferToken = url.searchParams.get('transferToken');
+    }
     let transferData: any = null;
     if (transferToken) {
       transferData = await this.room.storage.get(`transfer:${transferToken}`);

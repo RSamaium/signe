@@ -513,7 +513,9 @@ describe("Server", () => {
         await server.onStart();
         await server.onConnect(conn as any, context as any);
 
-        expect(isRoomGuard).toHaveBeenCalledWith(conn, context);
+        expect(isRoomGuard).toHaveBeenCalledWith(conn, context, expect.objectContaining({
+          id: 'game'
+        }));
       });
 
       it("should pass connection and message value to room guards on message", async () => {

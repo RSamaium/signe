@@ -1,4 +1,4 @@
-import { Action, Guard, Room } from "../../../src";
+import { Action, Guard, requireSession, Room } from "../../../src";
 import { RoomSchema } from "../shared/room.schema";
 
 @Room({
@@ -21,7 +21,8 @@ export class GameRoom extends RoomSchema  {
 
 @Room({
     path: 'protected-{gameId}',
-    sessionExpiryTime: 5000 
+    sessionExpiryTime: 5000, 
+    guards: [requireSession]
 })
 export class ProtectedRoom extends RoomSchema  {
     @Action('increment')
