@@ -5,7 +5,6 @@ import {
   persist,
   sync,
   syncClass,
-  id,
 } from "../../packages/sync/src";
 
 describe("onSync", () => {
@@ -280,7 +279,7 @@ describe("onSync", () => {
       expect(onSync).toHaveBeenCalledWith(
         new Map<string, any>([
           ["data", { nested: {} }],
-          ["data.nested.value", 10],
+          ["data.nested.value", 10]
         ])
       );
     });
