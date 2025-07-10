@@ -1,12 +1,13 @@
 import { createRoot } from "react-dom/client";
 import  Admin  from "./components/Admin";
 import "./styles.css";
+import Room from "./components/Room";
 
 
 function App() {
   return (
     <main>
-      <Admin />
+      <Room />
     </main>
   );
 }

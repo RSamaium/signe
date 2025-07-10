@@ -245,6 +245,126 @@ export class Server implements Party.Server {
     instance.$broadcast = (obj: any) => {
       return this.broadcast(obj, instance)
     }
+    instance.$sessionTransfer = async (userOrPublicId: any | string, targetRoomId: string) => {
+      let user: any;
+      let publicId: string | null = null;
+      
+      const signal = this.getUsersProperty(instance);
+      if (!signal) {
+        console.error('[sessionTransfer] `users` property not defined in the room.');
+        return null;
+      }
+      
+      // Check if the first parameter is a string (publicId) or an object (user)
+      if (typeof userOrPublicId === 'string') {
+        publicId = userOrPublicId;
+        user = signal()[publicId];
+        if (!user) {
+          console.error(`[sessionTransfer] User with publicId ${publicId} not found.`);
+          return null;
+        }
+      } else {
+        user = userOrPublicId;
+        const users = signal();
+        
+        // Try to find the publicId by comparing object references
+        for (const [id, u] of Object.entries(users)) {
+          if (u === user) {
+            publicId = id;
+            break;
+          }
+        }
+
+        // If not found by reference, try to find by user properties (fallback)
+        if (!publicId && user && typeof user === 'object') {
+          // Look for a unique identifier in the user object
+          for (const [id, u] of Object.entries(users)) {
+            if (u && typeof u === 'object') {
+              // Compare by constructor and other identifying properties
+              if (u.constructor === user.constructor) {
+                // Additional checks could be added here based on user structure
+                publicId = id;
+                break;
+              }
+            }
+          }
+        }
+
+        if (!publicId) {
+          console.error('[sessionTransfer] User not found in users collection.', {
+            userType: user?.constructor?.name,
+            userKeys: user ? Object.keys(user) : 'null',
+            usersCount: Object.keys(users).length,
+            userIds: Object.keys(users)
+          });
+          return null;
+        }
+      }
+
+      const sessions = await this.room.storage.list();
+      let userSession: any = null;
+      let privateId: string | null = null;
+
+      for (const [key, session] of sessions) {
+        if (key.startsWith('session:') && (session as any).publicId === publicId) {
+          userSession = session;
+          privateId = key.replace('session:', '');
+          break;
+        }
+      }
+
+      if (!userSession || !privateId) {
+        console.error(`[sessionTransfer] Session for publicId ${publicId} not found.`);
+        return null;
+      }
+
+      const usersPropName = this.getUsersPropName(instance);
+      if (!usersPropName) {
+        console.error('[sessionTransfer] `users` property not defined in the room.');
+        return null;
+      }
+
+      // Create a snapshot of the user state
+      const userSnapshot = createStatesSnapshot(user);
+
+      const transferData = {
+        privateId,
+        userSnapshot,
+        sessionState: userSession.state,
+        publicId
+      };
+
+      try {
+        const targetRoomParty = this.room.context.parties.main.get(targetRoomId);
+        const response = await targetRoomParty.fetch('/session-transfer', {
+          method: 'POST',
+          body: JSON.stringify(transferData),
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`Transfer request failed: ${await response.text()}`);
+        }
+
+        const { transferToken } = await response.json();
+
+        // On success, remove user from current room
+        await this.deleteSession(privateId);
+        await this.room.storage.delete(`${usersPropName}.${publicId}`);
+        
+        const currentUsers = signal();
+        if (currentUsers[publicId]) {
+          delete currentUsers[publicId];
+        }
+
+        return transferToken;
+      } catch (error) {
+        console.error(`[sessionTransfer] Failed to transfer session to room ${targetRoomId}:`, error);
+        return null;
+      }
+    };
 
     // Sync callback: Broadcast changes to all clients
     const syncCb = (values) => {
@@ -471,11 +591,22 @@ export class Server implements Party.Server {
       }
     }
 
+    // Handle session transfer
+    const url = new URL(ctx.request.url);
+    const transferToken = url.searchParams.get('transferToken');
+    let transferData: any = null;
+    if (transferToken) {
+      transferData = await this.room.storage.get(`transfer:${transferToken}`);
+      if (transferData) {
+        await this.room.storage.delete(`transfer:${transferToken}`);
+      }
+    }
+
     // Check for existing session
     const existingSession = await this.getSession(conn.id)
 
     // Generate IDs
-    const publicId = existingSession?.publicId || generateShortUUID();
+    const publicId = existingSession?.publicId || transferData?.publicId || generateShortUUID();
 
     let user = null;
     const signal = this.getUsersProperty(subRoom);
@@ -486,10 +617,15 @@ export class Server implements Party.Server {
 
       // Restore state if exists
       if (!existingSession?.publicId) {
-        user = isClass(classType) ? new classType() : classType(conn, ctx);
-        signal()[publicId] = user;
-        const snapshot = createStatesSnapshot(user);
-        this.room.storage.put(`${usersPropName}.${publicId}`, snapshot);
+        // Check if we have a transferred user already restored
+        if (transferData?.restored && signal()[publicId]) {
+          user = signal()[publicId];
+        } else {
+          user = isClass(classType) ? new classType() : classType(conn, ctx);
+          signal()[publicId] = user;
+          const snapshot = createStatesSnapshot(user);
+          this.room.storage.put(`${usersPropName}.${publicId}`, snapshot);
+        }
       }
       else {
         user = signal()[existingSession.publicId];
@@ -497,7 +633,9 @@ export class Server implements Party.Server {
 
       // Only store new session if it doesn't exist
       if (!existingSession) {
-        await this.saveSession(conn.id, {
+        // Use the transferred privateId if available, otherwise use connection id
+        const sessionPrivateId = transferData?.privateId || conn.id;
+        await this.saveSession(sessionPrivateId, {
           publicId
         });
       }
@@ -858,7 +996,7 @@ export class Server implements Party.Server {
    * @method onClose
    * @async
    * @param {Party.Connection} conn - The connection object of the disconnecting user.
-   * @description Handles user disconnection, removing them from the room and triggering the onLeave event.
+   * @description Handles user disconnection, removing them from the room and triggering the onLeave event..
    * @returns {Promise<void>}
    * 
    * @example
@@ -946,6 +1084,80 @@ export class Server implements Party.Server {
     return this.handleDirectRequest(req, res);
   }
 
+
+  /**
+   * @method handleSessionRestore
+   * @private
+   * @async
+   * @param {Party.Request} req - The HTTP request for session restore
+   * @param {ServerResponse} res - The response object
+   * @description Handles session restoration from transfer data, creates session from privateId
+   * @returns {Promise<Response>} The response to return to the client
+   */
+  private async handleSessionRestore(req: Party.Request, res: ServerResponse): Promise<Response> {
+    try {
+      const transferData = await req.json() as {
+        privateId: string;
+        userSnapshot?: any;
+        sessionState?: any;
+        publicId: string;
+      };
+      const { privateId, userSnapshot, sessionState, publicId } = transferData;
+
+      if (!privateId || !publicId) {
+        return res.badRequest('Missing privateId or publicId in transfer data');
+      }
+
+      const subRoom = await this.getSubRoom();
+      if (!subRoom) {
+        return res.serverError('Room not available');
+      }
+
+      // Create session from privateId
+      await this.saveSession(privateId, {
+        publicId,
+        state: sessionState,
+        created: Date.now(),
+        connected: false // Will be set to true when user connects
+      });
+
+      // If userSnapshot exists, restore user data
+      if (userSnapshot) {
+        const signal = this.getUsersProperty(subRoom);
+        const usersPropName = this.getUsersPropName(subRoom);
+        
+        if (signal && usersPropName) {
+          const { classType } = signal.options;
+          
+          // Create new user instance
+          const user = isClass(classType) ? new classType() : classType();
+          
+          // Load user data from snapshot
+          load(user, userSnapshot, true);
+          
+          // Add user to signal
+          signal()[publicId] = user;
+          
+          // Save user snapshot to storage
+          await this.room.storage.put(`${usersPropName}.${publicId}`, userSnapshot);
+        }
+      }
+
+      // Generate transfer token for the client to use when connecting
+      const transferToken = generateShortUUID();
+      await this.room.storage.put(`transfer:${transferToken}`, {
+        privateId,
+        publicId,
+        restored: true
+      });
+
+      return res.success({ transferToken });
+    } catch (error) {
+      console.error('Error restoring session:', error);
+      return res.serverError('Failed to restore session');
+    }
+  }
+
   /**
    * @method handleDirectRequest
    * @private
@@ -956,8 +1168,14 @@ export class Server implements Party.Server {
    */
   private async handleDirectRequest(req: Party.Request, res: ServerResponse): Promise<Response> {
     const subRoom = await this.getSubRoom();
+
     if (!subRoom) {
       return res.notFound();
+    }
+
+    const url = new URL(req.url);
+    if (url.pathname.endsWith('/session-transfer') && req.method === 'POST') {
+      return this.handleSessionRestore(req, res);
     }
 
     // First try to match using the registered @Request handlers
@@ -1083,7 +1301,7 @@ export class Server implements Party.Server {
       .replace(/\//g, '\\/') // Escape slashes
       .replace(/:([^\/]+)/g, '([^/]+)'); // Convert :params to capture groups
 
-    const pathRegex = new RegExp(`^${pathRegexString}$`);
+    const pathRegex = new RegExp(`^${pathRegexString}`);
     return pathRegex.test(requestPath);
   }
 
@@ -1111,7 +1329,7 @@ export class Server implements Party.Server {
       .replace(/\//g, '\\/') // Escape slashes
       .replace(/:([^\/]+)/g, '([^/]+)'); // Convert :params to capture groups
 
-    const pathRegex = new RegExp(`^${pathRegexString}$`);
+    const pathRegex = new RegExp(`^${pathRegexString}`);
     const matches = requestPath.match(pathRegex);
 
     if (matches && matches.length > 1) {

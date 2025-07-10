@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { connectionWorld } from '../../../../../sync/src/client';
+import { connectionRoom, connectionWorld } from '../../../../../sync/src/client';
 import { RoomSchema } from "../../shared/room.schema";
 import { effect } from "@signe/reactive";
 
@@ -7,7 +7,7 @@ export default function Room() {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [roomId, setRoomId] = useState("quiz");
+  const [roomId, setRoomId] = useState("game");
   const [count, setCount] = useState(0);
   const socketRef = useRef<any>(null);
   const roomRef = useRef<any>(null);
@@ -21,11 +21,15 @@ export default function Room() {
       roomRef.current = new RoomSchema();
       
       // Connect to the room through the World service with auto-creation enabled
-      socketRef.current = await connectionWorld({
+      socketRef.current = await connectionRoom({
         host: 'http://localhost:1999',
+        id: 'test',
         room: roomId,
-        autoCreate: true // Enable auto-creation of room and shards
       }, roomRef.current);
+
+      socketRef.current.on('sync', (data) => {
+        console.log('sync', data);
+      })
       
       // Listen for disconnection events
       socketRef.current.on('disconnect', () => {
