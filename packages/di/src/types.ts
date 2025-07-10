@@ -23,11 +23,19 @@ export type FactoryFn = (context: ProviderContext) => any;
 /**
  * Provider configuration for value-based injection
  */
+export interface ProviderMeta {
+  [key: string]: any;
+}
+
 export interface ValueProvider {
   /** Token to identify the provider */
   provide: ProviderToken;
   /** Value to be injected */
   useValue: any;
+  /** Tokens that must be injected before this provider */
+  deps?: ProviderToken[];
+  /** Optional metadata for the provider */
+  meta?: ProviderMeta;
 }
 
 /**
@@ -38,6 +46,10 @@ export interface ClassProvider {
   provide: ProviderToken;
   /** Class to be instantiated */
   useClass: new (context: ProviderContext) => any;
+  /** Tokens that must be injected before this provider */
+  deps?: ProviderToken[];
+  /** Optional metadata for the provider */
+  meta?: ProviderMeta;
 }
 
 /**
@@ -46,10 +58,10 @@ export interface ClassProvider {
 export interface FactoryProvider {
   /** Token to identify the provider */
   provide: ProviderToken;
+  /** Tokens that must be injected before this provider */
+  deps?: ProviderToken[];
   /** Optional metadata for the provider */
-  meta?: {
-    [key: string]: any;
-  };
+  meta?: ProviderMeta;
   /** Factory function to create the instance */
   useFactory: FactoryFn;
 }
@@ -62,6 +74,10 @@ export interface ExistingProvider {
   provide: ProviderToken;
   /** Token of the existing provider to use */
   useExisting: ProviderToken;
+  /** Tokens that must be injected before this provider */
+  deps?: ProviderToken[];
+  /** Optional metadata for the provider */
+  meta?: ProviderMeta;
 }
 
 /**

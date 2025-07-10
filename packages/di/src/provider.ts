@@ -20,6 +20,61 @@ function isClassProvider(provider: Provider): provider is ClassProvider {
 }
 
 /**
+ * Retrieves dependencies declared on a provider
+ * @param provider - Provider to inspect
+ * @returns Array of provider tokens this provider depends on
+ */
+function getDeps(provider: Provider): ProviderToken[] {
+    if (typeof provider === 'function') {
+        return (provider as any).deps ?? [];
+    }
+    return (provider as any).deps ?? [];
+}
+
+/**
+ * Sorts providers so that dependencies are instantiated first
+ * @param providers - Array of providers to sort
+ * @throws When a circular dependency is detected
+ */
+function sortProviders(providers: Provider[]): Provider[] {
+    const tokenName = (t: ProviderToken) => typeof t === 'function' ? t.name : t;
+    const map = new Map<string, Provider>();
+    for (const p of providers) {
+        const token = tokenName(typeof p === 'function' ? p : (p as any).provide);
+        map.set(token, p);
+    }
+
+    const result: Provider[] = [];
+    const visited = new Set<string>();
+    const stack = new Set<string>();
+
+    const visit = (token: ProviderToken) => {
+        const name = tokenName(token);
+        if (visited.has(name)) return;
+        if (stack.has(name)) {
+            throw new Error(`Circular dependency detected for provider ${name}`);
+        }
+        stack.add(name);
+        const provider = map.get(name);
+        if (provider) {
+            for (const dep of getDeps(provider)) {
+                visit(dep);
+            }
+            visited.add(name);
+            result.push(provider);
+        }
+        stack.delete(name);
+    };
+
+    for (const p of providers) {
+        const token = typeof p === 'function' ? p : (p as any).provide;
+        visit(token);
+    }
+
+    return result;
+}
+
+/**
  * Processes and instantiates all providers in the given context
  * @param context - The injection context
  * @param providers - Array of providers to process
@@ -39,6 +94,8 @@ function isClassProvider(provider: Provider): provider is ClassProvider {
  */
 export async function injector(context: Context, providers: Providers) {
     providers = providers.flat();
+    providers = sortProviders(providers as Provider[]);
+
     for (const provider of providers) {
         let token: ProviderToken;
         let instance: any;

@@ -199,6 +199,22 @@ describe('Dependency Injection System', () => {
       expect(service.getValue()).toBe('test-value');
     });
 
+    it('should instantiate providers respecting dependencies', async () => {
+      const first: ValueProvider = {
+        provide: 'first',
+        useValue: 'value'
+      };
+      const second: FactoryProvider = {
+        provide: 'second',
+        useFactory: (ctx) => 'using ' + inject<string>(ctx, 'first'),
+        deps: ['first']
+      };
+
+      await injector(context, [second, first]);
+      const value = inject<string>(context, 'second');
+      expect(value).toBe('using value');
+    });
+
     it('should find provider in nested arrays', () => {
       const deepProvider: ValueProvider = { provide: 'deeplyNestedService', useValue: 'deep value' };
       const nestedProvider: ValueProvider = { provide: 'nestedService', useValue: 'nested value' };
