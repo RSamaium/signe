@@ -47,14 +47,15 @@ export class MockPartyClient {
 }
 
 class MockLobby {
-  constructor(public server: Server) {}
+  constructor(public server: Server, public lobbyId: string) {}
 
   socket() {
     return new MockPartyClient(this.server)
   }
 
   fetch(url: string, options: any) {
-    return request(this.server, url, options)
+    const baseUrl = url.includes('shard') ? '' :( '/parties/main/' + this.lobbyId )
+    return request(this.server, baseUrl + url, options)
   }
 }
 
@@ -68,7 +69,7 @@ class MockContext {
   constructor(public room: MockPartyRoom, options: any = {}) {
    const parties = options.parties || {}
    for (let lobbyId in parties) {
-    this.parties.main.set(lobbyId, new MockLobby(parties[lobbyId](room)))
+    this.parties.main.set(lobbyId, new MockLobby(parties[lobbyId](room), lobbyId))
    }
   }
 }
