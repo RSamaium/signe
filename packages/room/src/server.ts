@@ -611,14 +611,14 @@ export class Server implements Party.Server {
     // Update user connection status if applicable
     this.updateUserConnectionStatus(user, true);
 
-    // Call the room's onJoin method if it exists
-    await awaitReturn(subRoom["onJoin"]?.(user, conn, ctx));
-
-    // Store both IDs in connection state
-    conn.setState({
+     // Store both IDs in connection state
+     conn.setState({
       ...conn.state,
       publicId
     });
+
+    // Call the room's onJoin method if it exists
+    await awaitReturn(subRoom["onJoin"]?.(user, conn, ctx));
 
     // Send initial sync data with both IDs to the new connection
     this.send(conn, {
