@@ -67,7 +67,7 @@ class MockLobby {
 
 interface MockContextOptions {
   parties?: any;
-  partyFn?: (room: MockPartyRoom) => any;
+  partyFn?: (roomId: string) => any;
 }
 
 class MockContext {
@@ -80,20 +80,14 @@ class MockContext {
   constructor(public room: MockPartyRoom, options: MockContextOptions = {}) {
     const parties = options.parties || {}
     if (options.partyFn) {
-      const serverCache = new Map<string, Server>();
+      const serverCache = new Map<string, MockLobby>();
       this.parties.main = {
         get: async (lobbyId: string) => {
           if (!serverCache.has(lobbyId)) {
-            // Create an isolated IO for the specified lobby without recursive parties
-            const io = new MockPartyRoom(lobbyId, { env: this.room.env });
-            const server = await options.partyFn(io);
-            if (typeof server.onStart === 'function') {
-              await server.onStart();
-            }
-            serverCache.set(lobbyId, server);
+            const server = await options.partyFn(lobbyId);
+            serverCache.set(lobbyId, new MockLobby(server, lobbyId));
           }
-          const server = serverCache.get(lobbyId)!;
-          return new MockLobby(server, lobbyId)
+          return serverCache.get(lobbyId)!;
         }
       }
     }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { Server, testRoom } from '../../packages/room/src';
+import { Server, ServerIo, testRoom } from '../../packages/room/src';
 import { id, users, sync } from '@signe/sync';
 import { signal } from '@signe/reactive';
 
@@ -36,9 +36,10 @@ describe('Session transfer between rooms', () => {
   beforeEach(async () => {
     const test = await testRoom(SourceRoom, {
       // Create servers dynamically for any lobby id using the same rooms set
-      partyFn: async (io) => {
-        const s = new Server(io as any);
+      partyFn: async (lobbyId) => {
+        const s = new Server(new ServerIo(lobbyId) as any);
         s.rooms = [SourceRoom, TargetRoom];
+        await s.onStart()
         return s;
       }
     });
@@ -73,13 +74,14 @@ describe('Session transfer between rooms', () => {
 
     // Connect to room-b using the transfer token
     const lobbyB = await (serverA as any).room.context.parties.main.get('room-b');
-    const serverB: Server = lobbyB.server;
-    const clientB = await lobbyB.connection();
+    const room = lobbyB.server.room;
+    const serverB = lobbyB.server;
+    const clientB = await room.connection(serverB);
 
     try {
       // Validate that the session in room-b is established under the original privateId
       const sessionB = await serverB.getSession(privateIdA);
-      expect(sessionB).not.toBeNull();
+      expect(sessionB).not.toBeUndefined();
       expect(sessionB!.publicId).toBe(publicId);
 
       // Validate that user data has been restored in room-b

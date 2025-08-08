@@ -1102,7 +1102,7 @@ export class Server implements Party.Server {
           
           // Add user to signal
           signal()[publicId] = user;
-          
+
           // Save user snapshot to storage
           await this.room.storage.put(`${usersPropName}.${publicId}`, userSnapshot);
         }
