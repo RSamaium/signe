@@ -335,7 +335,7 @@ export class Server implements Party.Server {
       };
 
       try {
-        const targetRoomParty = this.room.context.parties.main.get(targetRoomId);
+        const targetRoomParty = await this.room.context.parties.main.get(targetRoomId);
         const response = await targetRoomParty.fetch('/session-transfer', {
           method: 'POST',
           body: JSON.stringify(transferData),

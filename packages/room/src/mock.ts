@@ -49,8 +49,14 @@ export class MockPartyClient {
 class MockLobby {
   constructor(public server: Server, public lobbyId: string) {}
 
-  socket() {
+  socket(_init?: any) {
     return new MockPartyClient(this.server)
+  }
+
+  async connection(idOrOptions?: string | { id?: string, query?: Record<string, string>, headers?: Record<string, string> }, maybeOptions?: { query?: Record<string, string>, headers?: Record<string, string> }) {
+    const id = typeof idOrOptions === 'string' ? idOrOptions : idOrOptions?.id;
+    const options = (typeof idOrOptions === 'string' ? maybeOptions : idOrOptions) || {};
+    return (this.server.room as any).connection(this.server, id, options as any);
   }
 
   fetch(url: string, options: any) {
@@ -59,18 +65,44 @@ class MockLobby {
   }
 }
 
+interface MockContextOptions {
+  parties?: any;
+  partyFn?: (room: MockPartyRoom) => any;
+}
+
 class MockContext {
   parties: {
-    main: Map<string, any>
+    main: any
   } = {
     main: new Map()
   }
 
-  constructor(public room: MockPartyRoom, options: any = {}) {
-   const parties = options.parties || {}
-   for (let lobbyId in parties) {
-    this.parties.main.set(lobbyId, new MockLobby(parties[lobbyId](room), lobbyId))
-   }
+  constructor(public room: MockPartyRoom, options: MockContextOptions = {}) {
+    const parties = options.parties || {}
+    if (options.partyFn) {
+      const serverCache = new Map<string, Server>();
+      this.parties.main = {
+        get: async (lobbyId: string) => {
+          if (!serverCache.has(lobbyId)) {
+            // Create an isolated IO for the specified lobby without recursive parties
+            const io = new MockPartyRoom(lobbyId, { env: this.room.env });
+            const server = options.partyFn(io);
+            if (typeof server.onStart === 'function') {
+              await server.onStart();
+            }
+            serverCache.set(lobbyId, server);
+          }
+          const server = serverCache.get(lobbyId)!;
+          return new MockLobby(server, lobbyId)
+        }
+      }
+    }
+    else {
+      for (let lobbyId in parties) {
+        const server = parties[lobbyId](room)
+        ;(this.parties.main as Map<string, any>).set(lobbyId, new MockLobby(server, lobbyId))
+      }
+    }
   }
 }
 
@@ -83,18 +115,25 @@ class MockPartyRoom {
   constructor(public id?: string, options: any = {}) {
     this.id = id || generateShortUUID()
     this.context = new MockContext(this, {
-      parties: options.parties || {}
+      parties: options.parties,
+      partyFn: options.partyFn
     })
     this.env = options.env || {}
   }
 
-  async connection(server: Server, id?: string) {
+  async connection(server: Server, id?: string, opts?: { query?: Record<string, string>, headers?: Record<string, string> }) {
     const socket = new MockPartyClient(server, id);
     const url = new URL('http://localhost')
+    if (opts?.query) {
+      for (const [key, value] of Object.entries(opts.query)) {
+        url.searchParams.set(key, String(value))
+      }
+    }
     const request = new Request(url.toString(), {
       method: 'GET',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        ...(opts?.headers || {})
       }
     })
     await server.onConnect(socket.conn as any, { request } as any);
