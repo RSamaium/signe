@@ -86,7 +86,7 @@ class MockContext {
           if (!serverCache.has(lobbyId)) {
             // Create an isolated IO for the specified lobby without recursive parties
             const io = new MockPartyRoom(lobbyId, { env: this.room.env });
-            const server = options.partyFn(io);
+            const server = await options.partyFn(io);
             if (typeof server.onStart === 'function') {
               await server.onStart();
             }

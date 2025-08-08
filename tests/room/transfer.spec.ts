@@ -36,7 +36,7 @@ describe('Session transfer between rooms', () => {
   beforeEach(async () => {
     const test = await testRoom(SourceRoom, {
       // Create servers dynamically for any lobby id using the same rooms set
-      partyFn: (io) => {
+      partyFn: async (io) => {
         const s = new Server(io as any);
         s.rooms = [SourceRoom, TargetRoom];
         return s;
