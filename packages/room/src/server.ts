@@ -245,60 +245,22 @@ export class Server implements Party.Server {
     instance.$broadcast = (obj: any) => {
       return this.broadcast(obj, instance)
     }
-    instance.$sessionTransfer = async (userOrPublicId: any | string, targetRoomId: string) => {
+    instance.$sessionTransfer = async (conn: Party.Connection, targetRoomId: string) => {
       let user: any;
-      let publicId: string | null = null;
       
       const signal = this.getUsersProperty(instance);
+      
       if (!signal) {
         console.error('[sessionTransfer] `users` property not defined in the room.');
         return null;
       }
       
-      // Check if the first parameter is a string (publicId) or an object (user)
-      if (typeof userOrPublicId === 'string') {
-        publicId = userOrPublicId;
-        user = signal()[publicId];
-        if (!user) {
-          console.error(`[sessionTransfer] User with publicId ${publicId} not found.`);
-          return null;
-        }
-      } else {
-        user = userOrPublicId;
-        const users = signal();
-        
-        // Try to find the publicId by comparing object references
-        for (const [id, u] of Object.entries(users)) {
-          if (u === user) {
-            publicId = id;
-            break;
-          }
-        }
+      const { publicId } = conn.state as any;
+      user = signal()[publicId];
 
-        // If not found by reference, try to find by user properties (fallback)
-        if (!publicId && user && typeof user === 'object') {
-          // Look for a unique identifier in the user object
-          for (const [id, u] of Object.entries(users)) {
-            if (u && typeof u === 'object') {
-              // Compare by constructor and other identifying properties
-              if (u.constructor === user.constructor) {
-                // Additional checks could be added here based on user structure
-                publicId = id;
-                break;
-              }
-            }
-          }
-        }
-
-        if (!publicId) {
-          console.error('[sessionTransfer] User not found in users collection.', {
-            userType: user?.constructor?.name,
-            userKeys: user ? Object.keys(user) : 'null',
-            usersCount: Object.keys(users).length,
-            userIds: Object.keys(users)
-          });
-          return null;
-        }
+      if (!user) {
+        console.error(`[sessionTransfer] User with publicId ${publicId} not found.`);
+        return null;
       }
 
       const sessions = await this.room.storage.list();

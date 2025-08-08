@@ -641,6 +641,7 @@ describe("createStatesSnapshot", () => {
     syncClass(instance);
 
     const result = createStatesSnapshot(instance);
+    
     expect(result).toEqual({
       count: 0,
       text: "hello",

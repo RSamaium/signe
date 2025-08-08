@@ -64,7 +64,7 @@ describe('Session transfer between rooms', () => {
     userA.name.set('Alice');
 
     // Request transfer to room-b
-    const transferToken = await (serverA as any).subRoom.$sessionTransfer(publicId, 'room-b');
+    const transferToken = await (serverA as any).subRoom.$sessionTransfer(clientA.conn, 'room-b');
     expect(transferToken).toBeTruthy();
 
     // Original session should be deleted from room-a
