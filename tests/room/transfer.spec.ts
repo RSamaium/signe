@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Server, ServerIo, testRoom } from '../../packages/room/src';
-import { id, users, sync } from '@signe/sync';
+import { id, users, sync, connected } from '@signe/sync';
 import { signal } from '@signe/reactive';
 
 class Player {
   @id() id: string;
   @sync() name = signal('');
+  @connected() connected = signal(true);
 }
 
 // Source room (origin)
@@ -67,6 +68,8 @@ describe('Session transfer between rooms', () => {
     // Request transfer to room-b
     const transferToken = await (serverA as any).subRoom.$sessionTransfer(clientA.conn, 'room-b');
     expect(transferToken).toBeTruthy();
+
+    await serverA.deleteSession(privateIdA);
 
     // Original session should be deleted from room-a
     const sessionAfterDelete = await serverA.getSession(privateIdA);

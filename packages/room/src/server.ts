@@ -126,6 +126,10 @@ export class Server implements Party.Server {
     }
   }
 
+  async runGarbageCollector() {
+    await this.garbageCollector({ sessionExpiryTime: -1 });
+  }
+
   private async garbageCollector(options: { sessionExpiryTime: number }) {
     const subRoom = await this.getSubRoom();
     if (!subRoom) return;
@@ -311,16 +315,7 @@ export class Server implements Party.Server {
         }
 
         const { transferToken } = await response.json();
-
-        // On success, remove user from current room
-        await this.deleteSession(privateId);
-        await this.room.storage.delete(`${usersPropName}.${publicId}`);
-        
-        const currentUsers = signal();
-        if (currentUsers[publicId]) {
-          delete currentUsers[publicId];
-        }
-
+   
         return transferToken;
       } catch (error) {
         console.error(`[sessionTransfer] Failed to transfer session to room ${targetRoomId}:`, error);
