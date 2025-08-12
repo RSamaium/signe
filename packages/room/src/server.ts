@@ -27,6 +27,9 @@ const Message = z.object({
 
 type CreateRoomOptions = {
   getMemoryAll?: boolean;
+  sessionExpiryTime?: number;
+  throttleSync?: number;
+  throttleStorage?: number;
 };
 
 /**
