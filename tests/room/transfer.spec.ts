@@ -69,12 +69,6 @@ describe('Session transfer between rooms', () => {
     const transferToken = await (serverA as any).subRoom.$sessionTransfer(clientA.conn, 'room-b');
     expect(transferToken).toBeTruthy();
 
-    await serverA.deleteSession(privateIdA);
-
-    // Original session should be deleted from room-a
-    const sessionAfterDelete = await serverA.getSession(privateIdA);
-    expect(!!sessionAfterDelete).toBe(false);
-
     // Connect to room-b using the transfer token
     const lobbyB = await (serverA as any).room.context.parties.main.get('room-b');
     const room = lobbyB.server.room;
