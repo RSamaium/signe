@@ -1,6 +1,23 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { provide, inject, isInjected, override, findProvider, findProviders, Context } from '../../packages/di/src';
-import { Providers, FactoryProvider, ClassProvider, ValueProvider, ExistingProvider, Provider } from '../../packages/di/src';
+import { describe, it, expect, beforeEach } from 'vitest';
+import {
+  provide,
+  inject,
+  isInjected,
+  override,
+  findProvider,
+  findProviders,
+  Context,
+  hasInstance,
+  isProvided
+} from '../../packages/di/src';
+import {
+  Providers,
+  FactoryProvider,
+  ClassProvider,
+  ValueProvider,
+  ExistingProvider,
+  Provider
+} from '../../packages/di/src';
 import { injector } from '../../packages/di/src/provider';
 
 // Mock classes and services for testing
@@ -10,7 +27,9 @@ class TestService {
 
 class DependentService {
   constructor(private testService: TestService) {}
-  getValue() { return this.testService.value; }
+  getValue() {
+    return this.testService.value;
+  }
 }
 
 class AsyncService {
@@ -48,27 +67,40 @@ describe('Dependency Injection System', () => {
     it('should store value in context and return it', () => {
       const value = 'test value';
       const result = provide(context, 'testKey', value);
-      expect(context.get('inject:testKey')).toBe(value);
+      expect(inject(context, 'testKey')).toBe(value);
       expect(result).toBe(value);
     });
 
     it('should handle complex objects', () => {
       const obj = { nested: { value: 'test' } };
       provide(context, 'complex', obj);
-      expect(context.get('inject:complex')).toEqual(obj);
+      expect(inject(context, 'complex')).toEqual(obj);
     });
 
     it('should handle class instances', () => {
       const service = new TestService();
-      provide(context, TestService.name, service);
-      expect(context.get('inject:TestService')).toBe(service);
+      provide(context, TestService, service);
+      expect(inject(context, TestService)).toBe(service);
+    });
+
+    it('should store named instances when multi is enabled', () => {
+      const first = new TestService('first');
+      const second = new TestService('second');
+
+      provide(context, TestService, first, { multi: true, name: 'first' });
+      provide(context, TestService, second, { multi: true, name: 'second' });
+
+      expect(hasInstance(context, TestService, { name: 'first' })).toBe(true);
+      expect(hasInstance(context, TestService, { name: 'second' })).toBe(true);
+      expect(inject<TestService>(context, TestService, { name: 'first' })).toBe(first);
+      expect(inject<TestService>(context, TestService, { multi: true })).toEqual([first, second]);
     });
   });
 
   describe('inject', () => {
     it('should retrieve existing value from context', () => {
       const service = new TestService();
-      provide(context, TestService.name, service);
+      provide(context, TestService, service);
       const result = inject(context, TestService);
       expect(result).toBe(service);
     });
@@ -85,28 +117,76 @@ describe('Dependency Injection System', () => {
 
     it('should mark service as injected after retrieval', () => {
       const service = new TestService();
-      provide(context, TestService.name, service);
+      provide(context, TestService, service);
       inject(context, TestService);
-      expect(isInjected(context, TestService.name)).toBe(true);
+      expect(isInjected(context, TestService)).toBe(true);
+    });
+
+    it('should return undefined when optional flag is set and provider is missing', () => {
+      expect(inject(context, 'missing', { optional: true })).toBeUndefined();
+    });
+
+    it('should return empty array for optional multi provider when missing', () => {
+      expect(inject(context, 'missingMulti', { optional: true, multi: true })).toEqual([]);
+    });
+
+    it('should resolve named instances', () => {
+      const first = new TestService('first');
+      const second = new TestService('second');
+      provide(context, TestService, first, { multi: true, name: 'first' });
+      provide(context, TestService, second, { multi: true, name: 'second' });
+
+      const resolved = inject<TestService>(context, TestService, { name: 'second' });
+      expect(resolved).toBe(second);
     });
   });
 
   describe('isInjected', () => {
     it('should return true if service was injected', () => {
       const service = new TestService();
-      provide(context, TestService.name, service);
+      provide(context, TestService, service);
       inject(context, TestService);
-      expect(isInjected(context, TestService.name)).toBe(true);
+      expect(isInjected(context, TestService)).toBe(true);
     });
 
     it('should return false if service was not injected', () => {
-      expect(isInjected(context, TestService.name)).toBe(false);
+      expect(isInjected(context, TestService)).toBe(false);
     });
 
     it('should handle string tokens', () => {
       provide(context, 'CONFIG', { apiUrl: 'test' });
       inject(context, 'CONFIG');
       expect(isInjected(context, 'CONFIG')).toBe(true);
+    });
+
+    it('should track named injections independently', () => {
+      const first = new TestService('first');
+      const second = new TestService('second');
+      provide(context, TestService, first, { multi: true, name: 'first' });
+      provide(context, TestService, second, { multi: true, name: 'second' });
+
+      inject(context, TestService, { name: 'first' });
+
+      expect(isInjected(context, TestService, { name: 'first' })).toBe(true);
+      expect(isInjected(context, TestService, { name: 'second' })).toBe(false);
+    });
+  });
+
+  describe('hasInstance', () => {
+    it('should return true when named instance exists', () => {
+      provide(context, TestService, new TestService('first'), { multi: true, name: 'first' });
+      expect(hasInstance(context, TestService, { name: 'first' })).toBe(true);
+    });
+
+    it('should return false when named instance does not exist', () => {
+      provide(context, TestService, new TestService('first'), { multi: true, name: 'first' });
+      expect(hasInstance(context, TestService, { name: 'second' })).toBe(false);
+    });
+
+    it('should mirror isProvided for unnamed instances', () => {
+      provide(context, TestService, new TestService());
+      expect(hasInstance(context, TestService)).toBe(true);
+      expect(isProvided(context, TestService)).toBe(true);
     });
   });
 
@@ -215,6 +295,28 @@ describe('Dependency Injection System', () => {
       expect(value).toBe('using value');
     });
 
+    it('should register multiple named instances when multi is enabled', async () => {
+      const first: ValueProvider = {
+        provide: TestService,
+        useValue: new TestService('first'),
+        multi: true,
+        name: 'first'
+      };
+      const second: ValueProvider = {
+        provide: TestService,
+        useValue: new TestService('second'),
+        multi: true,
+        name: 'second'
+      };
+
+      await injector(context, [first, second]);
+
+      const services = inject<TestService>(context, TestService, { multi: true });
+      expect(services).toHaveLength(2);
+      expect(inject<TestService>(context, TestService, { name: 'first' })?.value).toBe('first');
+      expect(inject<TestService>(context, TestService, { name: 'second' })?.value).toBe('second');
+    });
+
     it('should find provider in nested arrays', () => {
       const deepProvider: ValueProvider = { provide: 'deeplyNestedService', useValue: 'deep value' };
       const nestedProvider: ValueProvider = { provide: 'nestedService', useValue: 'nested value' };
@@ -229,7 +331,7 @@ describe('Dependency Injection System', () => {
       expect(result).toEqual(deepProvider);
     });
 
-    it('should handle class providers', () => {
+    it('should handle class providers when searching', () => {
       const classProvider: ClassProvider = {
         provide: TestService,
         useClass: TestService

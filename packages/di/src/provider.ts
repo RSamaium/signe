@@ -3,9 +3,22 @@
  * @module @signe/di/provider
  */
 
-import { ClassProvider, Provider, Providers, ProviderToken } from "./types";
+import { ClassProvider, ProvideOptions, Provider, Providers, ProviderToken } from "./types";
 import { inject, provide } from "./inject";
 import { Context } from "./context";
+
+function extractProvideOptions(source: { multi?: boolean; name?: string } | undefined): ProvideOptions | undefined {
+    if (!source) {
+        return undefined;
+    }
+
+    const { multi, name } = source;
+    if (multi === undefined && name === undefined) {
+        return undefined;
+    }
+
+    return { multi, name };
+}
 
 /**
  * Type guard to check if a provider is a ClassProvider
@@ -38,10 +51,15 @@ function getDeps(provider: Provider): ProviderToken[] {
  */
 function sortProviders(providers: Provider[]): Provider[] {
     const tokenName = (t: ProviderToken) => typeof t === 'function' ? t.name : t;
-    const map = new Map<string, Provider>();
+    const map = new Map<string, Provider[]>();
     for (const p of providers) {
         const token = tokenName(typeof p === 'function' ? p : (p as any).provide);
-        map.set(token, p);
+        const list = map.get(token);
+        if (list) {
+            list.push(p);
+        } else {
+            map.set(token, [p]);
+        }
     }
 
     const result: Provider[] = [];
@@ -55,13 +73,15 @@ function sortProviders(providers: Provider[]): Provider[] {
             throw new Error(`Circular dependency detected for provider ${name}`);
         }
         stack.add(name);
-        const provider = map.get(name);
-        if (provider) {
-            for (const dep of getDeps(provider)) {
-                visit(dep);
+        const providersForToken = map.get(name);
+        if (providersForToken) {
+            for (const provider of providersForToken) {
+                for (const dep of getDeps(provider)) {
+                    visit(dep);
+                }
+                result.push(provider);
             }
             visited.add(name);
-            result.push(provider);
         }
         stack.delete(name);
     };
@@ -99,13 +119,17 @@ export async function injector(context: Context, providers: Providers) {
     for (const provider of providers) {
         let token: ProviderToken;
         let instance: any;
+        let options: ProvideOptions | undefined;
 
         if (typeof provider === 'function') {
             // If provider is a class, treat it as a ClassProvider
             token = provider;
             instance = new provider(context);
+            const diOptions = extractProvideOptions((provider as any).diOptions ?? (provider as any).di);
+            options = diOptions;
         } else {
             token = (provider as any).provide;
+            options = extractProvideOptions(provider as any);
             const provideUserClass = (provider as any).useClass;
             const isClass = typeof provideUserClass === 'function';
             if (isClass) {
@@ -122,7 +146,6 @@ export async function injector(context: Context, providers: Providers) {
             }
         }
 
-        const name = typeof token === 'function' ? token.name : token;
-        provide(context, name, instance);
+        provide(context, token, instance, options);
     }
 }

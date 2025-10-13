@@ -27,7 +27,54 @@ export interface ProviderMeta {
   [key: string]: any;
 }
 
-export interface ValueProvider {
+/**
+ * Common options available to all providers
+ */
+export interface ProviderOptions {
+  /**
+   * When true, allows multiple instances to be registered for the same token
+   */
+  multi?: boolean;
+  /**
+   * Optional name used to register and resolve a specific instance
+   */
+  name?: string;
+}
+
+/**
+ * Options that can be passed when calling {@link provide}
+ */
+export interface ProvideOptions extends ProviderOptions {}
+
+/**
+ * Options that can be passed when calling {@link inject}
+ */
+export interface InjectionOptions {
+  /**
+   * Optional name used to resolve a specific instance
+   */
+  name?: string;
+  /**
+   * When true, allows retrieving all instances registered with {@link ProviderOptions.multi}
+   */
+  multi?: boolean;
+  /**
+   * When true, `inject` will return `undefined` instead of throwing if the instance is missing
+   */
+  optional?: boolean;
+}
+
+/**
+ * Options used when checking if an instance exists in the context
+ */
+export interface InstanceLookupOptions {
+  /**
+   * Optional name of the instance to check
+   */
+  name?: string;
+}
+
+export interface ValueProvider extends ProviderOptions {
   /** Token to identify the provider */
   provide: ProviderToken;
   /** Value to be injected */
@@ -41,7 +88,7 @@ export interface ValueProvider {
 /**
  * Provider configuration for class-based injection
  */
-export interface ClassProvider {
+export interface ClassProvider extends ProviderOptions {
   /** Token to identify the provider */
   provide: ProviderToken;
   /** Class to be instantiated */
@@ -55,7 +102,7 @@ export interface ClassProvider {
 /**
  * Provider configuration for factory-based injection
  */
-export interface FactoryProvider {
+export interface FactoryProvider extends ProviderOptions {
   /** Token to identify the provider */
   provide: ProviderToken;
   /** Tokens that must be injected before this provider */
@@ -69,7 +116,7 @@ export interface FactoryProvider {
 /**
  * Provider configuration for alias-based injection
  */
-export interface ExistingProvider {
+export interface ExistingProvider extends ProviderOptions {
   /** Token to identify the provider */
   provide: ProviderToken;
   /** Token of the existing provider to use */

@@ -20,13 +20,15 @@ pnpm add @signe/di
 - Context-based injection
 - Override capabilities for testing and customization
 - Support for nested providers
+- Optional injection resolution helpers
+- Support for multiple named instances per token
 
 ## Usage
 
 ### Basic Usage
 
 ```typescript
-import { provide, inject, Context, Providers } from '@signe/di';
+import { provide, inject, Context, Providers, injector } from '@signe/di';
 
 const context = new Context();
 
@@ -57,8 +59,8 @@ const providers: Providers = [
   }
 ];
 
-// Provide the service
-provide(context, providers);
+// Register the services
+await injector(context, providers);
 
 // Inject and use the service
 const userService = inject(context, UserService);
@@ -81,6 +83,36 @@ const updatedProviders = override(providers, {
   provide: 'NEW_SERVICE',
   useValue: service
 }, { upsert: true });
+```
+
+### Optional injection
+
+```typescript
+import { inject } from '@signe/di';
+
+const maybeService = inject(context, 'UNKNOWN_SERVICE', { optional: true });
+if (!maybeService) {
+  // Handle missing service without throwing an exception
+}
+```
+
+### Multiple named instances
+
+```typescript
+import { provide, inject } from '@signe/di';
+
+provide(context, UserService, new UserService('primary'), {
+  multi: true,
+  name: 'primary'
+});
+
+provide(context, UserService, new UserService('secondary'), {
+  multi: true,
+  name: 'secondary'
+});
+
+const allInstances = inject<UserService>(context, UserService, { multi: true });
+const secondary = inject<UserService>(context, UserService, { name: 'secondary' });
 ```
 
 ### Check Injection Status
@@ -107,14 +139,27 @@ const allServices = findProviders(providers, /Service$/);
 
 ## API Reference
 
-### `provide(context, key, value)`
+### `provide(context, token, value, options?)`
 Stores a value in the context for dependency injection.
 
-### `inject(context, key)`
+- `options.multi` — When `true`, allows multiple instances for the same token
+- `options.name` — Registers the instance under a specific name
+
+### `inject(context, token, options?)`
 Retrieves an injected value from the context.
 
-### `isInjected(context, key)`
-Checks if a value has been injected.
+- `options.optional` — Returns `undefined`/`[]` instead of throwing when missing
+- `options.multi` — Returns all registered instances as an array
+- `options.name` — Retrieves a specific named instance
+
+### `isInjected(context, token, options?)`
+Checks if a value has been injected. Supports named lookups via the `name` option.
+
+### `isProvided(context, token, options?)`
+Checks if a value has been registered in the context.
+
+### `hasInstance(context, token, options?)`
+Alias of `isProvided`, kept for readability when checking for instance existence.
 
 ### `override(providers, newProvider, options?)`
 Overrides or adds new providers to the existing provider array.
