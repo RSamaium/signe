@@ -125,6 +125,68 @@ if (isInjected(context, UserService)) {
 }
 ```
 
+### Dependency Declaration
+
+You can declare dependencies using the `deps` property. The injector will automatically sort providers to ensure dependencies are instantiated before the services that need them.
+
+```typescript
+import { provide, inject, Context, Providers, injector } from '@signe/di';
+
+const context = new Context();
+
+class DatabaseService {
+  connect() {
+    return 'Connected to database';
+  }
+}
+
+class UserRepository {
+  constructor(context: Context) {
+    this.db = inject(context, DatabaseService);
+  }
+  
+  static deps = [DatabaseService];
+}
+
+class UserService {
+  constructor(context: Context) {
+    this.repository = inject(context, UserRepository);
+  }
+  
+  static deps = [UserRepository];
+}
+
+const providers: Providers = [
+  UserService,
+  UserRepository,
+  DatabaseService
+];
+
+// The injector will automatically sort: DatabaseService -> UserRepository -> UserService
+await injector(context, providers);
+```
+
+You can also declare dependencies on provider objects:
+
+```typescript
+const providers: Providers = [
+  {
+    provide: 'API_CLIENT',
+    useFactory: (context) => {
+      const config = inject(context, 'CONFIG');
+      return new ApiClient(config);
+    },
+    deps: ['CONFIG']
+  },
+  {
+    provide: 'CONFIG',
+    useValue: { apiUrl: 'https://api.example.com' }
+  }
+];
+```
+
+**Note:** The injector will detect and throw an error if circular dependencies are found.
+
 ### Find Providers
 
 ```typescript
