@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { Server, ServerIo, testRoom } from '../../packages/room/src';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { Server, ServerIo, testRoom, tick } from '../../packages/room/src';
 import { id, users, sync, connected } from '@signe/sync';
 import { signal } from '@signe/reactive';
 
@@ -14,19 +14,26 @@ import { Room } from '../../packages/room/src';
 
 @Room({
   path: 'room-a',
-  sessionExpiryTime: 2000
+  sessionExpiryTime: 2000,
+  throttleSync: 0
 })
 class SourceRoom {
   @users(Player) users = signal({});
+  id = 'room-a';
+  interceptorPacket = vi.fn();
 }
 
 // Target room (destination)
 @Room({
   path: 'room-b',
-  sessionExpiryTime: 2000
+  sessionExpiryTime: 2000,
+  throttleSync: 0
 })
 class TargetRoom {
   @users(Player) users = signal({});
+  id = 'room-b';
+
+  interceptorPacket = vi.fn();
 }
 
 describe('Session transfer between rooms', () => {
@@ -46,7 +53,7 @@ describe('Session transfer between rooms', () => {
     });
     serverA = test.server as Server;
     roomA = test.room;
-    clientA = await test.createClient();
+    clientA = await test.createClient('test');
   });
 
   afterEach(async () => {
@@ -73,7 +80,7 @@ describe('Session transfer between rooms', () => {
     const lobbyB = await (serverA as any).room.context.parties.main.get('room-b');
     const room = lobbyB.server.room;
     const serverB = lobbyB.server;
-    const clientB = await room.connection(serverB);
+    const clientB = await room.connection(serverB, 'test');
 
     try {
       // Validate that the session in room-b is established under the original privateId
@@ -87,8 +94,17 @@ describe('Session transfer between rooms', () => {
       expect(userB).toBeDefined();
       expect(userB.name()).toBe('Alice');
 
-      // Ensure the new connection's private id is different from the session key (we used original privateId)
-      expect(clientB.conn.id).not.toBe(privateIdA);
+      await tick()
+
+      expect(roomA.interceptorPacket).toHaveBeenCalled()
+      expect(roomB.interceptorPacket.mock.calls[1][0].name()).toBe('Alice')
+
+      userB.name.set('Bob')
+
+      await tick()
+
+      expect(roomB.interceptorPacket.mock.calls[2][0].name()).toBe('Bob')
+
     } finally {
       clientB.conn.close();
     }

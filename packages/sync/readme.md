@@ -55,6 +55,45 @@ class MyClass {
 }
 ```
 
+##### Value Transformation
+
+You can transform values during synchronization using the `transform` option:
+
+```typescript
+class MyClass {
+  // Transform string to number during sync
+  @sync({
+    transform: (val) => +val
+  })
+  value = signal(1)
+  
+  // Transform to uppercase
+  @sync({
+    transform: (val) => val.toUpperCase()
+  })
+  text = signal('hello')
+  
+  // Custom transformation logic
+  @sync({
+    transform: (val) => {
+      if (typeof val === 'string') {
+        return val.trim()
+      }
+      return val
+    }
+  })
+  data = signal('  spaced  ')
+}
+```
+
+The `transform` function receives the value before it's synchronized and should return the transformed value. This is useful for:
+- Type conversions (string to number, etc.)
+- Data normalization
+- Formatting values before sync
+- Sanitizing input
+
+**Note:** The transformation is applied during synchronization, but the original value stored in the signal remains unchanged.
+
 ##### Syncing Collections
 
 You can synchronize collections of objects by specifying the class type:
@@ -229,6 +268,7 @@ Common options for decorators:
 - `classType?: Function` - Specify a class type for complex objects
 - `persist?: boolean` - Enable/disable persistence (default: true)
 - `syncToClient?: boolean` - Enable/disable client synchronization (default: true)
+- `transform?: <T>(value: T) => any` - Transform the value before synchronization. The function receives the original value and should return the transformed value. Useful for type conversions, data normalization, or formatting.
 
 ## License
 

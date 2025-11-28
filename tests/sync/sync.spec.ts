@@ -675,3 +675,267 @@ describe("createStatesSnapshot", () => {
     expect(result).toEqual({});
   });
 });
+
+describe("transform option", () => {
+  it("should transform value during sync", () => {
+    class TestClass {
+      @sync({
+        transform: (val) => +val
+      })
+      value = signal('1');
+    }
+
+    const instance = new TestClass();
+    const onSync = vi.fn();
+
+    syncClass(instance, { onSync });
+
+    // Initial sync should transform the value
+    expect(onSync).toHaveBeenCalledWith(
+      new Map<string, any>([["value", 1]])
+    );
+
+    // Update value
+    instance.value.set('42');
+
+    // Should transform string to number
+    expect(onSync).toHaveBeenCalledWith(
+      new Map<string, any>([["value", 42]])
+    );
+  });
+
+  it("should transform value to uppercase", () => {
+    class TestClass {
+      @sync({
+        transform: (val: string) => val.toUpperCase()
+      })
+      text = signal("hello");
+    }
+
+    const instance = new TestClass();
+    const onSync = vi.fn();
+
+    syncClass(instance, { onSync });
+
+    // Initial sync should transform the value
+    expect(onSync).toHaveBeenCalledWith(
+      new Map<string, any>([["text", "HELLO"]])
+    );
+
+    // Update value
+    instance.text.set("world");
+
+    // Should transform to uppercase
+    expect(onSync).toHaveBeenCalledWith(
+      new Map<string, any>([["text", "WORLD"]])
+    );
+  });
+
+  it("should not transform DELETE_TOKEN", () => {
+    class TestClass {
+      @sync({
+        transform: (val) => +val
+      })
+      items = signal([1, 2, 3]);
+    }
+
+    const instance = new TestClass();
+    const onSync = vi.fn();
+
+    syncClass(instance, { onSync });
+
+    // Remove an item
+    instance.items.mutate((arr) => {
+      arr.shift();
+    });
+
+    // DELETE_TOKEN should not be transformed
+    expect(onSync).toHaveBeenCalledWith(
+      expect.objectContaining(
+        new Map<string, any>([
+          ["items", { "0": 1, "1": 2, "2": 3 }],
+          ["items.0", "$delete"],
+        ])
+      )
+    );
+  });
+
+  it("should transform computed values", () => {
+    class TestClass {
+      @sync() count = signal(5);
+      @sync({
+        transform: (val) => `Count: ${val}`
+      })
+      description = computed(() => this.count());
+    }
+
+    const instance = new TestClass();
+    const onSync = vi.fn();
+
+    syncClass(instance, { onSync });
+
+    // Initial sync should transform the computed value
+    expect(onSync).toHaveBeenCalledWith(
+      expect.objectContaining(
+        new Map<string, any>([
+          ["count", 5],
+          ["description", "Count: 5"],
+        ])
+      )
+    );
+
+    // Update count
+    instance.count.set(10);
+
+    // Should transform the computed value
+    expect(onSync).toHaveBeenCalledWith(
+      expect.objectContaining(
+        new Map<string, any>([
+          ["count", 10],
+          ["description", "Count: 10"],
+        ])
+      )
+    );
+  });
+
+  it("should transform object values", () => {
+    class TestClass {
+      @sync({
+        transform: (val) => {
+          if (typeof val === "object" && val !== null) {
+            return { ...val, transformed: true };
+          }
+          return val;
+        }
+      })
+      data = signal({ a: 1, b: 2 });
+    }
+
+    const instance = new TestClass();
+    const onSync = vi.fn();
+
+    syncClass(instance, { onSync });
+
+    // Initial sync should transform the object
+    expect(onSync).toHaveBeenCalledWith(
+      new Map<string, any>([
+        ["data", { a: 1, b: 2, transformed: true }],
+      ])
+    );
+  });
+
+  it("should transform array values", () => {
+    class TestClass {
+      @sync({
+        transform: (val) => {
+          if (Array.isArray(val)) {
+            return val.map((item) => item * 2);
+          }
+          return val;
+        }
+      })
+      items = signal([1, 2, 3]);
+    }
+
+    const instance = new TestClass();
+    const onSync = vi.fn();
+
+    syncClass(instance, { onSync });
+
+    // Initial sync should transform the array
+    expect(onSync).toHaveBeenCalledWith(
+      new Map<string, any>([
+        ["items", { "0": 2, "1": 4, "2": 6 }],
+      ])
+    );
+  });
+
+  it("should transform nested object subject values", () => {
+    class TestClass {
+      @sync({
+        transform: (val) => +val
+      })
+      data = signal({});
+    }
+
+    const instance = new TestClass();
+    const onSync = vi.fn();
+
+    syncClass(instance, { onSync });
+
+    // Add a property
+    instance.data.mutate((obj: any) => {
+      obj.value = "42";
+    });
+
+    // Should transform the nested value
+    expect(onSync).toHaveBeenCalledWith(
+      expect.objectContaining(
+        new Map<string, any>([
+          ["data", {}],
+          ["data.value", 42],
+        ])
+      )
+    );
+  });
+
+  it("should transform array subject values", () => {
+    class TestClass {
+      @sync({
+        transform: (val) => +val
+      })
+      items = signal([1, 2]);
+    }
+
+    const instance = new TestClass();
+    const onSync = vi.fn();
+
+    syncClass(instance, { onSync });
+
+    // Add an item
+    instance.items.mutate((arr) => {
+      arr.push(3);
+    });
+
+    // Should transform the new value
+    expect(onSync).toHaveBeenCalledWith(
+      expect.objectContaining(
+        new Map<string, any>([
+          ["items", { "0": 1, "1": 2 }],
+          ["items.2", 3],
+        ])
+      )
+    );
+  });
+
+  it("should apply transform during initial sync in createSyncClass", () => {
+    class NestedClass {
+      @sync({
+        transform: (val: number) => val * 10
+      })
+      value = signal(5);
+    }
+
+    class TestClass {
+      @sync() nested = signal({});
+    }
+
+    const instance = new TestClass();
+    const onSync = vi.fn();
+
+    syncClass(instance, { onSync });
+
+    const nested = new NestedClass();
+    instance.nested.mutate((obj) => (obj["id"] = nested));
+
+    // Should transform the nested value
+    expect(onSync).toHaveBeenCalledWith(
+      expect.objectContaining(
+        new Map<string, any>([
+          ["nested", {}],
+          ["nested.id.value", 50],
+        ])
+      )
+    );
+  });
+});

@@ -90,6 +90,11 @@ export async function testRoom(Room, options: {
         createClient: async (id?: string, opts?: { query?: Record<string, string>, headers?: Record<string, string> }) => {
             const client = await io.connection(server as Server, id, opts)
             return client
+        },
+        getServerUser: async (client: any, prop = 'users') => {
+            const privateId = client.conn.id;
+            const session = await (server as Server).getSession(privateId);
+            return (server as any).subRoom[prop]()[session?.publicId];
         }
     }
 }
@@ -105,4 +110,8 @@ export async function request(room: Server | Shard, path: string, options: {
     const request = new Request(url.toString(), options)
     const response = await room.onRequest(request as any)
     return response
+}
+
+export function tick(ms: number = 0) {
+    return new Promise(resolve => setTimeout(resolve, ms))
 }

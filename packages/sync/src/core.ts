@@ -19,6 +19,7 @@ interface TypeOptions {
   syncToClient?: boolean;
   persist?: boolean;
   classType?: any;
+  transform?: (value: any) => any;
 }
 
 interface ExtendedWritableSignal<T>
@@ -167,19 +168,27 @@ export const createSyncClass = (
       const signal = currentClass.$snapshot.get(key);
       const syncToClient = signal.options?.syncToClient ?? true;
       const persist = signal.options?.persist ?? true;
+      const transform = signal.options?.transform;
       let signalValue = signal();
+
+      // Apply transformation before converting array to object
+      if (transform) {
+        signalValue = transform(signalValue);
+      }
 
       if (isObject(signalValue) || Array.isArray(signalValue)) {
         signalValue = { ...signalValue };
       }
 
+      const transformedValue = signalValue;
+
       const newPath = (path ? path + "." : "") + key;
       if (syncToClient) {
-        currentClass.$valuesChanges.set(newPath, signalValue);
+        currentClass.$valuesChanges.set(newPath, transformedValue);
       }
       if (persist) {
         if (parentClass)
-          currentClass.$valuesChanges.setPersist(path, signalValue);
+          currentClass.$valuesChanges.setPersist(path, transformedValue);
       }
 
       // Handle computed signals specifically
@@ -187,7 +196,8 @@ export const createSyncClass = (
         // Subscribe to the computed signal's observable to sync changes
         signal.observable.subscribe((newValue: any) => {
           if (syncToClient) {
-            currentClass.$valuesChanges.set(newPath, newValue);
+            const transformedNewValue = transform ? transform(newValue) : newValue;
+            currentClass.$valuesChanges.set(newPath, transformedNewValue);
           }
         });
       }
@@ -201,7 +211,7 @@ export const type = <T>(
   options: TypeOptions = {},
   currentInstance: SyncInstance
 ): ExtendedWritableSignal<T> => {
-  const { syncToClient = true, persist = true } = options;
+  const { syncToClient = true, persist = true, transform } = options;
   let init = true;
 
   const handleObjectSubject = (value: SubjectValue, propPath: string) => {
@@ -255,13 +265,17 @@ export const type = <T>(
   };
 
   const savePath = (propPath: string, value: any) => {
+    // Apply transformation if provided and value is not DELETE_TOKEN
+    const transformedValue = 
+      transform && value !== DELETE_TOKEN ? transform(value) : value;
+    
     if (syncToClient) {
-      currentInstance.$valuesChanges.set(propPath, value);
+      currentInstance.$valuesChanges.set(propPath, transformedValue);
     }
     if (persist && currentInstance.$path !== undefined) {
       currentInstance.$valuesChanges.setPersist(
-        value == DELETE_TOKEN ? propPath : currentInstance.$path,
-        value
+        transformedValue == DELETE_TOKEN ? propPath : currentInstance.$path,
+        transformedValue
       );
     }
   };
@@ -276,7 +290,8 @@ export const type = <T>(
     // For initial sync of direct property values
     if (syncToClient && currentInstance.$valuesChanges) {
       const initialValue = signal();
-      currentInstance.$valuesChanges.set(signalPath, initialValue);
+      const transformedInitialValue = transform ? transform(initialValue) : initialValue;
+      currentInstance.$valuesChanges.set(signalPath, transformedInitialValue);
     }
 
     signal.options = options;

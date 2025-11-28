@@ -4,12 +4,20 @@ interface SyncOptions {
   classType?: Function;
   persist?: boolean;
   syncToClient?: boolean;
+  transform?: (value: any) => any;
 }
 
 /**
  * A decorator to sync a property with optional settings.
  * 
+ * This decorator enables synchronization of a property's value with optional transformation.
+ * The value can be transformed before synchronization using the `transform` option.
+ * 
  * @param {SyncOptions | Function} [options] - The options or class type for syncing.
+ * @param {Function} [options.classType] - Specify a class type for complex objects.
+ * @param {boolean} [options.persist=true] - Enable/disable persistence.
+ * @param {boolean} [options.syncToClient=true] - Enable/disable client synchronization.
+ * @param {Function} [options.transform] - Transform the value before synchronization. Receives the original value and should return the transformed value.
  * @returns {PropertyDecorator} - The property decorator function.
  * @example
  * ```typescript
@@ -20,6 +28,9 @@ interface SyncOptions {
  *   @sync() myProperty = signal(10);
  * 
  *   @sync({ classType: MyClass, persist: false }) myOtherProperty = signal({});
+ * 
+ *   // Transform string to number during sync
+ *   @sync({ transform: (val) => +val }) value = signal(1);
  * }
  * ```
  */
@@ -27,6 +38,7 @@ export function sync(options?: SyncOptions | Function): PropertyDecorator {
   let classType: Function | undefined;
   let persist = true;
   let syncToClient = true;
+  let transform: ((value: any) => any) | undefined;
 
   if (typeof options === "function") {
     classType = options;
@@ -37,6 +49,9 @@ export function sync(options?: SyncOptions | Function): PropertyDecorator {
     }
     if (options.hasOwnProperty("syncToClient")) {
       syncToClient = options.syncToClient!;
+    }
+    if (options.hasOwnProperty("transform")) {
+      transform = options.transform;
     }
   }
 
@@ -51,7 +66,7 @@ export function sync(options?: SyncOptions | Function): PropertyDecorator {
       this[privatePropertyKey] = type(
         newVal,
         propertyKey,
-        { classType, persist, syncToClient },
+        { classType, persist, syncToClient, transform },
         this
       );
     };
