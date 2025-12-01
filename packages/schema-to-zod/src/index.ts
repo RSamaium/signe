@@ -162,11 +162,13 @@ function convertPropertyToZod(
     key: string,
     parentSchema: JSONSchema7
 ): ZodType<unknown> {
+    const required = Array.isArray(parentSchema.required) && parentSchema.required.includes(key);
+    
     if (schema.type === 'object') {
-        return z.object(jsonSchemaToZod(schema));
+        const objectSchema = z.object(jsonSchemaToZod(schema));
+        return required ? objectSchema : objectSchema.optional();
     }
 
-    const required = Array.isArray(parentSchema.required) && parentSchema.required.includes(key);
     const typeValidator = applyValidators(getTypeFunction(schema), schema, required);
     return required ? typeValidator : typeValidator.optional();
 }

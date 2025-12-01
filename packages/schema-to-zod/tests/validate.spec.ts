@@ -298,4 +298,91 @@ describe('jsonSchemaToZod', () => {
         })
         expect(result.success).toBeFalsy()
     })
+
+    test('Should handle object with nested keyboardControls and validate only name', async () => {
+        const keyEnum = ['up', 'down', 'left', 'right', 'space', 'backspace', 'enter', 'escape']
+        
+        const schema = {
+            type: 'object' as const,
+            properties: {
+                name: {
+                    type: 'string' as const,
+                    title: 'Name',
+                    description: 'Name of the project',
+                },
+                keyboardControls: {
+                    type: 'object' as const,
+                    title: 'Keyboard Controls',
+                    properties: {
+                        down: {
+                            type: 'string' as const,
+                            title: 'Down',
+                            enum: keyEnum,
+                            default: 'down',
+                        },
+                        up: {
+                            type: 'string' as const,
+                            title: 'Up',
+                            enum: keyEnum,
+                            default: 'up',
+                        },
+                        left: {
+                            type: 'string' as const,
+                            title: 'Left',
+                            enum: keyEnum,
+                            default: 'left',
+                        },
+                        right: {
+                            type: 'string' as const,
+                            title: 'Right',
+                            enum: keyEnum,
+                            default: 'right',
+                        },
+                        action: {
+                            type: 'string' as const,
+                            title: 'Action',
+                            enum: keyEnum,
+                            default: 'space',
+                        },
+                        back: {
+                            type: 'string' as const,
+                            title: 'Back',
+                            enum: keyEnum,
+                            default: 'backspace',
+                        },
+                    },
+                },
+            },
+        }
+
+        const zodSchema = z.object(jsonSchemaToZod(schema))
+
+        // Test with only name
+        let result = zodSchema.safeParse({ name: 'My Project' })
+
+        expect(result.success).toBeTruthy()
+
+        // Test with name and keyboardControls
+        result = zodSchema.safeParse({
+            name: 'My Project',
+            keyboardControls: {
+                down: 'down',
+                up: 'up',
+                left: 'left',
+                right: 'right',
+                action: 'space',
+                back: 'backspace',
+            },
+        })
+        expect(result.success).toBeTruthy()
+
+        // Test with invalid enum value in keyboardControls
+        result = zodSchema.safeParse({
+            name: 'My Project',
+            keyboardControls: {
+                down: 'invalid',
+            },
+        })
+        expect(result.success).toBeFalsy()
+    })
 })
