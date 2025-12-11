@@ -53,6 +53,172 @@ describe("signal", () => {
 
     expect(observedValues).toEqual([0, 1, 2]);
   });
+
+  it('should not emit when setting the same primitive value', () => {
+    const numSignal = signal(5);
+    const observedValues: number[] = [];
+    
+    numSignal.observable.subscribe(value => {
+      observedValues.push(value);
+    });
+
+    // Initial value is emitted
+    expect(observedValues).toEqual([5]);
+    
+    // Set the same value
+    numSignal.set(5);
+    
+    // Should not emit again
+    expect(observedValues).toEqual([5]);
+    
+    // Set a different value to verify it works
+    numSignal.set(10);
+    expect(observedValues).toEqual([5, 10]);
+  });
+
+  it('should not recompute computed signal when dependency sets same value', () => {
+    const numSignal = signal(5);
+    const computeFn = vi.fn(() => numSignal() * 2);
+    const computedSignal = computed(computeFn);
+    
+    // Initial computation
+    expect(computedSignal()).toBe(10);
+    expect(computeFn).toHaveBeenCalledTimes(1);
+    
+    // Set the same value
+    numSignal.set(5);
+    
+    // Should not recompute
+    expect(computeFn).toHaveBeenCalledTimes(1);
+    expect(computedSignal()).toBe(10);
+    
+    // Set a different value to verify it works
+    numSignal.set(6);
+    expect(computeFn).toHaveBeenCalledTimes(2);
+    expect(computedSignal()).toBe(12);
+  });
+
+  it('should use custom equality function for signal', () => {
+    // Deep equality function similar to lodash.isEqual
+    const deepEqual = (a: any, b: any): boolean => {
+      if (a === b) return true;
+      if (a == null || b == null) return false;
+      if (typeof a !== 'object' || typeof b !== 'object') return false;
+      
+      const keysA = Object.keys(a);
+      const keysB = Object.keys(b);
+      
+      if (keysA.length !== keysB.length) return false;
+      
+      for (const key of keysA) {
+        if (!keysB.includes(key)) return false;
+        if (!deepEqual(a[key], b[key])) return false;
+      }
+      
+      return true;
+    };
+
+    const arrayEqual = (a: any[], b: any[]): boolean => {
+      if (a === b) return true;
+      if (a.length !== b.length) return false;
+      return a.every((item, index) => deepEqual(item, b[index]));
+    };
+
+    const arraySignal = signal(['test'], { equal: arrayEqual });
+    const observedValues: any[] = [];
+    
+    arraySignal.observable.subscribe(value => {
+      observedValues.push(value);
+    });
+
+    // Initial value is emitted
+    expect(observedValues.length).toBeGreaterThan(0);
+    const initialCount = observedValues.length;
+    
+    // Set array with same content but different reference
+    arraySignal.set(['test']);
+    
+    // Should not emit because content is equal (deep comparison)
+    expect(observedValues.length).toBe(initialCount);
+    
+    // Set array with different content
+    arraySignal.set(['different']);
+    expect(observedValues.length).toBe(initialCount + 1);
+  });
+
+  it('should use custom equality function for object signal', () => {
+    // Deep equality function
+    const deepEqual = (a: any, b: any): boolean => {
+      if (a === b) return true;
+      if (a == null || b == null) return false;
+      if (typeof a !== 'object' || typeof b !== 'object') return false;
+      
+      const keysA = Object.keys(a);
+      const keysB = Object.keys(b);
+      
+      if (keysA.length !== keysB.length) return false;
+      
+      for (const key of keysA) {
+        if (!keysB.includes(key)) return false;
+        if (typeof a[key] === 'object' && a[key] !== null) {
+          if (!deepEqual(a[key], b[key])) return false;
+        } else if (a[key] !== b[key]) {
+          return false;
+        }
+      }
+      
+      return true;
+    };
+
+    const objectSignal = signal({ a: 1, b: { c: 2 } }, { equal: deepEqual });
+    const observedValues: any[] = [];
+    
+    objectSignal.observable.subscribe(value => {
+      observedValues.push(value);
+    });
+
+    // Initial value is emitted
+    expect(observedValues.length).toBeGreaterThan(0);
+    const initialCount = observedValues.length;
+    
+    // Set object with same content but different reference
+    objectSignal.set({ a: 1, b: { c: 2 } });
+    
+    // Should not emit because content is equal (deep comparison)
+    expect(observedValues.length).toBe(initialCount);
+    
+    // Set object with different content
+    objectSignal.set({ a: 1, b: { c: 3 } });
+    expect(observedValues.length).toBe(initialCount + 1);
+  });
+
+  it('should use custom equality function for primitive signal', () => {
+    // Custom equality that treats numbers within 0.1 as equal
+    const approximateEqual = (a: number, b: number): boolean => {
+      return Math.abs(a - b) < 0.1;
+    };
+
+    const numSignal = signal(5.0, { equal: approximateEqual });
+    const observedValues: number[] = [];
+    
+    numSignal.observable.subscribe(value => {
+      observedValues.push(value);
+    });
+
+    // Initial value is emitted
+    expect(observedValues.length).toBeGreaterThan(0);
+    const initialCount = observedValues.length;
+    
+    // Set value within tolerance
+    numSignal.set(5.05);
+    
+    // Should not emit because values are approximately equal
+    expect(observedValues.length).toBe(initialCount);
+    
+    // Set value outside tolerance
+    numSignal.set(5.2);
+    expect(observedValues.length).toBe(initialCount + 1);
+  });
 });
 
 describe("isSignal", () => {

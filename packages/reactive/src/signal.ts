@@ -75,16 +75,46 @@ const trackDependency = (signal) => {
 };
 
 /**
+ * Options for creating a signal
+ * @template T The type of the signal value
+ */
+export interface SignalOptions<T> {
+    /**
+     * Equality function to determine if two values are equal.
+     * If not provided, default comparison logic is used.
+     * @param a The current value
+     * @param b The new value
+     * @returns True if values are equal, false otherwise
+     * 
+     * @example
+     * import _ from 'lodash';
+     * const data = signal(['test'], { equal: _.isEqual });
+     */
+    equal?: (a: T, b: T) => boolean;
+}
+
+/**
  * Creates a reactive signal with the given default value.
  * @template T The type of the signal value
  * @param {T} defaultValue The initial value of the signal
+ * @param {SignalOptions<T>} [options] Optional configuration for the signal
  * @returns {WritableSignal<T> | WritableArraySignal<T> | WritableObjectSignal<T>} A writable signal
+ * 
+ * @example
+ * // Basic usage
+ * const count = signal(0);
+ * 
+ * @example
+ * // With custom equality function
+ * import _ from 'lodash';
+ * const data = signal(['test'], { equal: _.isEqual });
  */
-export function signal<T extends any[]>(defaultValue: T): WritableArraySignal<T>;
-export function signal<T extends Record<string, any>>(defaultValue: T): WritableObjectSignal<T>;
-export function signal<T>(defaultValue: T): WritableSignal<T>;
+export function signal<T extends any[]>(defaultValue: T, options?: SignalOptions<T>): WritableArraySignal<T>;
+export function signal<T extends Record<string, any>>(defaultValue: T, options?: SignalOptions<T>): WritableObjectSignal<T>;
+export function signal<T>(defaultValue: T, options?: SignalOptions<T>): WritableSignal<T>;
 export function signal<T = any>(
-    defaultValue: T
+    defaultValue: T,
+    options?: SignalOptions<T>
 ): T extends Array<any> ? WritableArraySignal<T> :
     T extends Record<string, any> ? WritableObjectSignal<T> :
     WritableSignal<T> {
@@ -113,12 +143,27 @@ export function signal<T = any>(
     };
 
     fn.set = (value) => {
-        if (subject instanceof ArraySubject) {
-            subject.items = value;
-        } else if (subject instanceof ObjectSubject) {
-            subject.obj = value;
+        const currentValue = getValue();
+        
+        // Use custom equality function if provided
+        let shouldEmit = true;
+        if (options?.equal) {
+            // If equal returns true, values are equal, don't emit
+            // If equal returns false, values are different, emit
+            shouldEmit = !options.equal(currentValue, value);
         } else {
-            subject.next(value);
+            shouldEmit = currentValue !== value;
+        }
+        
+        // Emit only if values are different
+        if (shouldEmit) {
+            if (subject instanceof ArraySubject) {
+                subject.items = value;
+            } else if (subject instanceof ObjectSubject) {
+                subject.obj = value;
+            } else {
+                subject.next(value);
+            }
         }
     };
 
