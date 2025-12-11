@@ -203,7 +203,22 @@ export function computed<T = any>(computeFunction: () => T, disposableFn?: () =>
     // Restaurer l'état précédent
     reactiveStore.currentDependencyTracker = previousTracker;
     
-    const computedObservable = combineLatest([...dependencies].map(signal => signal.observable))
+    // For computed signals without dependencies (primitive values), create a BehaviorSubject
+    // that emits immediately, so combineLatest can work correctly
+    const observables = [...dependencies].map(dep => {
+        // Check if it's a computed signal without dependencies (primitive computed)
+        if (isComputed(dep) && 'dependencies' in dep) {
+            const computedDep = dep as unknown as ComputedSignal<any>;
+            if (computedDep.dependencies.size === 0) {
+                // Create a BehaviorSubject that emits the current value immediately
+                return new BehaviorSubject(computedDep()).asObservable();
+            }
+        }
+        // For regular signals or computed with dependencies, use their observable
+        return dep.observable;
+    });
+    
+    const computedObservable = combineLatest(observables)
         .pipe(
             filter(() => !init),
             map(() => computeFunction()),

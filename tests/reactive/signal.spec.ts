@@ -110,4 +110,36 @@ describe("computed", () => {
     const simpleComputed = computed(() => 2 * 2);
     expect(simpleComputed.dependencies).toHaveLength(0);
   });
+
+  it("should recompute currentRadius twice when time signal changes twice", () => {
+    const getBaseRadius = computed(() => 30);
+    const getRadiusVariation = computed(() => 10);
+    
+    const time = signal(0);
+    
+    // Spy on the compute function to track recalculations
+    const computeFn = vi.fn(() => {
+      const t = time();
+      const base = getBaseRadius();
+      const variation = getRadiusVariation();
+      return base + variation * Math.sin(t);
+    });
+    
+    const currentRadius = computed(computeFn);
+    
+    // Initial call happens during computed creation
+    expect(computeFn).toHaveBeenCalledTimes(1);
+    
+    // First time change
+    time.set(1);
+    // Wait for async updates (RxJS combineLatest)
+    expect(computeFn).toHaveBeenCalledTimes(2);
+    
+    // Second time change
+    time.set(2);
+    expect(computeFn).toHaveBeenCalledTimes(3);
+    
+    // Verify the computed value is updated
+    expect(currentRadius()).toBe(30 + 10 * Math.sin(2));
+  });
 });
