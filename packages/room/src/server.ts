@@ -376,6 +376,7 @@ export class Server implements Party.Server {
       if (options.getMemoryAll) {
         buildObject(values, instance.$memoryAll);
       }
+      // During initialization in hibernate mode, skip entirely
       if (init && this.isHibernate) {
         init = false;
         return;
@@ -391,7 +392,7 @@ export class Server implements Party.Server {
         return;
       }
       
-      // Auto sync: broadcast immediately
+      // Auto sync: broadcast immediately (even during init if autoSync is enabled)
       const packet = buildObject(values, instance.$memoryAll);
       this.broadcast(
         {
@@ -431,6 +432,7 @@ export class Server implements Party.Server {
     await loadMemory();
 
     initPersist = false
+    init = false; // Allow syncs after initialization is complete
 
     return instance
   }
