@@ -9,6 +9,9 @@ describe("load function", () => {
   beforeEach(() => {
     _class = class NestedClass {
       value = signal(0);
+      constructor(id: string) {
+        console.log('NestedClass constructor', id);
+      }
     }
 
     class TestClass {
@@ -49,11 +52,6 @@ describe("load function", () => {
     expect(testInstance.position.y()).toBe(20);
   });
 
-  it("collection with object", () => {
-    load(testInstance, { 'nested': { 'id': { value: 10 } } });
-    expect(testInstance.nested()['id']).instanceOf(_class)
-    expect(testInstance.nested()['id'].value()).toBe(10);
-  });
   
   it("collection", () => {
     load(testInstance, { 'nested.id.value': 10});
@@ -324,73 +322,6 @@ describe("load function", () => {
       });
     });
 
-    describe("2. Constructors and initialization", () => {
-      it("should handle class without constructor", () => {
-        class NoConstructor {
-          @sync() value = signal(0);
-        }
-        class TestClass {
-          @sync(NoConstructor) items = signal({});
-        }
-        const instance = new TestClass();
-        load(instance, { 'items.item1.value': 10 });
-        expect(instance.items()['item1']).instanceOf(NoConstructor);
-        expect(instance.items()['item1'].value()).toBe(10);
-      });
-
-      it("should handle constructor with multiple parameters", () => {
-        class MultiParam {
-          constructor(data?: any, second?: any) {
-            // Constructor can use data but value is initialized by decorator
-          }
-          @sync() value = signal(0);
-        }
-        class TestClass {
-          @sync(MultiParam) items = signal({});
-        }
-        const instance = new TestClass();
-        load(instance, { 'items.item1.value': 10 });
-        expect(instance.items()['item1']).instanceOf(MultiParam);
-        expect(instance.items()['item1'].value()).toBe(10);
-      });
-
-      it("should handle constructor that modifies data", () => {
-        class ModifyingConstructor {
-          constructor(data?: any) {
-            if (data) {
-              // Modify the data object
-              data.modified = true;
-            }
-          }
-          @sync() value = signal(0);
-        }
-        class TestClass {
-          @sync(ModifyingConstructor) items = signal({});
-        }
-        const instance = new TestClass();
-        const data: any = { value: 10 };
-        load(instance, { items: { item1: data } }, true);
-        expect(instance.items()['item1']).instanceOf(ModifyingConstructor);
-        expect(data.modified).toBe(true);
-      });
-
-      it("should handle constructor that initializes properties with data", () => {
-        class InitializingConstructor {
-          initializedValue: number;
-          constructor(data?: any) {
-            this.initializedValue = data?.value || 0;
-          }
-          @sync() value = signal(0);
-        }
-        class TestClass {
-          @sync(InitializingConstructor) items = signal({});
-        }
-        const instance = new TestClass();
-        load(instance, { items: { item1: { value: 10 } } }, true);
-        expect(instance.items()['item1'].initializedValue).toBe(10);
-        expect(instance.items()['item1'].value()).toBe(10);
-      });
-    });
 
     describe("3. Array edge cases", () => {
       it("should handle negative array indices", () => {

@@ -678,13 +678,16 @@ export class Server implements Party.Server {
     await awaitReturn(subRoom["onJoin"]?.(user, conn, ctx));
 
     // Send initial sync data with both IDs to the new connection
-    this.send(conn, {
-      type: "sync",
-      value: {
-        pId: publicId,
-        ...subRoom.$memoryAll,
-      },
-    }, subRoom)
+    // Only send if autoSync is enabled (default behavior)
+    if (subRoom.$autoSync) {
+      this.send(conn, {
+        type: "sync",
+        value: {
+          pId: publicId,
+          ...subRoom.$memoryAll,
+        },
+      }, subRoom);
+    }
   }
 
   /**
