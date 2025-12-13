@@ -118,6 +118,83 @@ class MyClass {
 
 In the example above, when you add a player with `players.value['player-123'] = new Player()`, the `@id()` decorator ensures the Player instance automatically takes 'player-123' as its ID.
 
+##### Loading Data into Collections
+
+When loading data into collections, the class instances are automatically created with the data passed to their constructor:
+
+```typescript
+class Player {
+  @id() id = signal('player-1')
+  @sync() name = signal('Player Name')
+  @sync() score = signal(0)
+  
+  constructor(data?: any) {
+    // Data is automatically passed when loading from server/persistence
+    if (data) {
+      console.log('Loading player with data:', data)
+      // You can use the data to initialize the instance
+      // The load function will also populate the properties automatically
+    }
+  }
+}
+
+class Game {
+  @sync(Player) players = signal<Record<string, Player>>({})
+}
+
+const game = new Game()
+
+// When loading data, Player instances are created with the data object
+load(game, {
+  players: {
+    'player-1': {
+      name: 'Alice',
+      score: 100
+    },
+    'player-2': {
+      name: 'Bob',
+      score: 200
+    }
+  }
+}, true)
+
+// The constructor receives: { name: 'Alice', score: 100 }
+// Then the properties are automatically loaded: name and score signals are updated
+```
+
+The `load` function supports multiple formats:
+
+```typescript
+// Format 1: Nested object structure
+load(game, {
+  players: {
+    'player-1': {
+      name: 'Alice',
+      score: 100
+    }
+  }
+}, true)
+
+// Format 2: Path with object value
+load(game, {
+  'players.player-1': {
+    name: 'Alice',
+    score: 100
+  }
+})
+
+// Format 3: Full path notation
+load(game, {
+  'players.player-1.name': 'Alice',
+  'players.player-1.score': 100
+})
+```
+
+**Important:** The constructor receives the data object first, then the `load` function automatically populates all the properties. This allows you to:
+- Initialize the instance with the provided data in the constructor
+- Perform custom initialization logic based on the data
+- The properties decorated with `@sync()` will still be automatically loaded after construction
+
 ##### Object Synchronization Options
 
 There are two ways to synchronize objects:
@@ -252,6 +329,72 @@ load(instance, {
   position: { x: 10, y: 20 }
 }, true)
 ```
+
+#### Loading Collections with Class Instances
+
+When loading data into collections that use class types, the instances are automatically created with the data passed to their constructor:
+
+```typescript
+class GameObject {
+  @sync() position = { x: signal(0), y: signal(0) }
+  @sync() direction = signal(0)
+  
+  constructor(data?: any) {
+    // Data is passed when loading from server/persistence
+    if (data) {
+      // Use data for initialization if needed
+      // Properties will be automatically loaded after construction
+    }
+  }
+}
+
+class Scene {
+  @sync(GameObject) objects = signal<Record<string, GameObject>>({})
+}
+
+const scene = new Scene()
+
+// Loading creates GameObject instances with data
+load(scene, {
+  objects: {
+    'obj-1': {
+      position: { x: 100, y: 200 },
+      direction: 45
+    }
+  }
+}, true)
+
+// The GameObject constructor receives: { position: { x: 100, y: 200 }, direction: 45 }
+// Then position.x, position.y, and direction signals are automatically updated
+```
+
+The `load` function supports three formats for loading collection data:
+
+1. **Nested object structure** (requires `true` as third parameter):
+```typescript
+load(scene, {
+  objects: {
+    'obj-1': { position: { x: 100, y: 200 } }
+  }
+}, true)
+```
+
+2. **Path with object value**:
+```typescript
+load(scene, {
+  'objects.obj-1': { position: { x: 100, y: 200 } }
+})
+```
+
+3. **Full path notation**:
+```typescript
+load(scene, {
+  'objects.obj-1.position.x': 100,
+  'objects.obj-1.position.y': 200
+})
+```
+
+All three formats will create the `GameObject` instance with the available data passed to the constructor, then automatically populate the properties.
 
 ## API Reference
 

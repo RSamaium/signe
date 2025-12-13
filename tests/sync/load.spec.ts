@@ -48,6 +48,12 @@ describe("load function", () => {
     expect(testInstance.position.x()).toBe(10);
     expect(testInstance.position.y()).toBe(20);
   });
+
+  it("collection with object", () => {
+    load(testInstance, { 'nested': { 'id': { value: 10 } } });
+    expect(testInstance.nested()['id']).instanceOf(_class)
+    expect(testInstance.nested()['id'].value()).toBe(10);
+  });
   
   it("collection", () => {
     load(testInstance, { 'nested.id.value': 10});
