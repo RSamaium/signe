@@ -15,4 +15,9 @@ export interface RoomOnLeave {
 export interface RoomMethods {
   $send: (conn: Party.Connection, obj: any) => void;
   $broadcast: (obj: any) => void;
+  $applySync: () => void;
+  $sessionTransfer: (conn: Party.Connection, targetRoomId: string) => Promise<string | null>;
+  $pendingSync: Map<string, any>;
+  $memoryAll: Map<string, any>;
+  $autoSync: boolean;
 }

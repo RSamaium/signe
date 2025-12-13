@@ -246,11 +246,56 @@ export class Server implements Party.Server {
     };
 
     instance.$memoryAll = {}
+    instance.$autoSync = instance["autoSync"] !== false; // Default to true
+    instance.$pendingSync = new Map<string, any>();
     instance.$send = (conn: Party.Connection, obj: any) => {
       return this.send(conn, obj, instance)
     }
     instance.$broadcast = (obj: any) => {
       return this.broadcast(obj, instance)
+    }
+    /**
+     * Applies pending synchronization changes by broadcasting them to all clients.
+     * This method is useful when autoSync is disabled and you want to manually trigger synchronization.
+     * 
+     * @method $applySync
+     * @description Broadcasts all pending synchronization changes and clears the pending queue.
+     * If there are pending changes, they are merged with $memoryAll and broadcast. If there are no
+     * pending changes, it broadcasts the current state from $memoryAll (useful for forcing a full sync).
+     * 
+     * @example
+     * ```typescript
+     * // Disable auto sync
+     * instance.$autoSync = false;
+     * 
+     * // Make some changes
+     * instance.count.set(10);
+     * instance.text.set('hello');
+     * 
+     * // Manually apply sync when ready
+     * instance.$applySync();
+     * ```
+     */
+    instance.$applySync = () => {
+      let packet: any;
+      if (instance.$pendingSync.size > 0) {
+        if (options.getMemoryAll) {
+          buildObject(instance.$pendingSync, instance.$memoryAll);
+        }
+        packet = buildObject(instance.$pendingSync, instance.$memoryAll);
+        instance.$pendingSync.clear();
+      } else {
+        // No pending changes, broadcast current state from memory
+        packet = instance.$memoryAll;
+      }
+      
+      this.broadcast(
+        {
+          type: "sync",
+          value: packet,
+        },
+        instance
+      );
     }
     instance.$sessionTransfer = async (conn: Party.Connection, targetRoomId: string) => {
       let user: any;
@@ -326,7 +371,7 @@ export class Server implements Party.Server {
       }
     };
 
-    // Sync callback: Broadcast changes to all clients
+    // Sync callback: Broadcast changes to all clients or store them for manual sync
     const syncCb = (values) => {
       if (options.getMemoryAll) {
         buildObject(values, instance.$memoryAll);
@@ -335,6 +380,18 @@ export class Server implements Party.Server {
         init = false;
         return;
       }
+      
+      // If autoSync is disabled, store changes in pendingSync instead of broadcasting
+      if (!instance.$autoSync) {
+        // Merge pending changes into $pendingSync
+        for (const [path, value] of values) {
+          instance.$pendingSync.set(path, value);
+        }
+        values.clear();
+        return;
+      }
+      
+      // Auto sync: broadcast immediately
       const packet = buildObject(values, instance.$memoryAll);
       this.broadcast(
         {
@@ -367,8 +424,8 @@ export class Server implements Party.Server {
 
     // Set up syncing and persistence with throttling to optimize performance
     syncClass(instance, {
-      onSync: throttle(syncCb, instance["throttleSync"] ?? 500),
-      onPersist: throttle(persistCb, instance["throttleStorage"] ?? 2000),
+      onSync: instance["throttleSync"] ? throttle(syncCb, instance["throttleSync"]) : syncCb,
+      onPersist: instance["throttleStorage"] ? throttle(persistCb, instance["throttleStorage"]) : persistCb,
     });
 
     await loadMemory();

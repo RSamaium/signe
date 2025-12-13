@@ -246,6 +246,76 @@ class GameRoom {
 }
 ```
 
+### Manual Synchronization
+
+By default, state changes are automatically synchronized to all clients. However, you can disable automatic synchronization and manually control when to broadcast changes using the `autoSync` option and the `$applySync` method.
+
+This is useful when you want to:
+- Batch multiple state changes before broadcasting
+- Control synchronization timing for performance optimization
+- Implement custom synchronization logic
+
+```ts
+@Room({
+  path: "game"
+})
+class GameRoom {
+  autoSync = false; // Disable automatic synchronization
+  
+  @sync() count = signal(0);
+  @sync() score = signal(0);
+  @sync() level = signal(1);
+
+  @Action("updateGameState")
+  updateGameState(player: Player, data: { count: number, score: number, level: number }) {
+    // Make multiple changes without triggering sync
+    this.count.set(data.count);
+    this.score.set(data.score);
+    this.level.set(data.level);
+    
+    // Manually trigger synchronization when ready
+    this.$applySync();
+  }
+
+  @Action("batchUpdate")
+  batchUpdate(player: Player, updates: any[]) {
+    // Apply multiple updates
+    updates.forEach(update => {
+      // ... apply updates
+    });
+    
+    // Sync all changes at once
+    this.$applySync();
+  }
+}
+```
+
+You can also toggle `autoSync` at runtime:
+
+```ts
+class GameRoom {
+  @sync() count = signal(0);
+
+  @Action("startBatchMode")
+  startBatchMode() {
+    this.$autoSync = false; // Disable auto sync
+  }
+
+  @Action("endBatchMode")
+  endBatchMode() {
+    this.$applySync(); // Sync pending changes
+    this.$autoSync = true; // Re-enable auto sync
+  }
+}
+```
+
+**Instance Properties:**
+- `$autoSync` (boolean): Controls whether synchronization happens automatically (default: `true`)
+- `$pendingSync` (Map): Stores pending synchronization changes when `autoSync` is disabled
+- `$applySync()` (method): Manually broadcasts all pending changes to all clients
+
+**Note:** When `autoSync` is disabled, changes are stored in `$pendingSync` until you call `$applySync()`. If you call `$applySync()` with no pending changes, it will broadcast the current state from `$memoryAll`, which is useful for forcing a full state synchronization.
+
 ### Connecting to World Service
 
 The World Service provides optimal room and shard assignment for distributed applications. It handles load balancing and allows clients to connect to the most appropriate server.

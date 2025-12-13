@@ -97,13 +97,13 @@ describe('Session transfer between rooms', () => {
       await tick()
 
       expect(roomA.interceptorPacket).toHaveBeenCalled()
-      expect(roomB.interceptorPacket.mock.calls[1][0].name()).toBe('Alice')
+      expect(roomB.interceptorPacket.mock.calls[0][0].name()).toBe('Alice')
 
       userB.name.set('Bob')
 
       await tick()
 
-      expect(roomB.interceptorPacket.mock.calls[2][0].name()).toBe('Bob')
+      expect(roomB.interceptorPacket.mock.calls[1][0].name()).toBe('Bob')
 
     } finally {
       clientB.conn.close();
