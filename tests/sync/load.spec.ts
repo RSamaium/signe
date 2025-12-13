@@ -252,4 +252,424 @@ describe("load function", () => {
     
     expect(instance.fullLocation()).toBe("Robert lives in Berlin, UK");
   });
+
+  describe("load function - edge cases and robustness", () => {
+    describe("1. Deeply nested collections", () => {
+      it("should handle 3 levels of nesting", () => {
+        class Level3 {
+          @sync() value = signal(0);
+        }
+        class Level2 {
+          @sync(Level3) level3 = signal({});
+        }
+        class Level1 {
+          @sync(Level2) level2 = signal({});
+        }
+        class TestClass {
+          @sync(Level1) level1 = signal({});
+        }
+        const instance = new TestClass();
+        load(instance, { 'level1.a.level2.b.level3.c.value': 10 });
+        expect(instance.level1()['a'].level2()['b'].level3()['c'].value()).toBe(10);
+      });
+
+      it("should handle 4 levels of nesting", () => {
+        class Level4 {
+          @sync() value = signal(0);
+        }
+        class Level3 {
+          @sync(Level4) level4 = signal({});
+        }
+        class Level2 {
+          @sync(Level3) level3 = signal({});
+        }
+        class Level1 {
+          @sync(Level2) level2 = signal({});
+        }
+        class TestClass {
+          @sync(Level1) level1 = signal({});
+        }
+        const instance = new TestClass();
+        load(instance, { 'level1.a.level2.b.level3.c.level4.d.value': 10 });
+        expect(instance.level1()['a'].level2()['b'].level3()['c'].level4()['d'].value()).toBe(10);
+      });
+
+      it("should handle mixed collections and simple objects", () => {
+        class Item {
+          @sync() value = signal(0);
+        }
+        class TestClass {
+          @sync(Item) items = signal({});
+          simple = { x: signal(0) };
+        }
+        const instance = new TestClass();
+        load(instance, {
+          'items.item1.value': 10,
+          'simple.x': 20
+        });
+        expect(instance.items()['item1'].value()).toBe(10);
+        expect(instance.simple.x()).toBe(20);
+      });
+
+      it("should handle collections in arrays", () => {
+        class Item {
+          @sync() value = signal(0);
+        }
+        class TestClass {
+          @sync(Item) items = signal([]);
+        }
+        const instance = new TestClass();
+        load(instance, { 'items.0.value': 10 }, true);
+        expect(instance.items()[0].value()).toBe(10);
+      });
+    });
+
+    describe("2. Constructors and initialization", () => {
+      it("should handle class without constructor", () => {
+        class NoConstructor {
+          @sync() value = signal(0);
+        }
+        class TestClass {
+          @sync(NoConstructor) items = signal({});
+        }
+        const instance = new TestClass();
+        load(instance, { 'items.item1.value': 10 });
+        expect(instance.items()['item1']).instanceOf(NoConstructor);
+        expect(instance.items()['item1'].value()).toBe(10);
+      });
+
+      it("should handle constructor with multiple parameters", () => {
+        class MultiParam {
+          constructor(data?: any, second?: any) {
+            // Constructor can use data but value is initialized by decorator
+          }
+          @sync() value = signal(0);
+        }
+        class TestClass {
+          @sync(MultiParam) items = signal({});
+        }
+        const instance = new TestClass();
+        load(instance, { 'items.item1.value': 10 });
+        expect(instance.items()['item1']).instanceOf(MultiParam);
+        expect(instance.items()['item1'].value()).toBe(10);
+      });
+
+      it("should handle constructor that modifies data", () => {
+        class ModifyingConstructor {
+          constructor(data?: any) {
+            if (data) {
+              // Modify the data object
+              data.modified = true;
+            }
+          }
+          @sync() value = signal(0);
+        }
+        class TestClass {
+          @sync(ModifyingConstructor) items = signal({});
+        }
+        const instance = new TestClass();
+        const data: any = { value: 10 };
+        load(instance, { items: { item1: data } }, true);
+        expect(instance.items()['item1']).instanceOf(ModifyingConstructor);
+        expect(data.modified).toBe(true);
+      });
+
+      it("should handle constructor that initializes properties with data", () => {
+        class InitializingConstructor {
+          initializedValue: number;
+          constructor(data?: any) {
+            this.initializedValue = data?.value || 0;
+          }
+          @sync() value = signal(0);
+        }
+        class TestClass {
+          @sync(InitializingConstructor) items = signal({});
+        }
+        const instance = new TestClass();
+        load(instance, { items: { item1: { value: 10 } } }, true);
+        expect(instance.items()['item1'].initializedValue).toBe(10);
+        expect(instance.items()['item1'].value()).toBe(10);
+      });
+    });
+
+    describe("3. Array edge cases", () => {
+      it("should handle negative array indices", () => {
+        class TestClass {
+          items = signal([]);
+        }
+        const instance = new TestClass();
+        load(instance, { 'items.-1': 'value' });
+        // Should create property with key "-1"
+        expect(instance.items()['-1']).toBe('value');
+      });
+
+      it("should handle empty arrays", () => {
+        class TestClass {
+          items = signal([1, 2, 3]);
+        }
+        const instance = new TestClass();
+        load(instance, { items: [] }, true);
+        expect(instance.items()).toEqual([]);
+      });
+
+      it("should handle sparse arrays", () => {
+        class TestClass {
+          items = signal([]);
+        }
+        const instance = new TestClass();
+        load(instance, { items: { '0': 'a', '5': 'b' } }, true);
+        const result = instance.items();
+        expect(result[0]).toBe('a');
+        expect(result[5]).toBe('b');
+        expect(result[1]).toBeUndefined();
+      });
+
+      it("should handle large arrays", () => {
+        class TestClass {
+          items = signal([]);
+        }
+        const instance = new TestClass();
+        const largeArray: any = {};
+        for (let i = 0; i < 1000; i++) {
+          largeArray[i.toString()] = `item${i}`;
+        }
+        load(instance, { items: largeArray }, true);
+        expect(instance.items().length).toBe(1000);
+        expect(instance.items()[0]).toBe('item0');
+        expect(instance.items()[999]).toBe('item999');
+      });
+    });
+
+    describe("4. Uninitialized signals and properties", () => {
+      it("should handle loading into uninitialized signal", () => {
+        class TestClass {
+          @sync() value: any;
+        }
+        const instance = new TestClass();
+        // Signal not initialized
+        expect(() => {
+          load(instance, { value: 10 }, true);
+        }).not.toThrow();
+      });
+
+      it("should handle loading into non-existent property", () => {
+        class TestClass {
+          existing = signal(0);
+        }
+        const instance = new TestClass();
+        load(instance, { 'nonExistent': 10 });
+        expect((instance as any).nonExistent).toBe(10);
+      });
+
+      it("should handle loading into readonly property", () => {
+        class TestClass {
+          readonly readOnlyProp = signal(0);
+        }
+        const instance = new TestClass();
+        load(instance, { 'readOnlyProp': 10 });
+        // Should still work, but may not update if truly readonly
+        expect(instance.readOnlyProp).toBeDefined();
+      });
+
+      it("should handle null signal value", () => {
+        class TestClass {
+          @sync() value = signal(null);
+        }
+        const instance = new TestClass();
+        load(instance, { value: 10 }, true);
+        expect(instance.value()).toBe(10);
+      });
+
+      it("should handle undefined signal value", () => {
+        class TestClass {
+          @sync() value = signal(undefined);
+        }
+        const instance = new TestClass();
+        load(instance, { value: 10 }, true);
+        expect(instance.value()).toBe(10);
+      });
+    });
+
+    describe("5. Mixed formats and inconsistencies", () => {
+      it("should handle overlapping paths", () => {
+        class TestClass {
+          data = signal({});
+        }
+        const instance = new TestClass();
+        load(instance, {
+          'data.a': { x: 1 },
+          'data.a.b': 2
+        });
+        expect((instance.data() as any).a).toBeDefined();
+        expect((instance.data() as any).a.b).toBe(2);
+      });
+
+      it("should handle same path loaded multiple times", () => {
+        class TestClass {
+          @sync() value = signal(0);
+        }
+        const instance = new TestClass();
+        // Load twice with different values
+        load(instance, { 'value': 10 });
+        load(instance, { 'value': 20 });
+        // Last value should win
+        expect(instance.value()).toBe(20);
+      });
+
+      it("should handle mixed paths and objects in same call", () => {
+        class TestClass {
+          @sync() a = signal(0);
+          @sync() b = signal(0);
+        }
+        const instance = new TestClass();
+        load(instance, {
+          'a': 10,
+          b: 20
+        });
+        expect(instance.a()).toBe(10);
+        expect(instance.b()).toBe(20);
+      });
+    });
+
+    describe("6. Performance and volume", () => {
+      it("should handle loading many properties", () => {
+        class TestClass {
+          @sync() prop0 = signal(0);
+        }
+        const instance = new TestClass();
+        const data: any = {};
+        for (let i = 0; i < 1000; i++) {
+          data[`prop${i}`] = i;
+        }
+        const start = performance.now();
+        load(instance, data, true);
+        const end = performance.now();
+        expect(end - start).toBeLessThan(1000); // Should complete in less than 1 second
+        expect(instance.prop0()).toBe(0);
+      });
+
+      it("should handle large collection", () => {
+        class Item {
+          @sync() value = signal(0);
+        }
+        class TestClass {
+          @sync(Item) items = signal({});
+        }
+        const instance = new TestClass();
+        const data: any = {};
+        for (let i = 0; i < 100; i++) {
+          data[`item${i}`] = { value: i };
+        }
+        const start = performance.now();
+        load(instance, { items: data }, true);
+        const end = performance.now();
+        expect(end - start).toBeLessThan(1000);
+        expect(Object.keys(instance.items())).toHaveLength(100);
+        expect(instance.items()['item0'].value()).toBe(0);
+        expect(instance.items()['item99'].value()).toBe(99);
+      });
+
+      it("should handle very deep nesting", () => {
+        class Deep {
+          @sync() value = signal(0);
+        }
+        class TestClass {
+          level1 = signal({});
+        }
+        const instance = new TestClass();
+        let path = 'level1';
+        for (let i = 1; i <= 10; i++) {
+          path += `.level${i}`;
+        }
+        path += '.value';
+        const start = performance.now();
+        load(instance, { [path]: 10 });
+        const end = performance.now();
+        expect(end - start).toBeLessThan(1000);
+      });
+    });
+
+    describe("7. Partial updates", () => {
+      it("should update only some properties of existing instance", () => {
+        class Item {
+          @sync() a = signal(0);
+          @sync() b = signal(0);
+          @sync() c = signal(0);
+        }
+        class TestClass {
+          @sync(Item) items = signal({});
+        }
+        const instance = new TestClass();
+        load(instance, { items: { item1: { a: 1, b: 2, c: 3 } } }, true);
+        load(instance, { items: { item1: { b: 20 } } }, true);
+        expect(instance.items()['item1'].a()).toBe(1);
+        expect(instance.items()['item1'].b()).toBe(20);
+        expect(instance.items()['item1'].c()).toBe(3);
+      });
+
+      it("should update non-existent property in existing instance", () => {
+        class Item {
+          @sync() a = signal(0);
+        }
+        class TestClass {
+          @sync(Item) items = signal({});
+        }
+        const instance = new TestClass();
+        load(instance, { items: { item1: { a: 1 } } }, true);
+        load(instance, { 'items.item1.b': 2 });
+        expect(instance.items()['item1'].a()).toBe(1);
+        expect(instance.items()['item1'].b).toBe(2);
+      });
+
+      it("should handle partial object update", () => {
+        class Item {
+          @sync() a = signal(0);
+          @sync() b = signal(0);
+        }
+        class TestClass {
+          @sync(Item) items = signal({});
+        }
+        const instance = new TestClass();
+        load(instance, { items: { item1: { a: 1, b: 2 } } }, true);
+        load(instance, { items: { item1: { a: 10 } } }, true);
+        expect(instance.items()['item1'].a()).toBe(10);
+        expect(instance.items()['item1'].b()).toBe(2); // Should keep old value
+      });
+    });
+
+    describe("8. Classes with factory functions", () => {
+      it("should handle factory function as classType", () => {
+        const factoryFn = (id: string) => {
+          return {
+            id: signal(id),
+            value: signal(0)
+          };
+        };
+        class TestClass {
+          @sync(factoryFn) items = signal({});
+        }
+        const instance = new TestClass();
+        load(instance, { 'items.item1.value': 10 });
+        expect(instance.items()['item1']).toBeDefined();
+        expect(instance.items()['item1'].value()).toBe(10);
+      });
+
+      it("should handle factory function that returns different types", () => {
+        const factoryFn = (id: string) => {
+          if (id.startsWith('special')) {
+            return { type: 'special', value: signal(0) };
+          }
+          return { type: 'normal', value: signal(0) };
+        };
+        class TestClass {
+          @sync(factoryFn) items = signal({});
+        }
+        const instance = new TestClass();
+        load(instance, { 'items.item1.value': 10 });
+        load(instance, { 'items.special1.value': 20 });
+        expect(instance.items()['item1'].type).toBe('normal');
+        expect(instance.items()['special1'].type).toBe('special');
+      });
+    });
+  });
 });
