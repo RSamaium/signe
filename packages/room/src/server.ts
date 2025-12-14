@@ -248,6 +248,7 @@ export class Server implements Party.Server {
     instance.$memoryAll = {}
     instance.$autoSync = instance["autoSync"] !== false; // Default to true
     instance.$pendingSync = new Map<string, any>();
+    instance.$pendingInitialSync = new Map<Party.Connection, string>(); // Store connections waiting for initial sync with their publicId
     instance.$send = (conn: Party.Connection, obj: any) => {
       return this.send(conn, obj, instance)
     }
@@ -262,6 +263,7 @@ export class Server implements Party.Server {
      * @description Broadcasts all pending synchronization changes and clears the pending queue.
      * If there are pending changes, they are merged with $memoryAll and broadcast. If there are no
      * pending changes, it broadcasts the current state from $memoryAll (useful for forcing a full sync).
+     * Also sends initial sync to connections that were waiting for it (with their pId).
      * 
      * @example
      * ```typescript
@@ -289,13 +291,28 @@ export class Server implements Party.Server {
         packet = instance.$memoryAll;
       }
       
-      this.broadcast(
-        {
+      // Send initial sync to connections that were waiting for it (with their pId)
+      const pendingConnections = new Set(instance.$pendingInitialSync.keys());
+      for (const [conn, publicId] of instance.$pendingInitialSync) {
+        this.send(conn, {
           type: "sync",
-          value: packet,
-        },
-        instance
-      );
+          value: {
+            pId: publicId,
+            ...packet,
+          },
+        }, instance);
+      }
+      instance.$pendingInitialSync.clear();
+      
+      // Broadcast to all other connections (excluding those that just received initial sync)
+      for (const conn of this.room.getConnections()) {
+        if (!pendingConnections.has(conn)) {
+          this.send(conn, {
+            type: "sync",
+            value: packet,
+          }, instance);
+        }
+      }
     }
     instance.$sessionTransfer = async (conn: Party.Connection, targetRoomId: string) => {
       let user: any;
@@ -678,8 +695,8 @@ export class Server implements Party.Server {
     await awaitReturn(subRoom["onJoin"]?.(user, conn, ctx));
 
     // Send initial sync data with both IDs to the new connection
-    // Only send if autoSync is enabled (default behavior)
     if (subRoom.$autoSync) {
+      // Auto sync enabled: send immediately
       this.send(conn, {
         type: "sync",
         value: {
@@ -687,6 +704,9 @@ export class Server implements Party.Server {
           ...subRoom.$memoryAll,
         },
       }, subRoom);
+    } else {
+      // Auto sync disabled: store connection to receive sync on next $applySync()
+      subRoom.$pendingInitialSync.set(conn, publicId);
     }
   }
 
@@ -1037,6 +1057,11 @@ export class Server implements Party.Server {
 
     if (!subRoom) {
       return;
+    }
+
+    // Clean up pending initial sync for this connection
+    if (subRoom.$pendingInitialSync) {
+      subRoom.$pendingInitialSync.delete(conn);
     }
 
     const signal = this.getUsersProperty(subRoom);
