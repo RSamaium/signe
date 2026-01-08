@@ -6,7 +6,8 @@ import {
   load,
   syncClass,
   DELETE_TOKEN,
-  generateShortUUID
+  generateShortUUID,
+  createStatesSnapshotDeep
 } from "@signe/sync";
 import type * as Party from "./types/party";
 import {
@@ -356,7 +357,7 @@ export class Server implements Party.Server {
       }
 
       // Create a snapshot of the user state
-      const userSnapshot = createStatesSnapshot(user);
+      const userSnapshot = createStatesSnapshotDeep(user);
 
       const transferData = {
         privateId,
@@ -662,7 +663,7 @@ export class Server implements Party.Server {
         } else {
           user = isClass(classType) ? new classType() : classType(conn, ctx);
           signal()[publicId] = user;
-          const snapshot = createStatesSnapshot(user);
+          const snapshot = createStatesSnapshotDeep(user);
           this.room.storage.put(`${usersPropName}.${publicId}`, snapshot);
         }
       }
@@ -1181,15 +1182,26 @@ export class Server implements Party.Server {
           
           // Create new user instance
           const user = isClass(classType) ? new classType() : classType();
+
+          const hydratedSnapshot =
+            (await awaitReturn(
+              subRoom["onSessionRestore"]?.({
+                userSnapshot,
+                publicId,
+                privateId,
+                sessionState,
+                room: this.room,
+              })
+            )) ?? userSnapshot;
           
           // Load user data from snapshot
-          load(user, userSnapshot, true);
+          load(user, hydratedSnapshot, true);
           
           // Add user to signal
           signal()[publicId] = user;
 
           // Save user snapshot to storage
-          await this.room.storage.put(`${usersPropName}.${publicId}`, userSnapshot);
+          await this.room.storage.put(`${usersPropName}.${publicId}`, hydratedSnapshot);
         }
       }
 

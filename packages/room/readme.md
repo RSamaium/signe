@@ -134,6 +134,73 @@ You can return:
 
 ## Advanced Features
 
+### Session Transfer
+
+You can transfer a user's session from one room to another using `$sessionTransfer`.
+This preserves the same session id (privateId) across rooms.
+
+Server-side (inside a room or action):
+
+```ts
+@Action("transfer")
+async transfer(player: Player, data: { targetRoomId: string }, conn: Party.Connection) {
+  const transferToken = await this.$sessionTransfer(conn, data.targetRoomId);
+  return { transferToken };
+}
+```
+
+Client-side:
+- Connect to the target room with the same session id (`privateId`).
+- You can pass it as `id` in `connectionRoom` options from `@signe/sync/client`.
+- The target room restores the session and user data.
+
+Example (client):
+```ts
+import { connectionRoom } from "@signe/sync/client";
+
+await connectionRoom(
+  {
+    host: "https://your-host",
+    room: "targetRoomId",
+    id: "private-session-id",
+  },
+  roomInstance
+);
+```
+
+Optional: hydrate transferred snapshots before loading
+
+If your user snapshot contains ids for complex instances (e.g. inventory items),
+implement `onSessionRestore` on the room to resolve ids into instances before `load`.
+
+```ts
+class GameRoom {
+  async onSessionRestore({ userSnapshot }) {
+    if (Array.isArray(userSnapshot.items)) {
+      const items = await this.itemRegistry.resolveMany(userSnapshot.items);
+      return { ...userSnapshot, items };
+    }
+    return userSnapshot;
+  }
+}
+```
+
+### Snapshot Hydration (Ids -> Instances)
+
+When a snapshot only contains ids for complex objects, you need to resolve them
+before calling `load`. This is useful even outside session transfer.
+
+```ts
+const snapshot = createStatesSnapshotDeep(user);
+
+// Resolve ids to instances
+const items = await itemRegistry.resolveMany(snapshot.items);
+
+// Hydrate and load
+const hydrated = { ...snapshot, items };
+load(user, hydrated, true);
+```
+
 ### Room Configuration
 
 The `@Room` decorator accepts various configuration options:

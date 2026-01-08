@@ -9,6 +9,18 @@ class Player {
   @connected() connected = signal(true);
 }
 
+class Item {
+  @sync() id = signal('');
+  @sync() name = signal('');
+}
+
+class PlayerWithItems {
+  @id() id: string;
+  @sync() name = signal('');
+  @sync(Item) items = signal<Item[]>([]);
+  @connected() connected = signal(true);
+}
+
 // Source room (origin)
 import { Room } from '../../packages/room/src';
 
@@ -34,6 +46,42 @@ class TargetRoom {
   id = 'room-b';
 
   interceptorPacket = vi.fn();
+}
+
+@Room({
+  path: 'room-a-items',
+  sessionExpiryTime: 2000,
+  throttleSync: 0
+})
+class SourceRoomWithItems {
+  @users(PlayerWithItems) users = signal({});
+  id = 'room-a-items';
+}
+
+@Room({
+  path: 'room-b-items',
+  sessionExpiryTime: 2000,
+  throttleSync: 0
+})
+class TargetRoomWithItems {
+  @users(PlayerWithItems) users = signal({});
+  id = 'room-b-items';
+
+  async onSessionRestore({ userSnapshot }) {
+    if (!Array.isArray(userSnapshot?.items)) {
+      return userSnapshot;
+    }
+
+    const items = userSnapshot.items.map((item) => {
+      const itemId = typeof item === 'string' ? item : item?.id;
+      const instance = new Item();
+      instance.id.set(itemId);
+      instance.name.set(`hydrated-${itemId}`);
+      return instance;
+    });
+
+    return { ...userSnapshot, items };
+  }
 }
 
 describe('Session transfer between rooms', () => {
@@ -111,4 +159,58 @@ describe('Session transfer between rooms', () => {
   });
 });
 
+describe('Session transfer with onSessionRestore', () => {
+  let serverA: Server;
+  let roomA: any;
+  let clientA: any;
 
+  beforeEach(async () => {
+    const test = await testRoom(SourceRoomWithItems, {
+      partyFn: async (lobbyId) => {
+        const s = new Server(new ServerIo(lobbyId) as any);
+        s.rooms = [SourceRoomWithItems, TargetRoomWithItems];
+        await s.onStart();
+        return s;
+      }
+    });
+    serverA = test.server as Server;
+    roomA = test.room;
+    clientA = await test.createClient('test');
+  });
+
+  afterEach(async () => {
+    if (clientA) clientA.conn.close();
+  });
+
+  it('should hydrate snapshot via onSessionRestore before load', async () => {
+    const privateIdA = clientA.conn.id;
+    const sessionA = await serverA.getSession(privateIdA);
+    expect(sessionA).not.toBeNull();
+    const publicId = sessionA!.publicId;
+
+    const userA = roomA.users()[publicId];
+    const item = new Item();
+    item.id.set('item-1');
+    item.name.set('original');
+    userA.items.mutate((arr) => arr.push(item));
+
+    const transferToken = await (serverA as any).subRoom.$sessionTransfer(
+      clientA.conn,
+      'room-b-items'
+    );
+    expect(transferToken).toBeTruthy();
+
+    const lobbyB = await (serverA as any).room.context.parties.main.get('room-b-items');
+    const serverB = lobbyB.server;
+
+    const sessionB = await serverB.getSession(privateIdA);
+    expect(sessionB).not.toBeUndefined();
+    expect(sessionB!.publicId).toBe(publicId);
+
+    const roomB = (serverB as any).subRoom;
+    const userB = roomB.users()[publicId];
+    expect(userB).toBeDefined();
+    expect(userB.items()[0]).toBeInstanceOf(Item);
+    expect(userB.items()[0].name()).toBe('hydrated-item-1');
+  });
+});
