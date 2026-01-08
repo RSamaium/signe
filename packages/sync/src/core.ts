@@ -186,8 +186,13 @@ const serializeSnapshotDeep = (
     }
 
     const result: Record<string, any> = {};
+    const idKey = isInstanceOfClass(value)
+      ? value.constructor?._propertyMetadata?.get("id")
+      : undefined;
     const entries = Object.entries(value).filter(([key]) =>
-      isInstanceOfClass(value) ? key.startsWith("__") : true
+      isInstanceOfClass(value)
+        ? key.startsWith("__") || (idKey ? key === idKey : false)
+        : true
     );
     for (const [key, childValue] of entries) {
       const normalizedKey = key.startsWith("__") ? key.slice(2) : key;

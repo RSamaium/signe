@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createStatesSnapshot,
   createStatesSnapshotDeep,
+  id,
   persist,
   sync,
   syncClass,
@@ -762,6 +763,7 @@ describe("createStatesSnapshotDeep", () => {
 
   it("should snapshot nested class with @sync properties", () => {
     class ChildClass {
+      @id() id = signal("test");
       @sync() count = signal(2);
       @sync() text = signal("hello");
     }
@@ -776,6 +778,7 @@ describe("createStatesSnapshotDeep", () => {
     const result = createStatesSnapshotDeep(instance);
     expect(result).toEqual({
       child: {
+        id: "test",
         count: 2,
         text: "hello",
       },
