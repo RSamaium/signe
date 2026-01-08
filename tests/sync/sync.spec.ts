@@ -2,6 +2,7 @@ import { signal, computed } from "@signe/reactive";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createStatesSnapshot,
+  createStatesSnapshotDeep,
   persist,
   sync,
   syncClass,
@@ -673,6 +674,134 @@ describe("createStatesSnapshot", () => {
 
     const result = createStatesSnapshot(instance);
     expect(result).toEqual({});
+  });
+});
+
+describe("createStatesSnapshotDeep", () => {
+  it("should persist deep values and convert dates", () => {
+    class TestClass {
+      @sync()
+      data = signal({
+        count: 1,
+        nested: {
+          list: [1, { when: new Date("2020-01-01T00:00:00.000Z") }],
+        },
+      });
+    }
+
+    const instance = new TestClass();
+    syncClass(instance);
+
+    const result = createStatesSnapshotDeep(instance);
+    expect(result).toEqual({
+      data: {
+        count: 1,
+        nested: {
+          list: [1, { when: "2020-01-01T00:00:00.000Z" }],
+        },
+      },
+    });
+  });
+
+  it("should skip Map values", () => {
+    class TestClass {
+      @sync()
+      data = signal({
+        ok: 2,
+        map: new Map([["a", 1]]),
+      });
+    }
+
+    const instance = new TestClass();
+    syncClass(instance);
+
+    const result = createStatesSnapshotDeep(instance);
+    expect(result).toEqual({
+      data: {
+        ok: 2,
+      },
+    });
+  });
+
+  it("should apply filter to exclude paths", () => {
+    class TestClass {
+      @sync()
+      data = signal({
+        public: "yes",
+        secret: "no",
+        nested: { secret: "hidden" },
+      });
+    }
+
+    const instance = new TestClass();
+    syncClass(instance);
+
+    const result = createStatesSnapshotDeep(instance, {
+      filter: (_value, path) => !path.endsWith("secret"),
+    });
+    expect(result).toEqual({
+      data: {
+        public: "yes",
+        nested: {},
+      },
+    });
+  });
+
+  it("should respect persist option", () => {
+    class TestClass {
+      @sync({ persist: false })
+      data = signal({ count: 1 });
+    }
+
+    const instance = new TestClass();
+    syncClass(instance);
+
+    const result = createStatesSnapshotDeep(instance);
+    expect(result).toEqual({});
+  });
+
+  it("should snapshot nested class with @sync properties", () => {
+    class ChildClass {
+      @sync() count = signal(2);
+      @sync() text = signal("hello");
+    }
+
+    class ParentClass {
+      @sync() child = signal(new ChildClass());
+    }
+
+    const instance = new ParentClass();
+    syncClass(instance);
+
+    const result = createStatesSnapshotDeep(instance);
+    expect(result).toEqual({
+      child: {
+        count: 2,
+        text: "hello",
+      },
+    });
+  });
+
+  it("should snapshot only @sync properties for nested class instances", () => {
+    class ChildClass {
+      @sync() count = signal(2);
+      label = "plain";
+      meta = { tag: "ok" };
+    }
+
+    class ParentClass {
+      @sync() child = signal(new ChildClass());
+    }
+
+    const instance = new ParentClass();
+    syncClass(instance);
+
+    const result = createStatesSnapshotDeep(instance);
+    expect(result).toEqual({
+      child: {
+        count: 2,
+      },
+    });
   });
 });
 

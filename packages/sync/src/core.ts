@@ -138,6 +138,106 @@ export function createStatesSnapshot(
   return persistObject;
 }
 
+interface SnapshotDeepOptions {
+  filter?: (value: any, path: string) => boolean;
+  dateToString?: (value: Date) => string;
+}
+
+const SNAPSHOT_SKIP = Symbol("snapshot-skip");
+
+const serializeSnapshotDeep = (
+  value: any,
+  path: string,
+  options: SnapshotDeepOptions,
+  seen: WeakSet<object>
+): any => {
+  if (isSignal(value)) {
+    return serializeSnapshotDeep(value(), path, options, seen);
+  }
+
+  if (value instanceof Map) {
+    return SNAPSHOT_SKIP;
+  }
+
+  if (options.filter && !options.filter(value, path)) {
+    return SNAPSHOT_SKIP;
+  }
+
+  if (value instanceof Date) {
+    return options.dateToString ? options.dateToString(value) : value.toISOString();
+  }
+
+  if (value && typeof value === "object") {
+    if (seen.has(value)) {
+      return SNAPSHOT_SKIP;
+    }
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      const result: any[] = [];
+      value.forEach((item, index) => {
+        const itemPath = path ? `${path}.${index}` : String(index);
+        const serialized = serializeSnapshotDeep(item, itemPath, options, seen);
+        if (serialized !== SNAPSHOT_SKIP) {
+          result.push(serialized);
+        }
+      });
+      return result;
+    }
+
+    const result: Record<string, any> = {};
+    const entries = Object.entries(value).filter(([key]) =>
+      isInstanceOfClass(value) ? key.startsWith("__") : true
+    );
+    for (const [key, childValue] of entries) {
+      const normalizedKey = key.startsWith("__") ? key.slice(2) : key;
+      const childPath = path ? `${path}.${normalizedKey}` : normalizedKey;
+      const serialized = serializeSnapshotDeep(childValue, childPath, options, seen);
+      if (serialized !== SNAPSHOT_SKIP) {
+        result[normalizedKey] = serialized;
+      }
+    }
+    return result;
+  }
+
+  return value;
+};
+
+/**
+ * Creates a deep snapshot of the current state of an instance's signals.
+ *
+ * This function iterates over the signals stored in the instance's $snapshot property.
+ * If a signal's persist option is true or undefined, it deep-serializes the signal's value.
+ * Maps are skipped, and Date instances are converted to strings.
+ */
+export function createStatesSnapshotDeep(
+  instance: Record<string, any>,
+  options: SnapshotDeepOptions = {}
+): Record<string, any> {
+  const persistObject: Record<string, any> = {};
+  if (instance?.$snapshot) {
+    for (const key of instance.$snapshot.keys()) {
+      const signal = instance.$snapshot.get(key);
+      const persist = signal.options.persist ?? true;
+      if (!persist) {
+        continue;
+      }
+
+      const value = signal();
+      const serialized = serializeSnapshotDeep(
+        value,
+        key,
+        options,
+        new WeakSet()
+      );
+      if (serialized !== SNAPSHOT_SKIP) {
+        persistObject[key] = serialized;
+      }
+    }
+  }
+  return persistObject;
+}
+
 export function setMetadata(target: any, key: string, value: any) {
   const meta = target.constructor._propertyMetadata;
   const propId = meta?.get(key);
