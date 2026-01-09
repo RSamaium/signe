@@ -1187,6 +1187,7 @@ export class Server implements Party.Server {
             (await awaitReturn(
               subRoom["onSessionRestore"]?.({
                 userSnapshot,
+                user,
                 publicId,
                 privateId,
                 sessionState,
