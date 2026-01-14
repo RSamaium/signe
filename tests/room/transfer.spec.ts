@@ -14,6 +14,13 @@ class Item {
   @sync() name = signal('');
 }
 
+class PlayerWithItemIds {
+  @id() id: string;
+  @sync() name = signal('');
+  @sync() items = signal<string[]>([]);
+  @connected() connected = signal(true);
+}
+
 class PlayerWithItems {
   @id() id: string;
   @sync() name = signal('');
@@ -54,8 +61,19 @@ class TargetRoom {
   throttleSync: 0
 })
 class SourceRoomWithItems {
-  @users(PlayerWithItems) users = signal({});
+  @users(PlayerWithItemIds) users = signal({});
   id = 'room-a-items';
+}
+
+class ItemRegistry {
+  async resolveMany(ids: string[]) {
+    return ids.map((itemId) => {
+      const instance = new Item();
+      instance.id.set(itemId);
+      instance.name.set(`hydrated-${itemId}`);
+      return instance;
+    });
+  }
 }
 
 @Room({
@@ -66,19 +84,17 @@ class SourceRoomWithItems {
 class TargetRoomWithItems {
   @users(PlayerWithItems) users = signal({});
   id = 'room-b-items';
+  itemRegistry = new ItemRegistry();
 
   async onSessionRestore({ userSnapshot }) {
     if (!Array.isArray(userSnapshot?.items)) {
       return userSnapshot;
     }
 
-    const items = userSnapshot.items.map((item) => {
-      const itemId = typeof item === 'string' ? item : item?.id;
-      const instance = new Item();
-      instance.id.set(itemId);
-      instance.name.set(`hydrated-${itemId}`);
-      return instance;
-    });
+    const ids = userSnapshot.items
+      .map((item) => (typeof item === 'string' ? item : item?.id))
+      .filter((itemId): itemId is string => typeof itemId === 'string' && itemId.length > 0);
+    const items = await this.itemRegistry.resolveMany(ids);
 
     return { ...userSnapshot, items };
   }
@@ -189,10 +205,7 @@ describe('Session transfer with onSessionRestore', () => {
     const publicId = sessionA!.publicId;
 
     const userA = roomA.users()[publicId];
-    const item = new Item();
-    item.id.set('item-1');
-    item.name.set('original');
-    userA.items.mutate((arr) => arr.push(item));
+    userA.items.set(['item-1']);
 
     const transferToken = await (serverA as any).subRoom.$sessionTransfer(
       clientA.conn,
@@ -212,5 +225,25 @@ describe('Session transfer with onSessionRestore', () => {
     expect(userB).toBeDefined();
     expect(userB.items()[0]).toBeInstanceOf(Item);
     expect(userB.items()[0].name()).toBe('hydrated-item-1');
+
+    const syncMessages: string[] = [];
+    const clientB = await lobbyB.connection(privateIdA, {
+      query: { transferToken }
+    });
+
+    try {
+      clientB.addEventListener('message', (msg: string) => {
+        if (msg.includes('"type":"sync"')) {
+          syncMessages.push(msg);
+        }
+      });
+
+      roomB.$applySync();
+      await tick();
+
+      expect(syncMessages.some((msg) => msg.includes('hydrated-item-1'))).toBe(true);
+    } finally {
+      clientB.conn.close();
+    }
   });
 });
