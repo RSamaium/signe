@@ -1195,14 +1195,14 @@ export class Server implements Party.Server {
               })
             )) ?? userSnapshot;
           
+          // Add user to signal before loading to avoid syncing non-serializable instances
+          signal()[publicId] = user;
+
           // Load user data from snapshot
           load(user, hydratedSnapshot, true);
           
-          // Add user to signal
-          signal()[publicId] = user;
-
           // Save user snapshot to storage
-          await this.room.storage.put(`${usersPropName}.${publicId}`, hydratedSnapshot);
+          await this.room.storage.put(`${usersPropName}.${publicId}`, userSnapshot);
         }
       }
 
