@@ -5,6 +5,10 @@ import type { JSONSchema7, JSONSchema7Definition, JSONSchema7TypeName } from "js
  * Standard JSON Schema types only
  */
 type SchemaType = Exclude<JSONSchema7TypeName, "array" | "object"> | "array" | "object";
+type ExtendedJSONSchema7 = JSONSchema7 & {
+    dependentRequired?: Record<string, string[]>;
+    dependentSchemas?: Record<string, JSONSchema7Definition>;
+};
 
 function isValidSchemaType(type: unknown): type is SchemaType {
     if (typeof type !== "string") return false;
@@ -13,6 +17,10 @@ function isValidSchemaType(type: unknown): type is SchemaType {
 
 function isJSONSchema7(schema: JSONSchema7Definition): schema is JSONSchema7 {
     return typeof schema !== "boolean";
+}
+
+function asExtendedJSONSchema7(schema: JSONSchema7): ExtendedJSONSchema7 {
+    return schema as ExtendedJSONSchema7;
 }
 
 function unwrapSchemaDefinition(schema: unknown): JSONSchema7Definition | null {
@@ -267,6 +275,7 @@ function addSchemaIssues(
 }
 
 function collectComposablePropertyKeys(schema: JSONSchema7): Set<string> {
+    const extendedSchema = asExtendedJSONSchema7(schema);
     const keys = new Set<string>();
 
     const visit = (definition?: JSONSchema7Definition): void => {
@@ -274,20 +283,22 @@ function collectComposablePropertyKeys(schema: JSONSchema7): Set<string> {
             return;
         }
 
-        if (definition.properties) {
-            for (const key of Object.keys(definition.properties)) {
+        const extendedDefinition = asExtendedJSONSchema7(definition);
+
+        if (extendedDefinition.properties) {
+            for (const key of Object.keys(extendedDefinition.properties)) {
                 keys.add(key);
             }
         }
 
-        if (definition.required) {
-            for (const key of definition.required) {
+        if (extendedDefinition.required) {
+            for (const key of extendedDefinition.required) {
                 keys.add(key);
             }
         }
 
-        if (definition.dependentRequired) {
-            for (const [key, requiredKeys] of Object.entries(definition.dependentRequired)) {
+        if (extendedDefinition.dependentRequired) {
+            for (const [key, requiredKeys] of Object.entries(extendedDefinition.dependentRequired)) {
                 keys.add(key);
 
                 for (const requiredKey of requiredKeys) {
@@ -296,44 +307,45 @@ function collectComposablePropertyKeys(schema: JSONSchema7): Set<string> {
             }
         }
 
-        if (definition.dependentSchemas) {
-            for (const [key, dependentSchema] of Object.entries(definition.dependentSchemas)) {
+        if (extendedDefinition.dependentSchemas) {
+            for (const [key, dependentSchema] of Object.entries(extendedDefinition.dependentSchemas)) {
                 keys.add(key);
                 visit(dependentSchema);
             }
         }
 
-        if (definition.anyOf) {
-            for (const item of definition.anyOf) {
+        if (extendedDefinition.anyOf) {
+            for (const item of extendedDefinition.anyOf) {
                 visit(item);
             }
         }
 
-        if (definition.allOf) {
-            for (const item of definition.allOf) {
+        if (extendedDefinition.allOf) {
+            for (const item of extendedDefinition.allOf) {
                 visit(item);
             }
         }
 
-        visit(definition.not);
-        visit(definition.if);
-        visit(definition.then);
-        visit(definition.else);
+        visit(extendedDefinition.not);
+        visit(extendedDefinition.if);
+        visit(extendedDefinition.then);
+        visit(extendedDefinition.else);
     };
 
-    visit(schema);
+    visit(extendedSchema);
 
     return keys;
 }
 
 function hasComposableValidation(schema: JSONSchema7): boolean {
+    const extendedSchema = asExtendedJSONSchema7(schema);
     return Boolean(
-        schema.dependentRequired ||
-        schema.dependentSchemas ||
-        schema.if ||
-        schema.then ||
-        schema.else ||
-        (Array.isArray(schema.allOf) && schema.allOf.length > 0)
+        extendedSchema.dependentRequired ||
+        extendedSchema.dependentSchemas ||
+        extendedSchema.if ||
+        extendedSchema.then ||
+        extendedSchema.else ||
+        (Array.isArray(extendedSchema.allOf) && extendedSchema.allOf.length > 0)
     );
 }
 
@@ -359,27 +371,28 @@ function createPrimitiveType(schema: JSONSchema7, type: Exclude<SchemaType, "arr
 }
 
 function buildObjectSchema(schema: JSONSchema7): ZodType<unknown> {
+    const extendedSchema = asExtendedJSONSchema7(schema);
     const shape: ZodRawShape = {};
 
-    if (schema.properties) {
-        for (const [key, propertySchema] of Object.entries(schema.properties)) {
+    if (extendedSchema.properties) {
+        for (const [key, propertySchema] of Object.entries(extendedSchema.properties)) {
             if (!isJSONSchema7(propertySchema)) {
                 continue;
             }
 
-            shape[key] = convertPropertyToZod(propertySchema, key, schema);
+            shape[key] = convertPropertyToZod(propertySchema, key, extendedSchema);
         }
     }
 
-    if (schema.required) {
-        for (const key of schema.required) {
+    if (extendedSchema.required) {
+        for (const key of extendedSchema.required) {
             if (!shape[key]) {
                 shape[key] = createRequiredUnknownSchema();
             }
         }
     }
 
-    for (const key of collectComposablePropertyKeys(schema)) {
+    for (const key of collectComposablePropertyKeys(extendedSchema)) {
         if (!shape[key]) {
             shape[key] = z.unknown().optional();
         }
@@ -387,13 +400,13 @@ function buildObjectSchema(schema: JSONSchema7): ZodType<unknown> {
 
     const baseObject = z.object(shape);
 
-    if (!hasComposableValidation(schema)) {
+    if (!hasComposableValidation(extendedSchema)) {
         return baseObject;
     }
 
     return baseObject.superRefine((value, context) => {
-        if (schema.dependentRequired) {
-            for (const [triggerKey, requiredKeys] of Object.entries(schema.dependentRequired)) {
+        if (extendedSchema.dependentRequired) {
+            for (const [triggerKey, requiredKeys] of Object.entries(extendedSchema.dependentRequired)) {
                 if (!Object.prototype.hasOwnProperty.call(value, triggerKey)) {
                     continue;
                 }
@@ -410,8 +423,8 @@ function buildObjectSchema(schema: JSONSchema7): ZodType<unknown> {
             }
         }
 
-        if (schema.dependentSchemas) {
-            for (const [triggerKey, dependentSchema] of Object.entries(schema.dependentSchemas)) {
+        if (extendedSchema.dependentSchemas) {
+            for (const [triggerKey, dependentSchema] of Object.entries(extendedSchema.dependentSchemas)) {
                 if (!Object.prototype.hasOwnProperty.call(value, triggerKey)) {
                     continue;
                 }
@@ -420,20 +433,20 @@ function buildObjectSchema(schema: JSONSchema7): ZodType<unknown> {
             }
         }
 
-        if (schema.if) {
-            const matches = matchesSchemaDefinition(schema.if, value);
+        if (extendedSchema.if) {
+            const matches = matchesSchemaDefinition(extendedSchema.if, value);
 
-            if (matches && schema.then) {
-                addSchemaIssues(schema.then, value, context);
+            if (matches && extendedSchema.then) {
+                addSchemaIssues(extendedSchema.then, value, context);
             }
 
-            if (!matches && schema.else) {
-                addSchemaIssues(schema.else, value, context);
+            if (!matches && extendedSchema.else) {
+                addSchemaIssues(extendedSchema.else, value, context);
             }
         }
 
-        if (schema.allOf) {
-            for (const item of schema.allOf) {
+        if (extendedSchema.allOf) {
+            for (const item of extendedSchema.allOf) {
                 addSchemaIssues(item, value, context);
             }
         }
