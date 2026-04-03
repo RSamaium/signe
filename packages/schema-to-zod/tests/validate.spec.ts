@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
-import { jsonSchemaToZod } from '../src'
+import { jsonSchemaToZod, jsonSchemaToZodSchema } from '../src'
 import { z } from 'zod'
 
 describe('jsonSchemaToZod', () => {
@@ -979,6 +979,590 @@ describe('jsonSchemaToZod', () => {
                     },
                 },
             }).success).toBeFalsy()
+        })
+    })
+
+    describe('Should handle conditional object branches correctly', () => {
+        const itemSchema = {
+            type: 'object' as const,
+            properties: {
+                name: {
+                    type: 'string' as const,
+                },
+                itemType: {
+                    type: 'string' as const,
+                    enum: ['item', 'weapon', 'armor'],
+                },
+                price: {
+                    type: 'number' as const,
+                },
+            },
+            required: ['name', 'itemType'],
+            allOf: [
+                {
+                    if: {
+                        properties: {
+                            itemType: { const: 'weapon' },
+                        },
+                    },
+                    then: {
+                        properties: {
+                            atk: {
+                                type: 'number' as const,
+                            },
+                            element: {
+                                type: 'string' as const,
+                                enum: ['none', 'fire', 'water'],
+                            },
+                            weaponType: {
+                                type: 'string' as const,
+                                enum: ['sword', 'axe', 'bow'],
+                            },
+                        },
+                        required: ['atk', 'element', 'weaponType'],
+                    },
+                    else: {
+                        if: {
+                            properties: {
+                                itemType: { const: 'armor' },
+                            },
+                        },
+                        then: {
+                            properties: {
+                                pdef: {
+                                    type: 'number' as const,
+                                },
+                                armorType: {
+                                    type: 'string' as const,
+                                    enum: ['helmet', 'chest', 'shield'],
+                                },
+                            },
+                            required: ['pdef', 'armorType'],
+                        },
+                    },
+                },
+            ],
+        }
+
+        test('Should validate only the weapon branch when itemType is weapon', async () => {
+            const zodSchema = jsonSchemaToZodSchema(itemSchema as any)
+
+            expect(zodSchema.safeParse({
+                name: 'Sword',
+                itemType: 'weapon',
+                price: 10,
+                atk: 12,
+                element: 'fire',
+                weaponType: 'sword',
+                pdef: 'ignored',
+            }).success).toBeTruthy()
+
+            expect(zodSchema.safeParse({
+                name: 'Sword',
+                itemType: 'weapon',
+                price: 10,
+                element: 'fire',
+                weaponType: 'sword',
+            }).success).toBeFalsy()
+
+            expect(zodSchema.safeParse({
+                name: 'Sword',
+                itemType: 'weapon',
+                price: 10,
+                atk: 'high',
+                element: 'fire',
+                weaponType: 'sword',
+            }).success).toBeFalsy()
+        })
+
+        test('Should validate only the armor branch when itemType is armor', async () => {
+            const zodSchema = jsonSchemaToZodSchema(itemSchema as any)
+
+            expect(zodSchema.safeParse({
+                name: 'Shield',
+                itemType: 'armor',
+                price: 20,
+                pdef: 8,
+                armorType: 'shield',
+                atk: 'ignored',
+            }).success).toBeTruthy()
+
+            expect(zodSchema.safeParse({
+                name: 'Shield',
+                itemType: 'armor',
+                price: 20,
+                armorType: 'shield',
+            }).success).toBeFalsy()
+
+            expect(zodSchema.safeParse({
+                name: 'Shield',
+                itemType: 'armor',
+                price: 20,
+                pdef: 'high',
+                armorType: 'shield',
+            }).success).toBeFalsy()
+        })
+
+        test('Should ignore conditional branches when itemType is item', async () => {
+            const zodSchema = jsonSchemaToZodSchema(itemSchema as any)
+
+            expect(zodSchema.safeParse({
+                name: 'Potion',
+                itemType: 'item',
+                price: 5,
+                atk: 'ignored',
+                pdef: 'ignored',
+            }).success).toBeTruthy()
+        })
+    })
+
+    describe('Should handle dependentRequired correctly', () => {
+        test('Should enforce one-way dependencies only when the trigger property is present', async () => {
+            const schema = {
+                type: 'object' as const,
+                properties: {
+                    name: { type: 'string' as const },
+                    credit_card: { type: 'number' as const },
+                    billing_address: { type: 'string' as const },
+                },
+                required: ['name'],
+                dependentRequired: {
+                    credit_card: ['billing_address'],
+                },
+            }
+
+            const zodSchema = jsonSchemaToZodSchema(schema as any)
+
+            expect(zodSchema.safeParse({
+                name: 'John Doe',
+                credit_card: 5555555555555555,
+                billing_address: '555 Debtor Lane',
+            }).success).toBeTruthy()
+
+            expect(zodSchema.safeParse({
+                name: 'John Doe',
+                credit_card: 5555555555555555,
+            }).success).toBeFalsy()
+
+            expect(zodSchema.safeParse({
+                name: 'John Doe',
+            }).success).toBeTruthy()
+
+            expect(zodSchema.safeParse({
+                name: 'John Doe',
+                billing_address: '555 Debtor Lane',
+            }).success).toBeTruthy()
+        })
+
+        test('Should support bidirectional dependencies when both sides are declared', async () => {
+            const schema = {
+                type: 'object' as const,
+                properties: {
+                    name: { type: 'string' as const },
+                    credit_card: { type: 'number' as const },
+                    billing_address: { type: 'string' as const },
+                },
+                required: ['name'],
+                dependentRequired: {
+                    credit_card: ['billing_address'],
+                    billing_address: ['credit_card'],
+                },
+            }
+
+            const zodSchema = jsonSchemaToZodSchema(schema as any)
+
+            expect(zodSchema.safeParse({
+                name: 'John Doe',
+                credit_card: 5555555555555555,
+                billing_address: '555 Debtor Lane',
+            }).success).toBeTruthy()
+
+            expect(zodSchema.safeParse({
+                name: 'John Doe',
+                credit_card: 5555555555555555,
+            }).success).toBeFalsy()
+
+            expect(zodSchema.safeParse({
+                name: 'John Doe',
+                billing_address: '555 Debtor Lane',
+            }).success).toBeFalsy()
+
+            expect(zodSchema.safeParse({
+                name: 'John Doe',
+            }).success).toBeTruthy()
+        })
+    })
+
+    describe('Should handle dependentSchemas correctly', () => {
+        test('Should apply the dependent schema independently when the trigger property is present', async () => {
+            const schema = {
+                type: 'object' as const,
+                properties: {
+                    name: { type: 'string' as const },
+                    credit_card: { type: 'number' as const },
+                },
+                required: ['name'],
+                dependentSchemas: {
+                    credit_card: {
+                        properties: {
+                            billing_address: { type: 'string' as const },
+                        },
+                        required: ['billing_address'],
+                    },
+                },
+            }
+
+            const zodSchema = jsonSchemaToZodSchema(schema as any)
+
+            expect(zodSchema.safeParse({
+                name: 'John Doe',
+                credit_card: 5555555555555555,
+                billing_address: '555 Debtor Lane',
+            }).success).toBeTruthy()
+
+            expect(zodSchema.safeParse({
+                name: 'John Doe',
+                credit_card: 5555555555555555,
+            }).success).toBeFalsy()
+
+            expect(zodSchema.safeParse({
+                name: 'John Doe',
+                billing_address: '555 Debtor Lane',
+            }).success).toBeTruthy()
+        })
+    })
+
+    describe('Should handle if/then/else semantics correctly', () => {
+        test('Should follow the truth table when both then and else are defined', async () => {
+            const schema = {
+                type: 'object' as const,
+                properties: {
+                    mode: {
+                        type: 'string' as const,
+                        enum: ['strict', 'loose'],
+                    },
+                    strictValue: { type: 'number' as const },
+                    looseValue: { type: 'boolean' as const },
+                },
+                if: {
+                    properties: {
+                        mode: { const: 'strict' },
+                    },
+                    required: ['mode'],
+                },
+                then: {
+                    required: ['strictValue'],
+                },
+                else: {
+                    required: ['looseValue'],
+                },
+            }
+
+            const zodSchema = jsonSchemaToZodSchema(schema as any)
+
+            expect(zodSchema.safeParse({
+                mode: 'strict',
+                strictValue: 10,
+            }).success).toBeTruthy()
+
+            expect(zodSchema.safeParse({
+                mode: 'strict',
+            }).success).toBeFalsy()
+
+            expect(zodSchema.safeParse({
+                mode: 'loose',
+                looseValue: true,
+            }).success).toBeTruthy()
+
+            expect(zodSchema.safeParse({
+                mode: 'loose',
+            }).success).toBeFalsy()
+        })
+
+        test('Should ignore then and else when if is not defined', async () => {
+            const schema = {
+                type: 'object' as const,
+                properties: {
+                    mode: { type: 'string' as const },
+                },
+                then: {
+                    required: ['strictValue'],
+                },
+                else: {
+                    required: ['looseValue'],
+                },
+            }
+
+            const zodSchema = jsonSchemaToZodSchema(schema as any)
+
+            expect(zodSchema.safeParse({
+                mode: 'anything',
+            }).success).toBeTruthy()
+        })
+
+        test('Should treat an if without then or else as having no effect', async () => {
+            const schema = {
+                type: 'object' as const,
+                properties: {
+                    country: { type: 'string' as const },
+                },
+                if: {
+                    properties: {
+                        country: { const: 'Canada' },
+                    },
+                },
+            }
+
+            const zodSchema = jsonSchemaToZodSchema(schema as any)
+
+            expect(zodSchema.safeParse({ country: 'Canada' }).success).toBeTruthy()
+            expect(zodSchema.safeParse({ country: 'France' }).success).toBeTruthy()
+            expect(zodSchema.safeParse({}).success).toBeTruthy()
+        })
+    })
+
+    describe('Should handle country-based postal code conditionals from the JSON Schema docs', () => {
+        test('Should default to USA validation when country is not required in the if branch', async () => {
+            const schema = {
+                type: 'object' as const,
+                properties: {
+                    street_address: { type: 'string' as const },
+                    country: {
+                        type: 'string' as const,
+                        enum: ['United States of America', 'Canada'],
+                    },
+                    postal_code: { type: 'string' as const },
+                },
+                if: {
+                    properties: {
+                        country: { const: 'United States of America' },
+                    },
+                },
+                then: {
+                    properties: {
+                        postal_code: { pattern: '[0-9]{5}(-[0-9]{4})?' },
+                    },
+                },
+                else: {
+                    properties: {
+                        postal_code: { pattern: '[A-Z][0-9][A-Z] [0-9][A-Z][0-9]' },
+                    },
+                },
+            }
+
+            const zodSchema = jsonSchemaToZodSchema(schema as any)
+
+            expect(zodSchema.safeParse({
+                street_address: '1600 Pennsylvania Avenue NW',
+                country: 'United States of America',
+                postal_code: '20500',
+            }).success).toBeTruthy()
+
+            expect(zodSchema.safeParse({
+                street_address: '1600 Pennsylvania Avenue NW',
+                postal_code: '20500',
+            }).success).toBeTruthy()
+
+            expect(zodSchema.safeParse({
+                street_address: '24 Sussex Drive',
+                country: 'Canada',
+                postal_code: 'K1M 1M4',
+            }).success).toBeTruthy()
+
+            expect(zodSchema.safeParse({
+                street_address: '24 Sussex Drive',
+                country: 'Canada',
+                postal_code: '10000',
+            }).success).toBeFalsy()
+
+            expect(zodSchema.safeParse({
+                street_address: '1600 Pennsylvania Avenue NW',
+                postal_code: 'K1M 1M4',
+            }).success).toBeFalsy()
+        })
+
+        test('Should support scalable allOf conditionals for multiple countries', async () => {
+            const schema = {
+                type: 'object' as const,
+                properties: {
+                    street_address: { type: 'string' as const },
+                    country: {
+                        type: 'string' as const,
+                        enum: ['United States of America', 'Canada', 'Netherlands'],
+                    },
+                    postal_code: { type: 'string' as const },
+                },
+                allOf: [
+                    {
+                        if: {
+                            properties: {
+                                country: { const: 'United States of America' },
+                            },
+                        },
+                        then: {
+                            properties: {
+                                postal_code: { pattern: '[0-9]{5}(-[0-9]{4})?' },
+                            },
+                        },
+                    },
+                    {
+                        if: {
+                            properties: {
+                                country: { const: 'Canada' },
+                            },
+                            required: ['country'],
+                        },
+                        then: {
+                            properties: {
+                                postal_code: { pattern: '[A-Z][0-9][A-Z] [0-9][A-Z][0-9]' },
+                            },
+                        },
+                    },
+                    {
+                        if: {
+                            properties: {
+                                country: { const: 'Netherlands' },
+                            },
+                            required: ['country'],
+                        },
+                        then: {
+                            properties: {
+                                postal_code: { pattern: '[0-9]{4} [A-Z]{2}' },
+                            },
+                        },
+                    },
+                ],
+            }
+
+            const zodSchema = jsonSchemaToZodSchema(schema as any)
+
+            expect(zodSchema.safeParse({
+                street_address: '1600 Pennsylvania Avenue NW',
+                country: 'United States of America',
+                postal_code: '20500',
+            }).success).toBeTruthy()
+
+            expect(zodSchema.safeParse({
+                street_address: '1600 Pennsylvania Avenue NW',
+                postal_code: '20500',
+            }).success).toBeTruthy()
+
+            expect(zodSchema.safeParse({
+                street_address: '24 Sussex Drive',
+                country: 'Canada',
+                postal_code: 'K1M 1M4',
+            }).success).toBeTruthy()
+
+            expect(zodSchema.safeParse({
+                street_address: 'Adriaan Goekooplaan',
+                country: 'Netherlands',
+                postal_code: '2517 JX',
+            }).success).toBeTruthy()
+
+            expect(zodSchema.safeParse({
+                street_address: '24 Sussex Drive',
+                country: 'Canada',
+                postal_code: '10000',
+            }).success).toBeFalsy()
+
+            expect(zodSchema.safeParse({
+                street_address: '1600 Pennsylvania Avenue NW',
+                postal_code: 'K1M 1M4',
+            }).success).toBeFalsy()
+        })
+    })
+
+    describe('Should handle anyOf correctly', () => {
+        test('Should validate a property when at least one anyOf branch matches', async () => {
+            const schema = {
+                type: 'object' as const,
+                properties: {
+                    value: {
+                        anyOf: [
+                            { type: 'string' as const, minLength: 3 },
+                            { type: 'number' as const, minimum: 10 },
+                        ],
+                    },
+                },
+            }
+
+            const zodSchema = jsonSchemaToZodSchema(schema as any)
+
+            expect(zodSchema.safeParse({ value: 'abcd' }).success).toBeTruthy()
+            expect(zodSchema.safeParse({ value: 12 }).success).toBeTruthy()
+            expect(zodSchema.safeParse({ value: 'ab' }).success).toBeFalsy()
+            expect(zodSchema.safeParse({ value: 5 }).success).toBeFalsy()
+            expect(zodSchema.safeParse({ value: false }).success).toBeFalsy()
+        })
+    })
+
+    describe('Should handle not correctly', () => {
+        test('Should reject values that match the not schema', async () => {
+            const schema = {
+                type: 'object' as const,
+                properties: {
+                    value: {
+                        not: { type: 'string' as const },
+                    },
+                },
+            }
+
+            const zodSchema = jsonSchemaToZodSchema(schema as any)
+
+            expect(zodSchema.safeParse({ value: 42 }).success).toBeTruthy()
+            expect(zodSchema.safeParse({ value: true }).success).toBeTruthy()
+            expect(zodSchema.safeParse({ value: 'forbidden' }).success).toBeFalsy()
+        })
+    })
+
+    describe('Should handle implication patterns with anyOf and not', () => {
+        test('Should support the sit-down restaurant implies tip example from the JSON Schema docs', async () => {
+            const schema = {
+                type: 'object' as const,
+                properties: {
+                    restaurantType: {
+                        type: 'string' as const,
+                        enum: ['fast-food', 'sit-down'],
+                    },
+                    total: { type: 'number' as const },
+                    tip: { type: 'number' as const },
+                },
+                anyOf: [
+                    {
+                        not: {
+                            properties: {
+                                restaurantType: { const: 'sit-down' },
+                            },
+                            required: ['restaurantType'],
+                        },
+                    },
+                    {
+                        required: ['tip'],
+                    },
+                ],
+            }
+
+            const zodSchema = jsonSchemaToZodSchema(schema as any)
+
+            expect(zodSchema.safeParse({
+                restaurantType: 'sit-down',
+                total: 16.99,
+                tip: 3.4,
+            }).success).toBeTruthy()
+
+            expect(zodSchema.safeParse({
+                restaurantType: 'sit-down',
+                total: 16.99,
+            }).success).toBeFalsy()
+
+            expect(zodSchema.safeParse({
+                restaurantType: 'fast-food',
+                total: 6.99,
+            }).success).toBeTruthy()
+
+            expect(zodSchema.safeParse({
+                total: 5.25,
+            }).success).toBeTruthy()
         })
     })
 })

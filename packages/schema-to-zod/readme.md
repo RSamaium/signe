@@ -92,6 +92,52 @@ Parameters:
 Returns:
 - A record of Zod type definitions that can be used with `z.object()`
 
+### `jsonSchemaToZodSchema(schema: JSONSchema7 | JSONSchema7Definition[]): ZodType<unknown>`
+
+Converts a JSON Schema to a full Zod schema.
+
+Use this API when the schema relies on:
+- `anyOf`
+- `not`
+- `allOf`
+- `dependentRequired`
+- `dependentSchemas`
+- `if / then / else`
+- conditional branches that must validate only the active fields
+
+Example:
+
+```typescript
+import { jsonSchemaToZodSchema } from '@signe/schema-to-zod';
+
+const schema = {
+  type: 'object',
+  properties: {
+    name: { type: 'string' },
+    itemType: { type: 'string', enum: ['item', 'weapon', 'armor'] }
+  },
+  required: ['name', 'itemType'],
+  allOf: [
+    {
+      if: {
+        properties: {
+          itemType: { const: 'weapon' }
+        }
+      },
+      then: {
+        properties: {
+          atk: { type: 'number' },
+          weaponType: { type: 'string' }
+        },
+        required: ['atk', 'weaponType']
+      }
+    }
+  ]
+};
+
+const zodSchema = jsonSchemaToZodSchema(schema);
+```
+
 ## Examples
 
 ### Nested Objects
