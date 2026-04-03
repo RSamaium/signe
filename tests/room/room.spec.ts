@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { signal } from "../../packages/reactive/src";
-import { Action, Room, Server, ServerIo, Guard, testRoom } from "../../packages/room/src";
+import { Action, Room, Server, ServerIo, Guard, UnhandledAction } from "../../packages/room/src";
 import { id, users } from "../../packages/sync/src";
 import { z } from "zod";
 
@@ -13,7 +13,9 @@ describe("Server", () => {
     let isAuthenticatedGuard: any;
     let isAdminGuard: any;
     let isRoomGuard: any;
+    let isUnhandledGuard: any;
     let Player: any;
+    let onUnhandledActionSpy: any;
 
     const createConnection = () => {
       let _state: any = {};
@@ -38,6 +40,8 @@ describe("Server", () => {
       isAuthenticatedGuard = vi.fn().mockReturnValue(true);
       isAdminGuard = vi.fn().mockReturnValue(true);
       isRoomGuard = vi.fn().mockReturnValue(true);
+      isUnhandledGuard = vi.fn().mockReturnValue(true);
+      onUnhandledActionSpy = vi.fn();
 
       class _Player {
         @id() id: string;
@@ -314,8 +318,92 @@ describe("Server", () => {
 
         await server.onMessage(message, conn as any);
 
-        expect(isAuthenticatedGuard).toHaveBeenCalledWith(conn, testValue);
-        expect(isAdminGuard).toHaveBeenCalledWith(conn, testValue);
+        expect(isAuthenticatedGuard).toHaveBeenCalledWith(conn, testValue, expect.objectContaining({
+          id: 'game'
+        }));
+        expect(isAdminGuard).toHaveBeenCalledWith(conn, testValue, expect.objectContaining({
+          id: 'game'
+        }));
+      });
+    });
+
+    describe("UnhandledAction", () => {
+      beforeEach(async () => {
+        @Room({
+          path: "game",
+        })
+        class FallbackRoom {
+          count = signal(0);
+          @users(Player) users = signal({});
+
+          @Action("increment")
+          increment() {
+            this.count.update((count) => count + 1);
+          }
+
+          @UnhandledAction()
+          @Guard([isUnhandledGuard])
+          onUnhandledAction(user: any, message: { action: string, value: unknown }, sender: any) {
+            onUnhandledActionSpy(user, message, sender);
+            this.count.update((count) => count + 100);
+          }
+        }
+
+        server = new (class extends Server {
+          rooms = [FallbackRoom];
+        })(new ServerIo("game") as any);
+
+        await server.onStart();
+        await server.onConnect(conn as any, {} as any);
+      });
+
+      it("should dispatch unknown actions to the fallback handler", async () => {
+        const value = { test: "data" };
+        const message = JSON.stringify({
+          action: "missingAction",
+          value,
+        });
+
+        await server.onMessage(message, conn as any);
+
+        expect((server.subRoom as any).count()).toBe(100);
+        expect(onUnhandledActionSpy).toHaveBeenCalledWith(
+          expect.any(Player),
+          { action: "missingAction", value },
+          conn
+        );
+      });
+
+      it("should keep matching actions higher priority than the fallback handler", async () => {
+        const message = JSON.stringify({
+          action: "increment",
+          value: null,
+        });
+
+        await server.onMessage(message, conn as any);
+
+        expect((server.subRoom as any).count()).toBe(1);
+        expect(onUnhandledActionSpy).not.toHaveBeenCalled();
+      });
+
+      it("should apply guards to the fallback handler", async () => {
+        isUnhandledGuard.mockReturnValue(false);
+        const message = JSON.stringify({
+          action: "missingAction",
+          value: { test: "data" },
+        });
+
+        await server.onMessage(message, conn as any);
+
+        expect((server.subRoom as any).count()).toBe(0);
+        expect(onUnhandledActionSpy).not.toHaveBeenCalled();
+        expect(isUnhandledGuard).toHaveBeenCalledWith(
+          conn,
+          { action: "missingAction", value: { test: "data" } },
+          expect.objectContaining({
+            id: "game"
+          })
+        );
       });
     });
 

@@ -16,6 +16,18 @@ export function Action(name: string, bodyValidation?: z.ZodSchema) {
 }
 
 /**
+ * Fallback decorator for handling websocket messages whose action
+ * does not match any registered @Action decorator.
+ */
+export function UnhandledAction() {
+  return function (target: any, propertyKey: string) {
+    target.constructor._unhandledActionMetadata = {
+      key: propertyKey,
+    };
+  };
+}
+
+/**
  * Request decorator for handling HTTP requests with path and method routing
  * @param options Configuration for the HTTP request handler
  * @param bodyValidation Optional Zod schema for request body validation

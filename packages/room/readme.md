@@ -69,6 +69,54 @@ Function have to be decorated with the `@Action` decorator and  have 3 parameter
 - The second parameter is the value of the action
 - The third parameter is the Party.Connection instance
 
+### Unhandled actions
+
+If you want to catch any valid WebSocket message whose `action` is not registered
+with `@Action(...)`, you can use `@UnhandledAction()`.
+
+The fallback handler receives:
+
+- The first parameter is the player instance
+- The second parameter is the full message object: `{ action, value }`
+- The third parameter is the `Party.Connection` instance
+
+```ts
+import { Action, Guard, Room, UnhandledAction } from "@signe/room";
+
+function isAuthenticated(conn: Party.Connection, value: any, room: Party.Room) {
+  return !!conn.state?.publicId;
+}
+
+@Room({
+  path: "game",
+})
+class GameRoom {
+  @Action("move")
+  move(player: any, value: { x: number; y: number }) {
+    player.x.set(value.x);
+    player.y.set(value.y);
+  }
+
+  @UnhandledAction()
+  @Guard([isAuthenticated])
+  onUnhandledAction(
+    player: any,
+    message: { action: string; value: unknown },
+    conn: Party.Connection
+  ) {
+    console.warn("Unhandled action", message.action, message.value, conn.id);
+  }
+}
+```
+
+Notes:
+
+- `@UnhandledAction()` is only called if the incoming message matches the expected
+  WebSocket shape `{ action, value }`
+- If a matching `@Action("...")` exists, it always has priority over
+  `@UnhandledAction()`
+- You can combine `@UnhandledAction()` with `@Guard(...)`
+
 ## HTTP Request Handling
 
 The `@Request` decorator allows you to handle HTTP requests with specific routes and methods:

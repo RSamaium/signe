@@ -801,36 +801,50 @@ export class Server implements Party.Server {
     }
 
     const actions = subRoom.constructor["_actionMetadata"];
-    if (actions) {
-      const signal = this.getUsersProperty(subRoom);
-      const { publicId } = sender.state as any;
-      const user = signal?.()[publicId];
-      const actionName = actions.get(result.data.action);
-      if (actionName) {
+    const signal = this.getUsersProperty(subRoom);
+    const { publicId } = sender.state as any;
+    const user = signal?.()[publicId];
+    const actionName = actions?.get(result.data.action);
+    if (actionName) {
 
-        // Check all guards if they exist
-        const guards = subRoom.constructor['_actionGuards']?.get(actionName.key) || [];
-        for (const guard of guards) {
-          const isAuthorized = await guard(sender, result.data.value);
-          if (!isAuthorized) {
-            return;
-          }
+      // Check all guards if they exist
+      const guards = subRoom.constructor['_actionGuards']?.get(actionName.key) || [];
+      for (const guard of guards) {
+        const isAuthorized = await guard(sender, result.data.value, this.room);
+        if (!isAuthorized) {
+          return;
         }
-
-        // Validate action body if a validation schema is defined
-        if (actionName.bodyValidation) {
-          const bodyResult = actionName.bodyValidation.safeParse(
-            result.data.value
-          );
-          if (!bodyResult.success) {
-            return;
-          }
-        }
-        // Execute the action
-        await awaitReturn(
-          subRoom[actionName.key](user, result.data.value, sender)
-        );
       }
+
+      // Validate action body if a validation schema is defined
+      if (actionName.bodyValidation) {
+        const bodyResult = actionName.bodyValidation.safeParse(
+          result.data.value
+        );
+        if (!bodyResult.success) {
+          return;
+        }
+      }
+      // Execute the action
+      await awaitReturn(
+        subRoom[actionName.key](user, result.data.value, sender)
+      );
+      return;
+    }
+
+    const unhandledAction = subRoom.constructor["_unhandledActionMetadata"];
+    if (unhandledAction) {
+      const guards = subRoom.constructor['_actionGuards']?.get(unhandledAction.key) || [];
+      for (const guard of guards) {
+        const isAuthorized = await guard(sender, result.data, this.room);
+        if (!isAuthorized) {
+          return;
+        }
+      }
+
+      await awaitReturn(
+        subRoom[unhandledAction.key](user, result.data, sender)
+      );
     }
   }
 
