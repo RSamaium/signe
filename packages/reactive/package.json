@@ -1,6 +1,6 @@
 {
   "name": "@signe/reactive",
-  "version": "2.9.0",
+  "version": "2.9.1",
   "description": "Small signal-based reactivity primitives with observable object and array changes.",
   "main": "./dist/index.js",
   "scripts": {
