@@ -37,6 +37,9 @@ jobs:
   build_and_publish:
     needs: tests
     if: github.ref == 'refs/heads/master'
+    permissions:
+      contents: write
+      pull-requests: write
     strategy:
       matrix:
         os: [ubuntu-latest]
