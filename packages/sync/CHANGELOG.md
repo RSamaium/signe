@@ -1,5 +1,11 @@
 # @signe/sync
 
+## 2.9.3
+
+### Patch Changes
+
+- 785e260: Preserve typed collection hydration semantics when loading object payloads.
+
 ## 2.9.2
 
 ### Patch Changes

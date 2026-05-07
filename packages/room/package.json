@@ -1,6 +1,6 @@
 {
   "name": "@signe/room",
-  "version": "2.9.2",
+  "version": "2.9.3",
   "description": "PartyKit room primitives with synchronized state, sessions, guards, and HTTP handlers.",
   "main": "./dist/index.js",
   "scripts": {
