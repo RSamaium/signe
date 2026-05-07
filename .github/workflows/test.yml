@@ -37,65 +37,65 @@ jobs:
         run: pnpm test
 
   build_and_publish:
-      needs: tests
-      if: github.ref == 'refs/heads/master'
-      strategy:
-        matrix:
-          os: [ubuntu-latest]
-          node-version: [lts/*]
-          pnpm-version: [latest]
-      runs-on: ${{ matrix.os }}
-      steps:
-        - name: ⬇️ Checkout
-          id: checkout
-          uses: actions/checkout@v4
-          with:
-            fetch-depth: 0
+    needs: tests
+    if: github.ref == 'refs/heads/master'
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        node-version: [lts/*]
+        pnpm-version: [9.1.4]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: ⬇️ Checkout
+        id: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
   
-        - name: 🟢 Setup node
-          id: setup-node
-          uses: actions/setup-node@v4
-          with:
-            node-version: ${{ matrix.node-version }}
+      - name: 🟢 Setup node
+        id: setup-node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
   
-        - name: 🥡 Setup pnpm
-          id: setup-pnpm
-          uses: pnpm/action-setup@v4
-          with:
-            version: ${{ matrix.pnpm-version }}
-            run_install: false
+      - name: 🥡 Setup pnpm
+        id: setup-pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ matrix.pnpm-version }}
+          run_install: false
   
-        - name: 🎈 Get pnpm store directory
-          id: get-pnpm-cache-dir
-          run: |
-            echo "::set-output name=pnpm_cache_dir::$(pnpm store path)"
+      - name: 🎈 Get pnpm store directory
+        id: get-pnpm-cache-dir
+        run: |
+          echo "::set-output name=pnpm_cache_dir::$(pnpm store path)"
   
-        - name: 🔆 Cache pnpm modules
-          uses: actions/cache@v4
-          id: pnpm-cache
-          with:
-            path: ${{ steps.get-pnpm-cache-dir.outputs.pnpm_cache_dir }}
-            key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-            restore-keys: |
-              ${{ runner.os }}-pnpm-store-
+      - name: 🔆 Cache pnpm modules
+        uses: actions/cache@v4
+        id: pnpm-cache
+        with:
+          path: ${{ steps.get-pnpm-cache-dir.outputs.pnpm_cache_dir }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
   
-        - name: 🧩 Install Dependencies
-          id: install-dependencies
-          run: pnpm install
+      - name: 🧩 Install Dependencies
+        id: install-dependencies
+        run: pnpm install
   
-        - name: 🏗️ Build
-          id: build-the-mono-repo
-          run: |
-            pnpm build
+      - name: 🏗️ Build
+        id: build-the-mono-repo
+        run: |
+          pnpm build
   
-        - name: 📣 Create Release Pull Request or Publish to npm
-          id: changesets
-          uses: changesets/action@v1
-          with:
-            title: "chore(release): version packages 🦋"
-            publish: pnpm publish:packages
-            version: pnpm version:packages
-            commit: "chore(release): version packages 🦋 [skip ci]"
-          env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-            NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: 📣 Create Release Pull Request or Publish to npm
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          title: "chore(release): version packages 🦋"
+          publish: pnpm publish:packages
+          version: pnpm version:packages
+          commit: "chore(release): version packages 🦋 [skip ci]"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
