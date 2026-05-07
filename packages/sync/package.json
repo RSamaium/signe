@@ -1,7 +1,7 @@
 {
   "name": "@signe/sync",
   "version": "2.9.0",
-  "description": "",
+  "description": "Decorator-based state synchronization and loading utilities for Signe signals.",
   "main": "./dist/index.js",
   "scripts": {
     "build": "tsup src/index.ts src/client/index.ts",
@@ -27,7 +27,12 @@
     "access": "public"
   },
   "type": "module",
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "state-sync",
+    "signals",
+    "decorators",
+    "typescript"
+  ],
+  "author": "Samuel Ronce",
   "license": "MIT"
 }

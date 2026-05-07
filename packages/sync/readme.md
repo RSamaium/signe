@@ -190,7 +190,7 @@ load(game, {
 })
 ```
 
-**Important:** The constructor receives the data object first, then the `load` function automatically populates all the properties. This allows you to:
+**Important:** With nested object loads and path entries whose value is an object, the constructor receives the data object first, then the `load` function automatically populates all the properties. Full leaf paths such as `players.player-1.name` create the instance when needed, but only the individual leaf value is available at that point. This allows you to:
 - Initialize the instance with the provided data in the constructor
 - Perform custom initialization logic based on the data
 - The properties decorated with `@sync()` will still be automatically loaded after construction

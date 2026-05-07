@@ -1,7 +1,7 @@
 {
   "name": "@signe/schema-to-zod",
   "version": "2.9.0",
-  "description": "",
+  "description": "Convert JSON Schema definitions into Zod schemas.",
   "main": "./dist/index.js",
   "scripts": {
     "build": "tsup src/index.ts",
@@ -14,7 +14,12 @@
     },
     "./*": "./*"
   },
-  "keywords": [],
+  "keywords": [
+    "json-schema",
+    "zod",
+    "validation",
+    "typescript"
+  ],
   "author": "Samuel Ronce",
   "license": "MIT",
   "publishConfig": {

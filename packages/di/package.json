@@ -1,7 +1,7 @@
 {
   "name": "@signe/di",
   "version": "2.9.0",
-  "description": "",
+  "description": "Lightweight dependency injection container for TypeScript applications.",
   "main": "./dist/index.js",
   "scripts": {
     "build": "tsup src/index.ts",
@@ -14,7 +14,11 @@
     },
     "./*": "./*"
   },
-  "keywords": [],
+  "keywords": [
+    "dependency-injection",
+    "di",
+    "typescript"
+  ],
   "author": "Samuel Ronce",
   "license": "MIT",
   "publishConfig": {

@@ -41,10 +41,27 @@ interface WorldConnectionResult extends ConnectionResult {
 
 function createConnection(options: PartySocketOptions, roomInstance: RoomInstance): ConnectionResult {
   const conn = new PartySocket(options);
+  const eventListeners = new Map<string, Map<(value: any) => void, EventListener>>();
+
+  const parseMessage = (data: unknown): any | null => {
+    if (typeof data !== "string") {
+      return null;
+    }
+
+    try {
+      return JSON.parse(data);
+    } catch {
+      return null;
+    }
+  };
   
   // Set up message handling
   conn.addEventListener("message", (event) => {
-    const object = JSON.parse(event.data);
+    const object = parseMessage(event.data);
+    if (!object) {
+      return;
+    }
+
     switch (object.type) {
       case "sync":
         load(roomInstance, object.value, true);
@@ -62,20 +79,31 @@ function createConnection(options: PartySocketOptions, roomInstance: RoomInstanc
       );
     },
     on: (key, cb) => {
-      conn.addEventListener("message", (event) => {
-        const object = JSON.parse(event.data);
+      const listener: EventListener = (event) => {
+        const object = parseMessage((event as MessageEvent).data);
+        if (!object) {
+          return;
+        }
+
         if (object.type === key) {
           cb(object.value);
         }
-      });
+      };
+
+      if (!eventListeners.has(key)) {
+        eventListeners.set(key, new Map());
+      }
+      eventListeners.get(key)!.set(cb, listener);
+      conn.addEventListener("message", listener);
     },
     off: (key, cb) => {
-      conn.removeEventListener("message", (event) => {
-        const object = JSON.parse(event.data);
-        if (object.type === key) {
-          cb(object.value);
-        }
-      });
+      const listener = eventListeners.get(key)?.get(cb);
+      if (!listener) {
+        return;
+      }
+
+      conn.removeEventListener("message", listener);
+      eventListeners.get(key)!.delete(cb);
     },
     close: () => conn.close(),
     conn

@@ -1,13 +1,19 @@
 {
   "name": "@signe/room",
   "version": "2.9.0",
-  "description": "",
+  "description": "PartyKit room primitives with synchronized state, sessions, guards, and HTTP handlers.",
   "main": "./dist/index.js",
   "scripts": {
     "build": "tsup src/index.ts",
     "dev": "tsup src/index.ts --watch"
   },
-  "keywords": [],
+  "keywords": [
+    "partykit",
+    "realtime",
+    "websocket",
+    "cloudflare",
+    "typescript"
+  ],
   "author": "Samuel Ronce",
   "type": "module",
   "exports": {

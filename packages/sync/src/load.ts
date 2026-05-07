@@ -65,6 +65,7 @@ function loadFromObject(
   for (let key in values) {
     const value = values[key];
     const newPath = currentPath ? `${currentPath}.${key}` : key;
+    initializeClassCollectionItem(rootInstance, currentPath, key, value);
     if (typeof value === "object" && !Array.isArray(value) && value !== null) {
       loadFromObject(rootInstance, value, newPath);
     } else {
@@ -72,6 +73,31 @@ function loadFromObject(
       loadValue(rootInstance, parts, value);
     }
   }
+}
+
+function initializeClassCollectionItem(
+  rootInstance: any,
+  parentPath: string,
+  key: string,
+  value: any
+) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return;
+  }
+
+  const parent = parentPath ? getByPath(rootInstance, parentPath) : rootInstance;
+  const classType = parent?.options?.classType;
+  if (!classType) {
+    return;
+  }
+
+  const container = isSignal(parent) ? parent() : parent;
+  if (!container || container[key] !== undefined) {
+    return;
+  }
+
+  container[key] = !isClass(classType) ? classType(key, value) : new classType(value);
+  setMetadata(container[key], "id", key);
 }
 
 /**
@@ -99,7 +125,23 @@ function loadValue(rootInstance: any, parts: string[], value: any) {
       }
       else if (isSignal(current)) {
         const currentValue = getWritableSignalValue(current);
-        if (Array.isArray(currentValue) && !isNaN(Number(part))) {
+        const targetKey = Array.isArray(currentValue) && !isNaN(Number(part)) ? Number(part) : part;
+
+        if (
+          current.options?.classType &&
+          value &&
+          typeof value === "object" &&
+          !Array.isArray(value)
+        ) {
+          const classType = current.options.classType;
+          if (currentValue[targetKey] === undefined) {
+            currentValue[targetKey] = !isClass(classType)
+              ? classType(String(part), value)
+              : new classType(value);
+            setMetadata(currentValue[targetKey], "id", part);
+          }
+          load(currentValue[targetKey], value, true);
+        } else if (Array.isArray(currentValue) && !isNaN(Number(part))) {
           currentValue[Number(part)] = value;
         } else {
           currentValue[part] = value;
@@ -159,7 +201,7 @@ export function getByPath(root: any, path: string) {
     if (isSignal(current)) {
       current = current();
     }
-    if (current[part]) {
+    if (current && part in current) {
       current = current[part];
     } else {
       return undefined;

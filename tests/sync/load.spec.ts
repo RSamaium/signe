@@ -8,9 +8,10 @@ describe("load function", () => {
 
   beforeEach(() => {
     _class = class NestedClass {
+      constructorData: any;
       value = signal(0);
-      constructor(id: string) {
-        console.log('NestedClass constructor', id);
+      constructor(data?: any) {
+        this.constructorData = data;
       }
     }
 
@@ -165,6 +166,8 @@ describe("load function", () => {
   });
 
   it("should load nested GameObject in Scene", () => {
+    let constructorData: any;
+
     class GameObject {
       position = {
         x: signal(0),
@@ -172,6 +175,10 @@ describe("load function", () => {
       };
       @sync() direction = signal(0);
       @sync() graphics = signal([]);
+
+      constructor(data?: any) {
+        constructorData = data;
+      }
     }
 
     class Scene {
@@ -191,10 +198,39 @@ describe("load function", () => {
     }, true);
 
     expect(scene.users()['player1']).instanceOf(GameObject);
+    expect(constructorData).toEqual({
+      position: { x: 100, y: 200 },
+      direction: 45,
+      graphics: ['sprite1', 'sprite2']
+    });
     expect(scene.users()['player1'].position.x()).toBe(100);
     expect(scene.users()['player1'].position.y()).toBe(200);
     expect(scene.users()['player1'].direction()).toBe(45);
     expect(scene.users()['player1'].graphics()).toEqual(['sprite1', 'sprite2']);
+  });
+
+  it("should create collection class instances from path object values", () => {
+    class Player {
+      @sync() name = signal("");
+      @sync() score = signal(0);
+    }
+
+    class Game {
+      @sync(Player) players = signal<Record<string, Player>>({});
+    }
+
+    const game = new Game();
+
+    load(game, {
+      "players.player1": {
+        name: "Alice",
+        score: 100
+      }
+    });
+
+    expect(game.players().player1).instanceOf(Player);
+    expect(game.players().player1.name()).toBe("Alice");
+    expect(game.players().player1.score()).toBe(100);
   });
 
   it("should handle multiple loads on the same Scene", () => {

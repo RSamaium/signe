@@ -1,10 +1,9 @@
 import { signal } from "@signe/reactive";
-import { Room, Action, Guard, Request } from "./decorators";
+import { Room, Guard, Request } from "./decorators";
 import { sync, id, persist } from "@signe/sync";
 import { z } from "zod";
 import * as Party from "./types/party";
 import { guardManageWorld } from "./world.guard";
-import { response } from "./utils";
 import { RoomInterceptorPacket, RoomOnJoin } from "./interfaces";
 import { ServerResponse } from "./request/response";
 
@@ -24,14 +23,8 @@ const RoomConfigSchema = z.object({
   maxShards: z.number().int().positive().optional(),
 });
 
-const RegisterShardSchema = z.object({
-  shardId: z.string(),
-  roomId: z.string(),
-  url: z.string().url(),
-  maxConnections: z.number().int().positive(),
-});
-
 const UpdateShardStatsSchema = z.object({
+  shardId: z.string(),
   connections: z.number().int().min(0),
   status: z.enum(['active', 'maintenance', 'draining']).optional(),
 });
@@ -139,8 +132,15 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
     method: 'POST',
   })
   @Guard([guardManageWorld])
-  async registerRoom(req: Party.Request) {
-    const roomConfig: z.infer<typeof RoomConfigSchema> = await req.json();
+  async registerRoom(req: Party.Request, res?: ServerResponse) {
+    const roomConfigResult = RoomConfigSchema.safeParse(await req.json());
+    if (!roomConfigResult.success) {
+      return res?.badRequest("Invalid room configuration", {
+        details: roomConfigResult.error
+      });
+    }
+
+    const roomConfig = roomConfigResult.data;
     const roomId = roomConfig.name;
     
     if (!this.rooms()[roomId]) {
@@ -178,7 +178,14 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
   })
   @Guard([guardManageWorld])
   async updateShardStats(req: Party.Request, res: ServerResponse) {
-    const body: { shardId: string; connections: number; status: ShardStatus } = await req.json();
+    const bodyResult = UpdateShardStatsSchema.safeParse(await req.json());
+    if (!bodyResult.success) {
+      return res.badRequest("Invalid shard statistics", {
+        details: bodyResult.error
+      });
+    }
+
+    const body = bodyResult.data;
     const { shardId, connections, status } = body;
     const shard = this.shards()[shardId];
 
@@ -199,7 +206,14 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
   })
   @Guard([guardManageWorld])
   async scaleRoom(req: Party.Request, res: ServerResponse) {
-    const data: z.infer<typeof ScaleRoomSchema> = await req.json();
+    const dataResult = ScaleRoomSchema.safeParse(await req.json());
+    if (!dataResult.success) {
+      return res.badRequest("Invalid scale request", {
+        details: dataResult.error
+      });
+    }
+
+    const data = dataResult.data;
     const { targetShardCount, shardTemplate, roomId } = data;
     
     // Validate room exists
@@ -234,11 +248,6 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
           return a.currentConnections() - b.currentConnections();
         })
         .slice(0, previousShardCount - targetShardCount);
-      
-      // Remove the selected shards
-      const shardsToKeep = roomShards.filter(
-        shard => !shardsToRemove.some(s => s.id === shard.id)
-      );
       
       // Update shards
       for (const shard of shardsToRemove) {

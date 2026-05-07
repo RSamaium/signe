@@ -33,15 +33,13 @@ const getGlobalReactiveStore = () => {
   if (typeof window !== 'undefined') {
     globalObj = window;
   } 
-  // Node.js - avoid using 'global' directly to prevent type errors
-  else if (typeof process !== 'undefined' && process.versions && process.versions.node) {
-    // In Node.js, 'global' is equivalent to globalThis
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    globalObj = (Function('return this')()) as any;
-  }
   // Web Worker or other environments
   else if (typeof self !== 'undefined') {
     globalObj = self;
+  }
+  // Last cross-runtime fallback for older JavaScript environments
+  else if (typeof Function !== 'undefined') {
+    globalObj = (Function('return this')()) as any;
   }
   // Really unusual environment
   else {

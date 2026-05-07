@@ -1,25 +1,33 @@
 {
   "name": "signe",
   "version": "2.9.0",
-  "description": "",
-  "main": "src/index.ts",
+  "private": true,
+  "description": "Reactive state, synchronization, and real-time room primitives for TypeScript applications.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RSamaium/signe.git"
+  },
   "scripts": {
     "test": "vitest run",
     "coverage": "vitest --coverage",
-    "docs:dev": "vitepress dev docs",
-    "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs",
     "build": "pnpm -r --filter=./packages/** run build",
+    "typecheck": "tsc --noEmit",
     "release": "bumpp package.json packages/*/package.json --all",
     "dev": "pnpm -r --filter=./packages/** --parallel run dev",
     "changeset": "changeset",
     "publish:packages": "changeset publish",
     "version:packages": "changeset version"
   },
-  "keywords": [],
+  "keywords": [
+    "reactive",
+    "signals",
+    "realtime",
+    "partykit",
+    "typescript"
+  ],
   "type": "module",
-  "author": "",
-  "license": "ISC",
+  "author": "Samuel Ronce",
+  "license": "MIT",
   "devDependencies": {
     "@changesets/cli": "^2.27.5",
     "@signe/reactive": "workspace:*",
