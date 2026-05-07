@@ -242,9 +242,15 @@ describe("load function", () => {
   });
 
   it("should create collection class instances from path object values", () => {
+    let constructorData: any;
+
     class Player {
       @sync() name = signal("");
       @sync() score = signal(0);
+
+      constructor(data?: any) {
+        constructorData = data;
+      }
     }
 
     class Game {
@@ -261,6 +267,7 @@ describe("load function", () => {
     });
 
     expect(game.players().player1).instanceOf(Player);
+    expect(constructorData).toBeUndefined();
     expect(game.players().player1.name()).toBe("Alice");
     expect(game.players().player1.score()).toBe(100);
   });

@@ -110,8 +110,8 @@ function loadValue(rootInstance: any, parts: string[], value: any) {
           const classType = current.options.classType;
           if (currentValue[targetKey] === undefined) {
             currentValue[targetKey] = !isClass(classType)
-              ? classType(String(part), value)
-              : new classType(value);
+              ? classType(String(part))
+              : new classType();
             setMetadata(currentValue[targetKey], "id", part);
           }
           load(currentValue[targetKey], value, true);
