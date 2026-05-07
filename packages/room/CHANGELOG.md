@@ -1,5 +1,12 @@
 # @signe/room
 
+## 2.9.4
+
+### Patch Changes
+
+- Updated dependencies [35643c0]
+  - @signe/sync@2.9.4
+
 ## 2.9.3
 
 ### Patch Changes

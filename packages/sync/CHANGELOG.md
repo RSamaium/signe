@@ -1,5 +1,11 @@
 # @signe/sync
 
+## 2.9.4
+
+### Patch Changes
+
+- 35643c0: Restore empty constructor calls for typed collection items before hydration.
+
 ## 2.9.3
 
 ### Patch Changes
