@@ -92,22 +92,28 @@ function loadValue(rootInstance: any, parts: string[], value: any) {
     if (i === parts.length - 1) {
       if (value == DELETE_TOKEN) {
         if (isSignal(current)) {
-          current = current();
+          current = getWritableSignalValue(current, false);
+          if (current === null || current === undefined) return;
         }
         Reflect.deleteProperty(current, part);
       }
+      else if (isSignal(current)) {
+        const currentValue = getWritableSignalValue(current);
+        if (Array.isArray(currentValue) && !isNaN(Number(part))) {
+          currentValue[Number(part)] = value;
+        } else {
+          currentValue[part] = value;
+        }
+      }
       else if (current[part]?._subject) {
         current[part].set(value);
-      }
-      else if (isSignal(current) && Array.isArray(current()) && !isNaN(Number(part))) {
-        current()[Number(part)] = value;
       }
       else {
         current[part] = value;
       }
     } else {
       if (isSignal(current)) {
-        current = current();
+        current = getWritableSignalValue(current);
       }
       const currentValue = current[part];
       if (currentValue === undefined) {
@@ -126,6 +132,15 @@ function loadValue(rootInstance: any, parts: string[], value: any) {
       current = current[part];
     }
   }
+}
+
+function getWritableSignalValue(signal: any, initialize = true) {
+  let value = signal();
+  if (initialize && (value === null || value === undefined)) {
+    value = {};
+    signal.set(value);
+  }
+  return value;
 }
 
 /**

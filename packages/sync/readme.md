@@ -330,6 +330,23 @@ load(instance, {
 }, true)
 ```
 
+When loading nested data into a signal that stores an object, `load` updates
+the signal value and preserves existing fields:
+
+```typescript
+const state = {
+  transition: signal({ active: false, reason: 'spawned' })
+}
+
+load(state, {
+  transition: {
+    active: true
+  }
+}, true)
+
+state.transition() // { active: true, reason: 'spawned' }
+```
+
 #### Loading Collections with Class Instances
 
 When loading data into collections that use class types, the instances are automatically created with the data passed to their constructor:

@@ -52,6 +52,96 @@ describe("load function", () => {
     expect(testInstance.position.y()).toBe(20);
   });
 
+  it("should update primitive fields inside nested object signals from object values", () => {
+    const root = {
+      events: signal({
+        ev1: {
+          _removeTransition: signal({ active: false })
+        }
+      })
+    };
+
+    load(root, {
+      events: {
+        ev1: {
+          _removeTransition: {
+            active: true,
+            data: { source: "x" },
+            transition: { animation: "die" }
+          }
+        }
+      }
+    }, true);
+
+    expect(root.events().ev1._removeTransition()).toEqual({
+      active: true,
+      data: { source: "x" },
+      transition: { animation: "die" }
+    });
+  });
+
+  it("should update primitive fields inside nested object signals from path values", () => {
+    const root = {
+      events: signal({
+        ev1: {
+          _removeTransition: signal({ active: false })
+        }
+      })
+    };
+
+    load(root, {
+      "events.ev1._removeTransition.active": true,
+      "events.ev1._removeTransition.reason": "defeated",
+      "events.ev1._removeTransition.timeoutMs": 700
+    });
+
+    expect(root.events().ev1._removeTransition()).toEqual({
+      active: true,
+      reason: "defeated",
+      timeoutMs: 700
+    });
+  });
+
+  it("should initialize null signal values when loading nested object paths", () => {
+    const root = {
+      data: signal(null)
+    };
+
+    load(root, {
+      data: {
+        active: true,
+        transition: { animation: "die" }
+      }
+    }, true);
+
+    expect(root.data()).toEqual({
+      active: true,
+      transition: { animation: "die" }
+    });
+  });
+
+  it("should keep existing object signal fields during partial nested loads", () => {
+    const root = {
+      transition: signal({
+        active: false,
+        reason: "spawned",
+        timeoutMs: 300
+      })
+    };
+
+    load(root, {
+      transition: {
+        active: true
+      }
+    }, true);
+
+    expect(root.transition()).toEqual({
+      active: true,
+      reason: "spawned",
+      timeoutMs: 300
+    });
+  });
+
   
   it("collection", () => {
     load(testInstance, { 'nested.id.value': 10});
