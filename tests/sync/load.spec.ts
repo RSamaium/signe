@@ -198,15 +198,47 @@ describe("load function", () => {
     }, true);
 
     expect(scene.users()['player1']).instanceOf(GameObject);
-    expect(constructorData).toEqual({
-      position: { x: 100, y: 200 },
-      direction: 45,
-      graphics: ['sprite1', 'sprite2']
-    });
+    expect(constructorData).toBeUndefined();
     expect(scene.users()['player1'].position.x()).toBe(100);
     expect(scene.users()['player1'].position.y()).toBe(200);
     expect(scene.users()['player1'].direction()).toBe(45);
     expect(scene.users()['player1'].graphics()).toEqual(['sprite1', 'sprite2']);
+  });
+
+  it("should hydrate typed collections from object payloads without passing payloads to constructors", () => {
+    let constructorData: any;
+
+    class Player {
+      @sync() x = signal(0);
+      @sync() y = signal(0);
+      @sync() graphics = signal<any[]>([]);
+
+      constructor(data?: any) {
+        constructorData = data;
+      }
+    }
+
+    class GameMap {
+      @sync(Player) players = signal<Record<string, Player>>({});
+    }
+
+    const map = new GameMap();
+
+    load(map, {
+      players: {
+        p1: {
+          x: 100,
+          y: 200,
+          graphics: ["hero"]
+        }
+      }
+    }, true);
+
+    expect(map.players().p1).instanceOf(Player);
+    expect(constructorData).toBeUndefined();
+    expect(map.players().p1.x()).toBe(100);
+    expect(map.players().p1.y()).toBe(200);
+    expect(map.players().p1.graphics()).toEqual(["hero"]);
   });
 
   it("should create collection class instances from path object values", () => {

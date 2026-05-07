@@ -65,7 +65,6 @@ function loadFromObject(
   for (let key in values) {
     const value = values[key];
     const newPath = currentPath ? `${currentPath}.${key}` : key;
-    initializeClassCollectionItem(rootInstance, currentPath, key, value);
     if (typeof value === "object" && !Array.isArray(value) && value !== null) {
       loadFromObject(rootInstance, value, newPath);
     } else {
@@ -73,31 +72,6 @@ function loadFromObject(
       loadValue(rootInstance, parts, value);
     }
   }
-}
-
-function initializeClassCollectionItem(
-  rootInstance: any,
-  parentPath: string,
-  key: string,
-  value: any
-) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return;
-  }
-
-  const parent = parentPath ? getByPath(rootInstance, parentPath) : rootInstance;
-  const classType = parent?.options?.classType;
-  if (!classType) {
-    return;
-  }
-
-  const container = isSignal(parent) ? parent() : parent;
-  if (!container || container[key] !== undefined) {
-    return;
-  }
-
-  container[key] = !isClass(classType) ? classType(key, value) : new classType(value);
-  setMetadata(container[key], "id", key);
 }
 
 /**
@@ -154,6 +128,7 @@ function loadValue(rootInstance: any, parts: string[], value: any) {
         current[part] = value;
       }
     } else {
+      const signalClassType = isSignal(current) ? current.options?.classType : undefined;
       if (isSignal(current)) {
         current = getWritableSignalValue(current);
       }
@@ -163,7 +138,7 @@ function loadValue(rootInstance: any, parts: string[], value: any) {
           rootInstance,
           parts.slice(0, i).join(".")
         );
-        const classType = parentInstance?.options?.classType;
+        const classType = signalClassType ?? parentInstance?.options?.classType;
         if (classType) {
           current[part] = !isClass(classType) ? classType(part) : new classType();
           setMetadata(current[part], 'id', part)
