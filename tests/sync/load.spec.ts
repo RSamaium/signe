@@ -8,10 +8,9 @@ describe("load function", () => {
 
   beforeEach(() => {
     _class = class NestedClass {
-      constructorData: any;
       value = signal(0);
-      constructor(data?: any) {
-        this.constructorData = data;
+      constructor(id: string) {
+        console.log('NestedClass constructor', id);
       }
     }
 
@@ -53,96 +52,6 @@ describe("load function", () => {
     expect(testInstance.position.y()).toBe(20);
   });
 
-  it("should update primitive fields inside nested object signals from object values", () => {
-    const root = {
-      events: signal({
-        ev1: {
-          _removeTransition: signal({ active: false })
-        }
-      })
-    };
-
-    load(root, {
-      events: {
-        ev1: {
-          _removeTransition: {
-            active: true,
-            data: { source: "x" },
-            transition: { animation: "die" }
-          }
-        }
-      }
-    }, true);
-
-    expect(root.events().ev1._removeTransition()).toEqual({
-      active: true,
-      data: { source: "x" },
-      transition: { animation: "die" }
-    });
-  });
-
-  it("should update primitive fields inside nested object signals from path values", () => {
-    const root = {
-      events: signal({
-        ev1: {
-          _removeTransition: signal({ active: false })
-        }
-      })
-    };
-
-    load(root, {
-      "events.ev1._removeTransition.active": true,
-      "events.ev1._removeTransition.reason": "defeated",
-      "events.ev1._removeTransition.timeoutMs": 700
-    });
-
-    expect(root.events().ev1._removeTransition()).toEqual({
-      active: true,
-      reason: "defeated",
-      timeoutMs: 700
-    });
-  });
-
-  it("should initialize null signal values when loading nested object paths", () => {
-    const root = {
-      data: signal(null)
-    };
-
-    load(root, {
-      data: {
-        active: true,
-        transition: { animation: "die" }
-      }
-    }, true);
-
-    expect(root.data()).toEqual({
-      active: true,
-      transition: { animation: "die" }
-    });
-  });
-
-  it("should keep existing object signal fields during partial nested loads", () => {
-    const root = {
-      transition: signal({
-        active: false,
-        reason: "spawned",
-        timeoutMs: 300
-      })
-    };
-
-    load(root, {
-      transition: {
-        active: true
-      }
-    }, true);
-
-    expect(root.transition()).toEqual({
-      active: true,
-      reason: "spawned",
-      timeoutMs: 300
-    });
-  });
-
   
   it("collection", () => {
     load(testInstance, { 'nested.id.value': 10});
@@ -166,8 +75,6 @@ describe("load function", () => {
   });
 
   it("should load nested GameObject in Scene", () => {
-    let constructorData: any;
-
     class GameObject {
       position = {
         x: signal(0),
@@ -175,10 +82,6 @@ describe("load function", () => {
       };
       @sync() direction = signal(0);
       @sync() graphics = signal([]);
-
-      constructor(data?: any) {
-        constructorData = data;
-      }
     }
 
     class Scene {
@@ -198,78 +101,10 @@ describe("load function", () => {
     }, true);
 
     expect(scene.users()['player1']).instanceOf(GameObject);
-    expect(constructorData).toBeUndefined();
     expect(scene.users()['player1'].position.x()).toBe(100);
     expect(scene.users()['player1'].position.y()).toBe(200);
     expect(scene.users()['player1'].direction()).toBe(45);
     expect(scene.users()['player1'].graphics()).toEqual(['sprite1', 'sprite2']);
-  });
-
-  it("should hydrate typed collections from object payloads without passing payloads to constructors", () => {
-    let constructorData: any;
-
-    class Player {
-      @sync() x = signal(0);
-      @sync() y = signal(0);
-      @sync() graphics = signal<any[]>([]);
-
-      constructor(data?: any) {
-        constructorData = data;
-      }
-    }
-
-    class GameMap {
-      @sync(Player) players = signal<Record<string, Player>>({});
-    }
-
-    const map = new GameMap();
-
-    load(map, {
-      players: {
-        p1: {
-          x: 100,
-          y: 200,
-          graphics: ["hero"]
-        }
-      }
-    }, true);
-
-    expect(map.players().p1).instanceOf(Player);
-    expect(constructorData).toBeUndefined();
-    expect(map.players().p1.x()).toBe(100);
-    expect(map.players().p1.y()).toBe(200);
-    expect(map.players().p1.graphics()).toEqual(["hero"]);
-  });
-
-  it("should create collection class instances from path object values", () => {
-    let constructorData: any;
-
-    class Player {
-      @sync() name = signal("");
-      @sync() score = signal(0);
-
-      constructor(data?: any) {
-        constructorData = data;
-      }
-    }
-
-    class Game {
-      @sync(Player) players = signal<Record<string, Player>>({});
-    }
-
-    const game = new Game();
-
-    load(game, {
-      "players.player1": {
-        name: "Alice",
-        score: 100
-      }
-    });
-
-    expect(game.players().player1).instanceOf(Player);
-    expect(constructorData).toBeUndefined();
-    expect(game.players().player1.name()).toBe("Alice");
-    expect(game.players().player1.score()).toBe(100);
   });
 
   it("should handle multiple loads on the same Scene", () => {

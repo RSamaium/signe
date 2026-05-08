@@ -139,23 +139,6 @@ describe('Request Decorator', () => {
       usersCount: 2
     });
   });
-
-  it('should route direct paths without a PartyKit prefix', async () => {
-    const response = await server.onRequest(new globalThis.Request("http://localhost/status"));
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      status: "online",
-      count: 0,
-      usersCount: 2
-    });
-  });
-
-  it('should not match longer paths against shorter handlers', async () => {
-    const response = await server.onRequest(createMockRequest("/status/extra"));
-
-    expect(response.status).toBe(404);
-  });
   
   it('should handle path parameters correctly', async () => {
     // Test existing user
@@ -198,17 +181,6 @@ describe('Request Decorator', () => {
     expect(invalidResponse.status).toBe(400);
     const invalidData = await invalidResponse.json();
     expect(invalidData.error).toBe("Invalid request body");
-
-    const missingContentTypeReq = createMockRequest("/increment", {
-      method: "POST",
-      body: JSON.stringify({ amount: 1 })
-    });
-
-    const missingContentTypeResponse = await server.onRequest(missingContentTypeReq);
-    expect(missingContentTypeResponse.status).toBe(400);
-    await expect(missingContentTypeResponse.json()).resolves.toEqual({
-      error: "Content-Type must be application/json"
-    });
   });
   
   it('should respect request guards', async () => {

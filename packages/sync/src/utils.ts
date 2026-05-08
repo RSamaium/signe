@@ -68,14 +68,10 @@ export function isInstanceOfClass(value: unknown): boolean {
 
 export function generateShortUUID(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  const randomBytes =
-    typeof globalThis.crypto?.getRandomValues === "function"
-      ? globalThis.crypto.getRandomValues(new Uint8Array(8))
-      : null;
   let uuid = '';
   for (let i = 0; i < 8; i++) {
-    const randomValue = randomBytes?.[i] ?? Math.floor(Math.random() * 256);
-    uuid += chars[randomValue % chars.length];
+      const randomIndex = Math.floor(Math.random() * chars.length);
+      uuid += chars[randomIndex];
   }
   return uuid;
 }

@@ -615,10 +615,7 @@ export class Server implements Party.Server {
       return;
     }
 
-    const sessionExpiryTime =
-      subRoom.sessionExpiryTime ??
-      subRoom.constructor.sessionExpiryTime ??
-      5 * 60 * 1000;
+    const sessionExpiryTime = subRoom.constructor.sessionExpiryTime;
     await this.garbageCollector({ sessionExpiryTime });
 
     // Check room guards
@@ -1292,7 +1289,9 @@ export class Server implements Party.Server {
 
     const url = new URL(req.url);
     const method = req.method;
-    const pathname = this.normalizeRequestPath(url.pathname);
+    let pathname = url.pathname;
+
+    pathname = '/' + pathname.split('/').slice(4).join('/');
 
     // Check each registered handler
     for (const [routeKey, handler] of requestHandlers.entries()) {
@@ -1326,18 +1325,16 @@ export class Server implements Party.Server {
         if (handler.bodyValidation && ['POST', 'PUT', 'PATCH'].includes(method)) {
           try {
             const contentType = req.headers.get('content-type') || '';
-            if (!contentType.includes('application/json')) {
-              return res.badRequest("Content-Type must be application/json");
+            if (contentType.includes('application/json')) {
+              const body = await req.json();
+              const validation = handler.bodyValidation.safeParse(body);
+              if (!validation.success) {
+                return res.badRequest("Invalid request body", {
+                  details: validation.error
+                });
+              }
+              bodyData = validation.data;
             }
-
-            const body = await req.json();
-            const validation = handler.bodyValidation.safeParse(body);
-            if (!validation.success) {
-              return res.badRequest("Invalid request body", {
-                details: validation.error
-              });
-            }
-            bodyData = validation.data;
           } catch (error) {
             return res.badRequest("Failed to parse request body");
           }
@@ -1375,7 +1372,14 @@ export class Server implements Party.Server {
    * @returns {boolean} True if the paths match
    */
   private pathMatches(requestPath: string, handlerPath: string): boolean {
-    return this.pathPatternToRegex(handlerPath).test(requestPath);
+    // Convert handler path pattern to regex
+    // Replace :param with named capture groups
+    const pathRegexString = handlerPath
+      .replace(/\//g, '\\/') // Escape slashes
+      .replace(/:([^\/]+)/g, '([^/]+)'); // Convert :params to capture groups
+
+    const pathRegex = new RegExp(`^${pathRegexString}`);
+    return pathRegex.test(requestPath);
   }
 
   /**
@@ -1397,7 +1401,12 @@ export class Server implements Party.Server {
       }
     });
 
-    const pathRegex = this.pathPatternToRegex(handlerPath);
+    // Extract parameter values from request path
+    const pathRegexString = handlerPath
+      .replace(/\//g, '\\/') // Escape slashes
+      .replace(/:([^\/]+)/g, '([^/]+)'); // Convert :params to capture groups
+
+    const pathRegex = new RegExp(`^${pathRegexString}`);
     const matches = requestPath.match(pathRegex);
 
     if (matches && matches.length > 1) {
@@ -1408,28 +1417,6 @@ export class Server implements Party.Server {
     }
 
     return params;
-  }
-
-  private normalizeRequestPath(pathname: string): string {
-    const parts = pathname.split('/').filter(Boolean);
-    if (parts[0] === 'parties' && parts.length >= 3) {
-      const routePath = parts.slice(3).join('/');
-      return routePath ? `/${routePath}` : '/';
-    }
-
-    return pathname || '/';
-  }
-
-  private pathPatternToRegex(handlerPath: string): RegExp {
-    const segments = handlerPath.split('/').map(segment => {
-      if (segment.startsWith(':')) {
-        return '([^/]+)';
-      }
-
-      return segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    });
-
-    return new RegExp(`^${segments.join('/')}$`);
   }
 
   /**

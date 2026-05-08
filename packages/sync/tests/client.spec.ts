@@ -231,34 +231,6 @@ describe("Sync Client", () => {
       
       // Verify removeEventListener was called
       expect(mockSocket.removeEventListener).toHaveBeenCalled();
-
-      const messageEvent = new MessageEvent("message", {
-        data: JSON.stringify({
-          type: "custom-event",
-          value: { data: "test" },
-        }),
-      });
-
-      eventListeners.get("message").forEach(listener => listener(messageEvent));
-      expect(callback).not.toHaveBeenCalled();
-    });
-
-    it("should ignore invalid JSON messages", async () => {
-      const conn = await connectionRoom(defaultOptions, {});
-      const callback = vi.fn();
-
-      conn.on("custom-event", callback);
-
-      const messageEvent = new MessageEvent("message", {
-        data: "not-json",
-      });
-
-      expect(() => {
-        eventListeners.get("message").forEach(listener => listener(messageEvent));
-      }).not.toThrow();
-
-      expect(load).not.toHaveBeenCalled();
-      expect(callback).not.toHaveBeenCalled();
     });
 
     it("should close the connection", async () => {

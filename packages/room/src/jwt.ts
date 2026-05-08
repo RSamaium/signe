@@ -132,7 +132,9 @@ export class JWTAuth {
         };
 
         // Encode header and payload
+        // @ts-expect-error - TS doesn't have a built-in TextEncoder
         const encodedHeader: string = this.base64UrlEncode(this.encoder.encode(JSON.stringify(header)));
+        //   @ts-expect-error - TS doesn't have a built-in TextEncoder
         const encodedPayload: string = this.base64UrlEncode(this.encoder.encode(JSON.stringify(fullPayload)));
 
         // Create signature base
@@ -172,7 +174,9 @@ export class JWTAuth {
 
         // Decode header and payload
         try {
+            // @ts-expect-error - TS doesn't have a built-in TextDecoder
             const header: JWTHeader = JSON.parse(this.decoder.decode(this.base64UrlDecode(encodedHeader)));
+            // @ts-expect-error - TS doesn't have a built-in TextDecoder
             const payload: JWTPayload = JSON.parse(this.decoder.decode(this.base64UrlDecode(encodedPayload)));
 
             // Check algorithm

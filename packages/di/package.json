@@ -1,6 +1,6 @@
 {
   "name": "@signe/di",
-  "version": "2.9.2",
+  "version": "2.10.0",
   "description": "Lightweight dependency injection container for TypeScript applications.",
   "main": "./dist/index.js",
   "scripts": {

@@ -92,45 +92,22 @@ function loadValue(rootInstance: any, parts: string[], value: any) {
     if (i === parts.length - 1) {
       if (value == DELETE_TOKEN) {
         if (isSignal(current)) {
-          current = getWritableSignalValue(current, false);
-          if (current === null || current === undefined) return;
+          current = current();
         }
         Reflect.deleteProperty(current, part);
       }
-      else if (isSignal(current)) {
-        const currentValue = getWritableSignalValue(current);
-        const targetKey = Array.isArray(currentValue) && !isNaN(Number(part)) ? Number(part) : part;
-
-        if (
-          current.options?.classType &&
-          value &&
-          typeof value === "object" &&
-          !Array.isArray(value)
-        ) {
-          const classType = current.options.classType;
-          if (currentValue[targetKey] === undefined) {
-            currentValue[targetKey] = !isClass(classType)
-              ? classType(String(part))
-              : new classType();
-            setMetadata(currentValue[targetKey], "id", part);
-          }
-          load(currentValue[targetKey], value, true);
-        } else if (Array.isArray(currentValue) && !isNaN(Number(part))) {
-          currentValue[Number(part)] = value;
-        } else {
-          currentValue[part] = value;
-        }
-      }
       else if (current[part]?._subject) {
         current[part].set(value);
+      }
+      else if (isSignal(current) && Array.isArray(current()) && !isNaN(Number(part))) {
+        current()[Number(part)] = value;
       }
       else {
         current[part] = value;
       }
     } else {
-      const signalClassType = isSignal(current) ? current.options?.classType : undefined;
       if (isSignal(current)) {
-        current = getWritableSignalValue(current);
+        current = current();
       }
       const currentValue = current[part];
       if (currentValue === undefined) {
@@ -138,7 +115,7 @@ function loadValue(rootInstance: any, parts: string[], value: any) {
           rootInstance,
           parts.slice(0, i).join(".")
         );
-        const classType = signalClassType ?? parentInstance?.options?.classType;
+        const classType = parentInstance?.options?.classType;
         if (classType) {
           current[part] = !isClass(classType) ? classType(part) : new classType();
           setMetadata(current[part], 'id', part)
@@ -149,15 +126,6 @@ function loadValue(rootInstance: any, parts: string[], value: any) {
       current = current[part];
     }
   }
-}
-
-function getWritableSignalValue(signal: any, initialize = true) {
-  let value = signal();
-  if (initialize && (value === null || value === undefined)) {
-    value = {};
-    signal.set(value);
-  }
-  return value;
 }
 
 /**
@@ -176,7 +144,7 @@ export function getByPath(root: any, path: string) {
     if (isSignal(current)) {
       current = current();
     }
-    if (current && part in current) {
+    if (current[part]) {
       current = current[part];
     } else {
       return undefined;

@@ -1,5 +1,11 @@
 # @signe/room
 
+## 2.10.0
+
+### Minor Changes
+
+- Reset the package line to the 2.9.0 runtime baseline for the 2.10 release.
+
 ## 2.9.4
 
 ### Patch Changes

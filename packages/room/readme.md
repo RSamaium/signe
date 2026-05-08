@@ -123,7 +123,7 @@ The `@Request` decorator allows you to handle HTTP requests with specific routes
 
 ```ts
 import { z } from "zod";
-import { Guard, Room, Request, ServerResponse } from "@signe/room";
+import { Room, Request, RequestGuard, ServerResponse } from "@signe/room";
 
 @Room({
   path: "api"
@@ -169,12 +169,11 @@ class ApiRoom {
 }
 ```
 
-Request handler methods receive:
-
-1. `req`: the original `Party.Request`, extended with `req.params` and
-   `req.data` when a validation schema is provided.
-2. `res`: a `ServerResponse` helper for JSON, text, redirects, and common
-   error responses.
+Request handler methods receive these parameters:
+1. `req`: The original Party.Request object
+2. `body`: The validated request body (if validation schema was provided)
+3. `params`: An object containing any path parameters
+4. `room`: The Party.Room instance
 
 You can return:
 - A Response object for complete control

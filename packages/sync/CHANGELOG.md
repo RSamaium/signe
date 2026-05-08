@@ -1,5 +1,11 @@
 # @signe/sync
 
+## 2.10.0
+
+### Minor Changes
+
+- Reset `load()` and sync client behavior to the 2.9.0 runtime baseline, removing the typed collection hydration changes introduced after 2.9.0.
+
 ## 2.9.4
 
 ### Patch Changes
