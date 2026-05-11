@@ -34,6 +34,7 @@
     "@signe/reactive": "workspace:*",
     "@signe/room": "workspace:*",
     "@signe/sync": "workspace:*",
+    "@types/node": "^22.13.9",
     "@vitest/coverage-v8": "^3.0.7",
     "bumpp": "^9.4.1",
     "pnpm": "^9.1.4",

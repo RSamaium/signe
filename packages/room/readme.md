@@ -641,6 +641,98 @@ connection.close();
 
 > https://docs.partykit.io/reference/partyserver-api/#partyconnection
 
+## Node.js adapter
+
+`@signe/room/node` runs a room server in a standard single-process Node.js
+application. It is useful for local development, self-hosting, Express/Fastify
+style integrations, Vite dev servers, and tests that do not need PartyKit.
+
+```ts
+import { createServer } from "node:http";
+import { WebSocketServer } from "ws";
+import { Action, Request, Room, Server } from "@signe/room";
+import { createNodeRoomTransport } from "@signe/room/node";
+import { signal } from "@signe/reactive";
+import { sync } from "@signe/sync";
+
+@Room({ path: "demo" })
+class CounterRoom {
+  @sync() count = signal(0);
+
+  @Action("increment")
+  increment(_user: unknown, value: { amount?: number }) {
+    this.count.update((count) => count + (value.amount ?? 1));
+  }
+
+  @Request({ path: "/count" })
+  getCount() {
+    return { count: this.count() };
+  }
+}
+
+class CounterServer extends Server {
+  rooms = [CounterRoom];
+}
+
+const transport = createNodeRoomTransport(CounterServer, {
+  partiesPath: "/parties/main",
+});
+
+const server = createServer((req, res) => {
+  void transport.handleNodeRequest(req, res);
+});
+
+const wsServer = new WebSocketServer({ noServer: true });
+
+server.on("upgrade", (request, socket, head) => {
+  transport.handleUpgrade(wsServer, request, socket, head);
+});
+
+server.listen(3000);
+```
+
+HTTP requests use the same PartyKit-style room path:
+
+```bash
+curl http://localhost:3000/parties/main/demo/count
+```
+
+WebSocket clients connect to the room URL and send normal action packets:
+
+```js
+const socket = new WebSocket("ws://localhost:3000/parties/main/demo");
+
+socket.send(JSON.stringify({
+  action: "increment",
+  value: { amount: 1 }
+}));
+```
+
+For middleware frameworks, pass a `next` callback. Requests that do not match
+the configured parties path are delegated to `next`.
+
+```ts
+app.use((req, res, next) => {
+  void transport.handleNodeRequest(req, res, next);
+});
+```
+
+Room-to-room requests are available through `room.context.parties`:
+
+```ts
+const response = await this.room.context.parties.main
+  .get("other-room")
+  .fetch("/count");
+```
+
+The Node adapter stores room state in memory by default. Provide `storage` in
+`createNodeRoomTransport` options to inject a custom storage backend. The first
+Node adapter version targets single-process Node.js only; clustering,
+multi-process coordination, Cloudflare Durable Objects, Bun WebSocket, and
+uWebSockets.js support are outside this adapter.
+
+See `packages/room/examples/node` for a runnable HTTP + WebSocket example.
+
 ## Testing
 
 ```ts
