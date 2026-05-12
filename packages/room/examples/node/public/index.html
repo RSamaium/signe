@@ -126,6 +126,11 @@
         flex-wrap: wrap;
       }
 
+      .session {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        font-size: 12px;
+      }
+
       .users {
         padding: 16px;
         display: grid;
@@ -208,8 +213,10 @@
           <div class="actions">
             <button id="increment" type="button">Increment</button>
             <button id="reset" class="secondary" type="button">Reset</button>
+            <button id="resetSession" class="secondary" type="button">New session</button>
           </div>
           <div class="status" id="status">Disconnected</div>
+          <div class="muted session" id="sessionLabel"></div>
         </div>
 
         <aside class="card users">
@@ -224,6 +231,7 @@
         socket: null,
         roomId: getRoomIdFromPath(),
         name: localStorage.getItem("signe-node-name") || "",
+        sessionId: localStorage.getItem("signe-node-session-id") || "",
         users: {},
       };
 
@@ -236,6 +244,7 @@
       const nameInput = document.querySelector("#nameInput");
       const count = document.querySelector("#count");
       const status = document.querySelector("#status");
+      const sessionLabel = document.querySelector("#sessionLabel");
       const users = document.querySelector("#users");
 
       nameInput.value = state.name;
@@ -279,6 +288,14 @@
         await fetch(`/parties/main/${encodeURIComponent(state.roomId)}/reset`, { method: "POST" });
       });
 
+      document.querySelector("#resetSession").addEventListener("click", () => {
+        if (!state.roomId) return;
+        disconnect();
+        localStorage.removeItem("signe-node-session-id");
+        state.sessionId = "";
+        enterRoom(state.roomId, state.name || "Anonymous");
+      });
+
       if (state.roomId) {
         enterRoom(state.roomId, state.name || "Anonymous");
       } else {
@@ -295,7 +312,8 @@
         showRoom();
 
         const protocol = location.protocol === "https:" ? "wss" : "ws";
-        const params = new URLSearchParams({ name });
+        const sessionId = getSessionId();
+        const params = new URLSearchParams({ name, id: sessionId });
         state.socket = new WebSocket(`${protocol}://${location.host}/parties/main/${encodeURIComponent(roomId)}?${params}`);
 
         state.socket.addEventListener("open", () => {
@@ -335,6 +353,7 @@
         leaveRoom.classList.add("hidden");
         roomLabel.textContent = "Choose a room";
         status.textContent = "Disconnected";
+        sessionLabel.textContent = "";
       }
 
       function showRoom() {
@@ -342,6 +361,16 @@
         roomPanel.classList.remove("hidden");
         leaveRoom.classList.remove("hidden");
         roomLabel.textContent = `/rooms/${state.roomId}`;
+        sessionLabel.textContent = `session ${getSessionId().slice(0, 8)}`;
+      }
+
+      function getSessionId() {
+        if (!state.sessionId) {
+          state.sessionId = crypto.randomUUID();
+          localStorage.setItem("signe-node-session-id", state.sessionId);
+        }
+
+        return state.sessionId;
       }
 
       function renderUsers() {

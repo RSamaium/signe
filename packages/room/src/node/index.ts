@@ -376,7 +376,7 @@ export class NodeRoomTransport<TServer extends Party.Server = Party.Server> {
     }
 
     const record = await this.getRecord(parsed.namespace, parsed.roomId);
-    const connection = new NodeConnection(webSocket, url);
+    const connection = new NodeConnection(webSocket, url, getConnectionIdFromUrl(url));
     const connectRequest = request instanceof Request
       ? request
       : await createWebRequest(request, url, false);
@@ -713,6 +713,11 @@ function toLocalUrl(path: string) {
   return path.startsWith("http://") || path.startsWith("https://")
     ? path
     : `http://localhost${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function getConnectionIdFromUrl(url: string) {
+  const requestedId = new URL(url).searchParams.get("id")?.trim();
+  return requestedId || undefined;
 }
 
 function trimSlashes(value: string) {

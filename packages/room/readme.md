@@ -182,10 +182,42 @@ You can return:
 
 ## Advanced Features
 
+### User Sessions and Reconnects
+
+Rooms use the connection id as the private session id (`privateId`). The
+corresponding `publicId` is the key used in `@users()` collections. Query
+parameters such as a display name are user data only; they do not identify the
+session.
+
+Pass a stable `id` when connecting if a browser refresh or reconnect should
+restore the same user. If `id` is omitted, each connection creates a new
+session and therefore a new user entry. To implement logout, remove or rotate
+the stored id before reconnecting.
+
+Use one active WebSocket per session id. If you want multiple tabs or devices
+online at the same time, give each connection a distinct id.
+
+```ts
+import { connectionRoom } from "@signe/sync/client";
+
+const sessionId =
+  localStorage.getItem("room-session-id") ?? crypto.randomUUID();
+
+localStorage.setItem("room-session-id", sessionId);
+
+await connectionRoom({
+  host: window.location.origin,
+  room: "your-room-name",
+  party: "main",
+  id: sessionId,
+}, roomInstance);
+```
+
 ### Session Transfer
 
 You can transfer a user's session from one room to another using `$sessionTransfer`.
-This preserves the same session id (privateId) across rooms.
+This is an advanced use of the same session mechanism and preserves the same
+private session id (`privateId`) across rooms.
 
 Server-side (inside a room or action):
 
@@ -528,11 +560,14 @@ import { connectionRoom } from '@signe/sync/client';
 
 // Initialize your room instance
 const room = new YourRoomSchema();
+const sessionId = localStorage.getItem('room-session-id') ?? crypto.randomUUID();
+localStorage.setItem('room-session-id', sessionId);
 
 // Connect directly to a room
 const connection = await connectionRoom({
   host: window.location.origin,
   room: 'your-room-name',
+  id: sessionId,
   party: 'your-party-name', // Optional, defaults to main party
   query: {} // Optional query parameters
 }, room);
