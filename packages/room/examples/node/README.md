@@ -8,11 +8,17 @@ pnpm install
 pnpm --filter @signe/room-node-example dev
 ```
 
-Open http://localhost:3000.
+Open http://localhost:3000, choose a room id and a display name, then enter the
+room. The browser URL changes to `/rooms/:roomId`; refreshing that URL serves
+the same app and reconnects to the matching room.
 
+- App URL: `http://localhost:3000/rooms/demo`
 - HTTP: `GET /parties/main/demo/count`
 - HTTP: `POST /parties/main/demo/reset`
-- WebSocket: `ws://localhost:3000/parties/main/demo`
+- WebSocket: `ws://localhost:3000/parties/main/demo?name=Sam`
+
+The room uses `@users()` and `@connected()` from `@signe/sync`, so the right
+panel shows every known user and whether they are currently connected.
 
 ## SQLite storage
 
@@ -26,6 +32,8 @@ pnpm --filter @signe/room-node-example dev:sqlite
 The SQLite example uses `createSqliteNodeRoomStorage()` from `@signe/room/node`
 and Node's built-in `node:sqlite` module. It stores room state in
 `packages/room/examples/node/rooms.sqlite`.
+Because the users collection is persisted, reopening the SQLite example can show
+previous users as offline until they reconnect.
 
 The storage provider is passed to `createNodeRoomTransport`:
 

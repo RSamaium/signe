@@ -3,38 +3,10 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
-import { Action, Request, Room, Server } from "@signe/room";
 import { createNodeRoomTransport, createSqliteNodeRoomStorage } from "@signe/room/node";
-import { signal } from "@signe/reactive";
-import { sync } from "@signe/sync";
-import { z } from "zod";
+import { CounterServer } from "./room";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
-
-@Room({ path: "demo" })
-class CounterRoom {
-  @sync() count = signal(0);
-
-  @Action("increment", z.object({ amount: z.number().optional() }))
-  increment(_user: unknown, value: { amount?: number }) {
-    this.count.update((count) => count + (value.amount ?? 1));
-  }
-
-  @Request({ path: "/count" })
-  getCount() {
-    return { count: this.count() };
-  }
-
-  @Request({ path: "/reset", method: "POST" })
-  reset() {
-    this.count.set(0);
-    return { count: this.count() };
-  }
-}
-
-class CounterServer extends Server {
-  rooms = [CounterRoom];
-}
 
 const transport = createNodeRoomTransport(CounterServer, {
   partiesPath: "/parties/main",
@@ -49,7 +21,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (req.url === "/" || req.url === "/index.html") {
+  if (req.url === "/" || req.url === "/index.html" || req.url?.startsWith("/rooms/")) {
     const html = await readFile(join(root, "public/index.html"), "utf8");
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(html);
@@ -74,6 +46,7 @@ server.on("upgrade", (request, socket, head) => {
 server.listen(3000, () => {
   console.log("Signe Node room SQLite example: http://localhost:3000");
   console.log("SQLite file: packages/room/examples/node/rooms.sqlite");
+  console.log("Room URL: http://localhost:3000/rooms/demo");
   console.log("HTTP endpoint: http://localhost:3000/parties/main/demo/count");
-  console.log("WebSocket: ws://localhost:3000/parties/main/demo");
+  console.log("WebSocket: ws://localhost:3000/parties/main/demo?name=Sam");
 });

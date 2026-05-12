@@ -5,6 +5,6 @@
     "moduleResolution": "Bundler",
     "types": ["node"]
   },
-  "include": ["server.ts", "server.sqlite.ts"],
+  "include": ["room.ts", "server.ts", "server.sqlite.ts"],
   "exclude": []
 }
