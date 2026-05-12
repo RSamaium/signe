@@ -159,7 +159,7 @@ export class Server implements Party.Server {
         if (!key.startsWith('session:')) continue;
 
         const privateId = key.replace('session:', '');
-        const typedSession = session as { publicId: string, created: number, connected: boolean };
+        const typedSession = session as { publicId: string, created: number, connected: boolean, disconnectedAt?: number };
 
         // Check if session should be deleted based on:
         // 1. Connection is not active
@@ -167,7 +167,8 @@ export class Server implements Party.Server {
         // 3. Session is older than expiry time
         if (!activePrivateIds.has(privateId) &&
           !typedSession.connected &&
-          (now - typedSession.created) > SESSION_EXPIRY_TIME) {
+          typedSession.disconnectedAt !== undefined &&
+          (now - typedSession.disconnectedAt) >= SESSION_EXPIRY_TIME) {
           // Delete expired session
           await this.deleteSession(privateId);
           expiredPublicIds.add(typedSession.publicId);
@@ -184,13 +185,64 @@ export class Server implements Party.Server {
           // Only delete user if they have an expired session and no valid sessions
           if (expiredPublicIds.has(publicId) && !validPublicIds.has(publicId)) {
             delete currentUsers[publicId];
-            await this.room.storage.delete(`${usersPropName}.${publicId}`);
           }
         }
       }
 
     } catch (error) {
       console.error('Error in garbage collector:', error);
+    }
+  }
+
+  private scheduleSessionGarbageCollector(sessionExpiryTime: number | undefined, privateId?: string) {
+    const normalizedSessionExpiryTime = Number(sessionExpiryTime);
+    if (!Number.isFinite(normalizedSessionExpiryTime) || normalizedSessionExpiryTime < 0) {
+      return;
+    }
+
+    setTimeout(() => {
+      if (privateId) {
+        void this.expireDisconnectedSession(privateId, normalizedSessionExpiryTime);
+        return;
+      }
+      void this.garbageCollector({ sessionExpiryTime: normalizedSessionExpiryTime });
+    }, normalizedSessionExpiryTime);
+  }
+
+  private getSessionExpiryTime(subRoom: any) {
+    return subRoom?.sessionExpiryTime
+      ?? subRoom?.constructor?.prototype?.sessionExpiryTime
+      ?? subRoom?.constructor?.sessionExpiryTime;
+  }
+
+  private async expireDisconnectedSession(privateId: string, sessionExpiryTime: number) {
+    const session = await this.getSession(privateId);
+    if (!session || session.connected || session.disconnectedAt === undefined) {
+      return;
+    }
+
+    if (this.room.getConnection(privateId)) {
+      return;
+    }
+
+    if (Date.now() - session.disconnectedAt < sessionExpiryTime) {
+      return;
+    }
+
+    await this.deleteSession(privateId);
+
+    const sessions = await this.room.storage.list();
+    for (const [key, otherSession] of sessions) {
+      if (!key.startsWith("session:")) continue;
+      if ((otherSession as any).publicId === session.publicId) {
+        return;
+      }
+    }
+
+    const subRoom = await this.getSubRoom();
+    const users = this.getUsersProperty(subRoom);
+    if (users?.()[session.publicId]) {
+      delete users()[session.publicId];
     }
   }
 
@@ -564,17 +616,17 @@ export class Server implements Party.Server {
    * console.log(session);
    * ```
    */
-  async getSession(privateId: string): Promise<{ publicId: string, state?: any, created?: number, connected?: boolean } | null> {
+  async getSession(privateId: string): Promise<{ publicId: string, state?: any, created?: number, connected?: boolean, disconnectedAt?: number } | null> {
     if (!privateId) return null;
     try {
       const session = await this.room.storage.get(`session:${privateId}`);
-      return session as { publicId: string, state?: any, created: number, connected: boolean } | null;
+      return session as { publicId: string, state?: any, created: number, connected: boolean, disconnectedAt?: number } | null;
     } catch (e) {
       return null;
     }
   }
 
-  private async saveSession(privateId: string, data: { publicId: string, state?: any, created?: number, connected?: boolean }) {
+  private async saveSession(privateId: string, data: { publicId: string, state?: any, created?: number, connected?: boolean, disconnectedAt?: number }) {
     const sessionData = {
       ...data,
       created: data.created || Date.now(),
@@ -586,7 +638,13 @@ export class Server implements Party.Server {
   private async updateSessionConnection(privateId: string, connected: boolean) {
     const session = await this.getSession(privateId);
     if (session) {
-      await this.saveSession(privateId, { ...session, connected });
+      const nextSession = { ...session, connected };
+      if (connected) {
+        delete nextSession.disconnectedAt;
+      } else {
+        nextSession.disconnectedAt = Date.now();
+      }
+      await this.saveSession(privateId, nextSession);
     }
   }
 
@@ -615,7 +673,7 @@ export class Server implements Party.Server {
       return;
     }
 
-    const sessionExpiryTime = subRoom.constructor.sessionExpiryTime;
+    const sessionExpiryTime = this.getSessionExpiryTime(subRoom);
     await this.garbageCollector({ sessionExpiryTime });
 
     // Check room guards
@@ -1093,6 +1151,7 @@ export class Server implements Party.Server {
 
     // Mark session as disconnected instead of deleting it
     await this.updateSessionConnection(privateId, false);
+    this.scheduleSessionGarbageCollector(this.getSessionExpiryTime(subRoom), privateId);
 
     // Update user connection status in the signal
     const connectionUpdated = this.updateUserConnectionStatus(user, false);

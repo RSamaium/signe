@@ -12,7 +12,7 @@ class TestUser {
   @connected() connected = signal(false);
 }
 
-@Room({ path: "{roomId}" })
+@Room({ path: "{roomId}", sessionExpiryTime: 50 })
 class TestRoom {
   @users(TestUser) users = signal<Record<string, TestUser>>({});
 }
@@ -140,8 +140,148 @@ describe("Node room adapter sessions", () => {
 
     expect(session?.connected).toBe(false);
   });
+
+  it("expires disconnected sessions after the room sessionExpiryTime", async () => {
+    const storage = createMemoryNodeRoomStorage();
+    const transport = createNodeRoomTransport(TestServer, { storage });
+    const ws = new FakeWebSocket();
+
+    await transport.acceptWebSocket(
+      ws,
+      new Request("http://localhost/parties/main/demo?id=browser-session")
+    );
+
+    const room = await transport.getRoom("main", "demo");
+    const session = await room.storage.get<{ publicId: string }>("session:browser-session");
+    const publicId = session!.publicId;
+
+    ws.close();
+    await sleep(70);
+
+    await transport.acceptWebSocket(
+      new FakeWebSocket(),
+      new Request("http://localhost/parties/main/demo?id=gc-trigger")
+    );
+
+    await nextTick();
+
+    expect(await room.storage.get("session:browser-session")).toBeUndefined();
+    expect(await room.storage.get(`users.${publicId}`)).toBeUndefined();
+  });
+
+  it("runs session expiration after disconnect without waiting for another connection", async () => {
+    const storage = createMemoryNodeRoomStorage();
+    const transport = createNodeRoomTransport(TestServer, { storage });
+    const expiringWs = new FakeWebSocket();
+    const observerWs = new FakeWebSocket();
+
+    await transport.acceptWebSocket(
+      expiringWs,
+      new Request("http://localhost/parties/main/demo?id=browser-session")
+    );
+
+    const room = await transport.getRoom("main", "demo");
+    const session = await room.storage.get<{ publicId: string }>("session:browser-session");
+    const publicId = session!.publicId;
+
+    await transport.acceptWebSocket(
+      observerWs,
+      new Request("http://localhost/parties/main/demo?id=observer")
+    );
+
+    observerWs.sent = [];
+    expiringWs.close();
+    await sleep(120);
+
+    expect(await room.storage.get("session:browser-session")).toBeUndefined();
+    expect(await room.storage.get(`users.${publicId}`)).toBeUndefined();
+    expect(syncValues(observerWs)).toContainEqual({
+      users: {
+        [publicId]: "$delete",
+      },
+    });
+  });
+
+  it("keeps a long-lived session when it reconnects before the disconnect expiry window", async () => {
+    const storage = createMemoryNodeRoomStorage();
+    const transport = createNodeRoomTransport(TestServer, { storage });
+    const ws = new FakeWebSocket();
+
+    await transport.acceptWebSocket(
+      ws,
+      new Request("http://localhost/parties/main/demo?id=browser-session")
+    );
+
+    const room = await transport.getRoom("main", "demo");
+    const session = await room.storage.get<{ publicId: string }>("session:browser-session");
+
+    await sleep(70);
+    ws.close();
+    await nextTick();
+
+    await transport.acceptWebSocket(
+      new FakeWebSocket(),
+      new Request("http://localhost/parties/main/demo?id=browser-session")
+    );
+
+    const reconnectedSession = await room.storage.get<{ publicId: string; connected: boolean }>(
+      "session:browser-session"
+    );
+
+    expect(reconnectedSession?.publicId).toBe(session?.publicId);
+    expect(reconnectedSession?.connected).toBe(true);
+  });
+
+  it("broadcasts a user deletion when a disconnected session expires", async () => {
+    const storage = createMemoryNodeRoomStorage();
+    const transport = createNodeRoomTransport(TestServer, { storage });
+    const expiringWs = new FakeWebSocket();
+    const observerWs = new FakeWebSocket();
+
+    await transport.acceptWebSocket(
+      expiringWs,
+      new Request("http://localhost/parties/main/demo?id=browser-session")
+    );
+
+    const room = await transport.getRoom("main", "demo");
+    const session = await room.storage.get<{ publicId: string }>("session:browser-session");
+    const publicId = session!.publicId;
+
+    await transport.acceptWebSocket(
+      observerWs,
+      new Request("http://localhost/parties/main/demo?id=observer")
+    );
+
+    observerWs.sent = [];
+    expiringWs.close();
+    await sleep(70);
+
+    await transport.acceptWebSocket(
+      new FakeWebSocket(),
+      new Request("http://localhost/parties/main/demo?id=gc-trigger")
+    );
+
+    await nextTick();
+
+    expect(syncValues(observerWs)).toContainEqual({
+      users: {
+        [publicId]: "$delete",
+      },
+    });
+  });
 });
 
 function nextTick() {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function syncValues(ws: FakeWebSocket) {
+  return ws.sent
+    .map((data) => JSON.parse(String(data)))
+    .filter((packet) => packet.type === "sync")
+    .map((packet) => packet.value);
 }

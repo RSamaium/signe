@@ -333,7 +333,7 @@
           }
 
           if (packet.value.users) {
-            state.users = packet.value.users;
+            mergeUsers(state.users, packet.value.users);
             renderUsers();
           }
         });
@@ -387,6 +387,37 @@
               `;
             }).join("")
           : `<div class="muted">No users yet</div>`;
+      }
+
+      function mergeUsers(target, patch) {
+        for (const [id, value] of Object.entries(patch)) {
+          if (value === "$delete") {
+            delete target[id];
+            continue;
+          }
+
+          target[id] = mergeValue(target[id], value);
+        }
+      }
+
+      function mergeValue(current, patch) {
+        if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+          return patch;
+        }
+
+        const next = current && typeof current === "object" && !Array.isArray(current)
+          ? { ...current }
+          : {};
+
+        for (const [key, value] of Object.entries(patch)) {
+          if (value === "$delete") {
+            delete next[key];
+          } else {
+            next[key] = mergeValue(next[key], value);
+          }
+        }
+
+        return next;
       }
 
       function getRoomIdFromPath() {

@@ -8,7 +8,7 @@ class DemoUser {
   @connected() connected = signal(false);
 }
 
-@Room({ path: "{roomId}" })
+@Room({ path: "{roomId}", sessionExpiryTime: 2000 })
 class CounterRoom {
   @sync() count = signal(0);
   @users(DemoUser) users = signal<Record<string, DemoUser>>({});
