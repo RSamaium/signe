@@ -1,9 +1,14 @@
 import { EventEmitter } from "node:events";
 import { createServer } from "node:http";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Action, Request, Room, Server } from "../../packages/room/src";
 import {
+  createMemoryNodeRoomStorage,
   createNodeRoomTransport,
+  createSqliteNodeRoomStorage,
   type NodeWebSocketLike,
   type NodeWebSocketServerLike,
 } from "../../packages/room/src/node";
@@ -261,6 +266,135 @@ describe("@signe/room/node", () => {
 
     expect(storageFactory).toHaveBeenCalledWith("main", "demo");
     expect(put).toHaveBeenCalledWith("value", "custom");
+  });
+
+  it("uses explicit memory storage providers", async () => {
+    const storage = createMemoryNodeRoomStorage();
+    const transport = createNodeRoomTransport(DemoServer, {
+      storage,
+    });
+
+    const room = await transport.getRoom("main", "demo");
+    await room.storage.put("value", "memory");
+
+    await expect(room.storage.get("value")).resolves.toBe("memory");
+    expect(storage.snapshot()).toEqual({
+      "main:demo": [["value", "memory"]],
+    });
+  });
+
+  it("keeps explicit memory storage isolated by namespace and room id", async () => {
+    const storage = createMemoryNodeRoomStorage();
+    const transport = createNodeRoomTransport(DemoServer, {
+      rooms: {
+        alternate: AlternateServer,
+      },
+      storage,
+    });
+    const mainRoom = await transport.getRoom("main", "demo");
+    const alternateRoom = await transport.getRoom("alternate", "demo");
+    const otherRoom = await transport.getRoom("main", "other");
+
+    await mainRoom.storage.put("value", "main");
+    await alternateRoom.storage.put("value", "alternate");
+    await otherRoom.storage.put("value", "other");
+
+    await expect(mainRoom.storage.get("value")).resolves.toBe("main");
+    await expect(alternateRoom.storage.get("value")).resolves.toBe("alternate");
+    await expect(otherRoom.storage.get("value")).resolves.toBe("other");
+  });
+
+  it("returns snapshots without exposing mutable memory internals", async () => {
+    const storage = createMemoryNodeRoomStorage();
+    const transport = createNodeRoomTransport(DemoServer, { storage });
+    const room = await transport.getRoom("main", "demo");
+    const value = { count: 1 };
+
+    await room.storage.put("value", value);
+    const snapshot = storage.snapshot();
+    (snapshot["main:demo"][0][1] as any).count = 99;
+
+    await expect(room.storage.get("value")).resolves.toEqual({ count: 1 });
+  });
+
+  it("restores memory snapshots into new storage providers", async () => {
+    const storage = createMemoryNodeRoomStorage();
+    const transport = createNodeRoomTransport(DemoServer, { storage });
+    const room = await transport.getRoom("main", "demo");
+    await room.storage.put("value", { count: 7 });
+
+    const restoredStorage = createMemoryNodeRoomStorage({
+      snapshot: storage.snapshot(),
+    });
+    const restoredTransport = createNodeRoomTransport(DemoServer, {
+      storage: restoredStorage,
+    });
+    const restoredRoom = await restoredTransport.getRoom("main", "demo");
+
+    await expect(restoredRoom.storage.get("value")).resolves.toEqual({ count: 7 });
+  });
+
+  it("clears explicit memory storage providers", async () => {
+    const storage = createMemoryNodeRoomStorage();
+    const transport = createNodeRoomTransport(DemoServer, { storage });
+    const room = await transport.getRoom("main", "demo");
+    await room.storage.put("value", "memory");
+
+    storage.clear();
+
+    const emptyRoomStorage = storage.getStorage("main", "demo");
+    await expect(emptyRoomStorage.get("value")).resolves.toBeUndefined();
+    expect(storage.snapshot()).toEqual({});
+  });
+
+  it("supports async storage providers for sqlite-like backends", async () => {
+    const sqliteStorage = {
+      get: vi.fn(async (key: string) => `sqlite:${key}`),
+      put: vi.fn(async () => undefined),
+      delete: vi.fn(async () => undefined),
+      list: vi.fn(async () => new Map()),
+    };
+    const provider = {
+      getStorage: vi.fn(async () => sqliteStorage),
+    };
+    const transport = createNodeRoomTransport(DemoServer, {
+      storage: provider,
+    });
+
+    const room = await transport.getRoom("main", "demo");
+    await room.storage.put("value", "persisted");
+
+    expect(provider.getStorage).toHaveBeenCalledWith("main", "demo");
+    expect(sqliteStorage.put).toHaveBeenCalledWith("value", "persisted");
+    await expect(room.storage.get("value")).resolves.toBe("sqlite:value");
+  });
+
+  it("provides a SQLite storage provider", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "signe-room-sqlite-"));
+    cleanup = () => rm(dir, { recursive: true, force: true });
+    const storage = createSqliteNodeRoomStorage({
+      databasePath: join(dir, "rooms.sqlite"),
+    });
+    const transport = createNodeRoomTransport(DemoServer, { storage });
+    const room = await transport.getRoom("main", "demo");
+
+    await room.storage.put("value", { persisted: true });
+    await room.storage.put("other", "entry");
+
+    await expect(room.storage.get("value")).resolves.toEqual({ persisted: true });
+    await expect(room.storage.list()).resolves.toEqual(new Map([
+      ["value", { persisted: true }],
+      ["other", "entry"],
+    ]));
+    await expect(room.storage.delete("other")).resolves.toBe(true);
+    await expect(room.storage.get("other")).resolves.toBeUndefined();
+  });
+
+  it("rejects unsafe SQLite table names", () => {
+    expect(() => createSqliteNodeRoomStorage({
+      databasePath: ":memory:",
+      tableName: "rooms; DROP TABLE rooms;",
+    })).toThrow("Invalid SQLite table name");
   });
 
   it("delegates unmatched Node HTTP requests to next", async () => {

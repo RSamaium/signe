@@ -651,7 +651,7 @@ style integrations, Vite dev servers, and tests that do not need PartyKit.
 import { createServer } from "node:http";
 import { WebSocketServer } from "ws";
 import { Action, Request, Room, Server } from "@signe/room";
-import { createNodeRoomTransport } from "@signe/room/node";
+import { createMemoryNodeRoomStorage, createNodeRoomTransport } from "@signe/room/node";
 import { signal } from "@signe/reactive";
 import { sync } from "@signe/sync";
 
@@ -674,8 +674,11 @@ class CounterServer extends Server {
   rooms = [CounterRoom];
 }
 
+const storage = createMemoryNodeRoomStorage();
+
 const transport = createNodeRoomTransport(CounterServer, {
   partiesPath: "/parties/main",
+  storage,
 });
 
 const server = createServer((req, res) => {
@@ -725,9 +728,88 @@ const response = await this.room.context.parties.main
   .fetch("/count");
 ```
 
-The Node adapter stores room state in memory by default. Provide `storage` in
-`createNodeRoomTransport` options to inject a custom storage backend. The first
-Node adapter version targets single-process Node.js only; clustering,
+The Node adapter stores room state in memory by default. The package also
+provides explicit memory and SQLite storage providers.
+
+Use `createMemoryNodeRoomStorage()` when you want to keep a reference to the
+memory backend, inspect it, clear it, or save a snapshot for a later process
+restart.
+
+```ts
+const storage = createMemoryNodeRoomStorage();
+
+const transport = createNodeRoomTransport(CounterServer, {
+  storage,
+});
+
+const snapshot = storage.snapshot();
+const restoredStorage = createMemoryNodeRoomStorage({ snapshot });
+```
+
+Use `createSqliteNodeRoomStorage()` when you want room storage persisted in a
+SQLite database. This helper uses Node's built-in `node:sqlite` module.
+
+```ts
+import {
+  createNodeRoomTransport,
+  createSqliteNodeRoomStorage,
+} from "@signe/room/node";
+
+const transport = createNodeRoomTransport(CounterServer, {
+  storage: createSqliteNodeRoomStorage({
+    databasePath: "./rooms.sqlite",
+  }),
+});
+```
+
+To create your own storage backend, implement the key-value methods used by
+`@signe/room`: `get`, `put`, `delete`, and `list`, then return it from a storage
+provider.
+
+```ts
+import type { NodeRoomStorage, NodeRoomStorageProvider } from "@signe/room/node";
+
+class MyStorage implements NodeRoomStorage {
+  async get<T = unknown>(key: string): Promise<T | undefined> {
+    // Read from your database
+  }
+
+  async put<T = unknown>(key: string, value: T): Promise<void> {
+    // Write to your database
+  }
+
+  async delete(key: string): Promise<void | boolean> {
+    // Delete from your database
+  }
+
+  async list<T = unknown>(): Promise<Map<string, T>> {
+    // Return all key/value entries for the room
+  }
+}
+
+const storage: NodeRoomStorageProvider = {
+  getStorage(namespace, roomId) {
+    return new MyStorage(namespace, roomId);
+  },
+};
+
+const transport = createNodeRoomTransport(CounterServer, {
+  storage,
+});
+```
+
+To create your own Node transport integration, use the low-level methods exposed
+by `createNodeRoomTransport()`:
+
+- `transport.fetch(requestOrPath, init?)` for runtimes using Web
+  `Request`/`Response`;
+- `transport.handleNodeRequest(req, res, next?)` for Node HTTP middleware;
+- `transport.handleUpgrade(wsServer, request, socket, head)` for `ws`
+  WebSocket upgrades;
+- `transport.acceptWebSocket(webSocket, request)` when your framework already
+  accepted the WebSocket and you only need to attach it to a room.
+
+The first Node adapter version targets single-process Node.js only; clustering,
 multi-process coordination, Cloudflare Durable Objects, Bun WebSocket, and
 uWebSockets.js support are outside this adapter.
 

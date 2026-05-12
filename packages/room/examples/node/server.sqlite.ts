@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { Action, Request, Room, Server } from "@signe/room";
-import { createMemoryNodeRoomStorage, createNodeRoomTransport } from "@signe/room/node";
+import { createNodeRoomTransport, createSqliteNodeRoomStorage } from "@signe/room/node";
 import { signal } from "@signe/reactive";
 import { sync } from "@signe/sync";
 import { z } from "zod";
@@ -36,11 +36,11 @@ class CounterServer extends Server {
   rooms = [CounterRoom];
 }
 
-const storage = createMemoryNodeRoomStorage();
-
 const transport = createNodeRoomTransport(CounterServer, {
   partiesPath: "/parties/main",
-  storage,
+  storage: createSqliteNodeRoomStorage({
+    databasePath: join(root, "rooms.sqlite"),
+  }),
 });
 
 const server = createServer(async (req, res) => {
@@ -72,7 +72,8 @@ server.on("upgrade", (request, socket, head) => {
 });
 
 server.listen(3000, () => {
-  console.log("Signe Node room example: http://localhost:3000");
+  console.log("Signe Node room SQLite example: http://localhost:3000");
+  console.log("SQLite file: packages/room/examples/node/rooms.sqlite");
   console.log("HTTP endpoint: http://localhost:3000/parties/main/demo/count");
   console.log("WebSocket: ws://localhost:3000/parties/main/demo");
 });

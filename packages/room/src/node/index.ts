@@ -1,11 +1,40 @@
 import type { IncomingMessage, ServerResponse as NodeServerResponse } from "node:http";
+import { createRequire } from "node:module";
 import type { Duplex } from "node:stream";
-import { Storage } from "../storage";
 import type * as Party from "../types/party";
 
-export type NodeRoomStorage = Pick<Party.Storage, "get" | "put" | "delete" | "list">;
+export type NodeRoomStorage = {
+  get<T = unknown>(key: string): Promise<T | undefined>;
+  put<T = unknown>(key: string, value: T): Promise<void>;
+  delete(key: string): Promise<void | boolean>;
+  list<T = unknown>(): Promise<Map<string, T>>;
+};
 
-export type NodeRoomStorageFactory = (namespace: string, roomId: string) => NodeRoomStorage;
+export type NodeRoomStorageFactory = (
+  namespace: string,
+  roomId: string
+) => NodeRoomStorage | Promise<NodeRoomStorage>;
+
+export type NodeRoomStorageProvider = {
+  getStorage(namespace: string, roomId: string): NodeRoomStorage | Promise<NodeRoomStorage>;
+};
+
+export type NodeMemoryStorageSnapshot = Record<string, [string, unknown][]>;
+
+export type NodeSqliteDatabase = {
+  exec(sql: string): unknown;
+  prepare(sql: string): {
+    get(...params: unknown[]): unknown;
+    run(...params: unknown[]): { changes: number | bigint };
+    all(...params: unknown[]): unknown[];
+  };
+};
+
+export type NodeSqliteStorageOptions = {
+  database?: NodeSqliteDatabase;
+  databasePath?: string;
+  tableName?: string;
+};
 
 export type NodeServerConstructor<TServer extends Party.Server = Party.Server> = {
   new (room: Party.Room): TServer;
@@ -14,7 +43,7 @@ export type NodeServerConstructor<TServer extends Party.Server = Party.Server> =
 export type NodeRoomTransportOptions = {
   partiesPath?: string;
   env?: Record<string, unknown>;
-  storage?: NodeRoomStorageFactory;
+  storage?: NodeRoomStorageFactory | NodeRoomStorageProvider;
   rooms?: Record<string, NodeServerConstructor>;
 };
 
@@ -54,6 +83,16 @@ type ParsedPartyPath = {
 const DEFAULT_PARTIES_PATH = "/parties/main";
 const WEBSOCKET_OPEN = 1;
 
+export function createMemoryNodeRoomStorage(options: {
+  snapshot?: NodeMemoryStorageSnapshot;
+} = {}) {
+  return new MemoryNodeRoomStorage(options);
+}
+
+export function createSqliteNodeRoomStorage(options: NodeSqliteStorageOptions) {
+  return new SqliteNodeRoomStorage(options);
+}
+
 export function createNodeRoomTransport<TServer extends Party.Server>(
   ServerClass: NodeServerConstructor<TServer>,
   options: NodeRoomTransportOptions = {}
@@ -61,12 +100,190 @@ export function createNodeRoomTransport<TServer extends Party.Server>(
   return new NodeRoomTransport(ServerClass, options);
 }
 
+export class MemoryNodeRoomStorage implements NodeRoomStorageProvider {
+  private readonly rooms = new Map<string, Map<string, unknown>>();
+
+  constructor(options: { snapshot?: NodeMemoryStorageSnapshot } = {}) {
+    if (options.snapshot) {
+      this.restore(options.snapshot);
+    }
+  }
+
+  getStorage(namespace: string, roomId: string): NodeRoomStorage {
+    const key = getStorageKey(namespace, roomId);
+    let memory = this.rooms.get(key);
+
+    if (!memory) {
+      memory = new Map();
+      this.rooms.set(key, memory);
+    }
+
+    return new MemoryNodeRoomStorageInstance(memory);
+  }
+
+  snapshot(): NodeMemoryStorageSnapshot {
+    const snapshot: NodeMemoryStorageSnapshot = {};
+
+    for (const [roomKey, memory] of this.rooms) {
+      if (memory.size === 0) {
+        continue;
+      }
+
+      snapshot[roomKey] = Array.from(memory.entries()).map(([key, value]) => [
+        key,
+        cloneStorageValue(value),
+      ]);
+    }
+
+    return snapshot;
+  }
+
+  restore(snapshot: NodeMemoryStorageSnapshot) {
+    this.clear();
+
+    for (const [roomKey, entries] of Object.entries(snapshot)) {
+      this.rooms.set(
+        roomKey,
+        new Map(entries.map(([key, value]) => [key, cloneStorageValue(value)]))
+      );
+    }
+  }
+
+  clear() {
+    this.rooms.clear();
+  }
+}
+
+class MemoryNodeRoomStorageInstance implements NodeRoomStorage {
+  constructor(private readonly memory: Map<string, unknown>) {}
+
+  async put<T = unknown>(key: string, value: T) {
+    this.memory.set(key, value);
+  }
+
+  async get<T = unknown>(key: string) {
+    return this.memory.get(key) as T | undefined;
+  }
+
+  async delete(key: string) {
+    this.memory.delete(key);
+  }
+
+  async list<T = unknown>() {
+    return new Map(this.memory) as Map<string, T>;
+  }
+}
+
+export class SqliteNodeRoomStorage implements NodeRoomStorageProvider {
+  private readonly tableName: string;
+  private databasePromise?: Promise<NodeSqliteDatabase>;
+
+  constructor(private readonly options: NodeSqliteStorageOptions) {
+    if (!options.database && !options.databasePath) {
+      throw new Error("createSqliteNodeRoomStorage requires `database` or `databasePath`.");
+    }
+
+    this.tableName = options.tableName ?? "signe_room_storage";
+    assertSafeSqlIdentifier(this.tableName);
+  }
+
+  async getStorage(namespace: string, roomId: string): Promise<NodeRoomStorage> {
+    const database = await this.getDatabase();
+    await this.ensureSchema(database);
+    return new SqliteNodeRoomStorageInstance(database, this.tableName, namespace, roomId);
+  }
+
+  private async getDatabase() {
+    if (!this.databasePromise) {
+      this.databasePromise = this.createDatabase();
+    }
+
+    return this.databasePromise;
+  }
+
+  private async createDatabase(): Promise<NodeSqliteDatabase> {
+    if (this.options.database) {
+      return this.options.database;
+    }
+
+    const sqliteModule = loadNodeSqliteModule();
+    const { DatabaseSync } = sqliteModule;
+    return new DatabaseSync(this.options.databasePath!) as NodeSqliteDatabase;
+  }
+
+  private async ensureSchema(database: NodeSqliteDatabase) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS ${this.tableName} (
+        namespace TEXT NOT NULL,
+        room_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        PRIMARY KEY (namespace, room_id, key)
+      )
+    `);
+  }
+}
+
+class SqliteNodeRoomStorageInstance implements NodeRoomStorage {
+  constructor(
+    private readonly database: NodeSqliteDatabase,
+    private readonly tableName: string,
+    private readonly namespace: string,
+    private readonly roomId: string
+  ) {}
+
+  async get<T = unknown>(key: string): Promise<T | undefined> {
+    const row = this.database
+      .prepare(`
+        SELECT value
+        FROM ${this.tableName}
+        WHERE namespace = ? AND room_id = ? AND key = ?
+      `)
+      .get(this.namespace, this.roomId, key) as { value: string } | undefined;
+
+    return row ? JSON.parse(row.value) as T : undefined;
+  }
+
+  async put<T = unknown>(key: string, value: T): Promise<void> {
+    this.database
+      .prepare(`
+        INSERT INTO ${this.tableName} (namespace, room_id, key, value)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(namespace, room_id, key) DO UPDATE SET value = excluded.value
+      `)
+      .run(this.namespace, this.roomId, key, JSON.stringify(value));
+  }
+
+  async delete(key: string): Promise<boolean> {
+    const result = this.database
+      .prepare(`
+        DELETE FROM ${this.tableName}
+        WHERE namespace = ? AND room_id = ? AND key = ?
+      `)
+      .run(this.namespace, this.roomId, key);
+
+    return Number(result.changes) > 0;
+  }
+
+  async list<T = unknown>(): Promise<Map<string, T>> {
+    const rows = this.database
+      .prepare(`
+        SELECT key, value
+        FROM ${this.tableName}
+        WHERE namespace = ? AND room_id = ?
+      `)
+      .all(this.namespace, this.roomId) as { key: string; value: string }[];
+
+    return new Map(rows.map((row) => [row.key, JSON.parse(row.value) as T]));
+  }
+}
+
 export class NodeRoomTransport<TServer extends Party.Server = Party.Server> {
   readonly partiesPath: string;
   readonly env: Record<string, unknown>;
   private readonly rooms: Record<string, NodeServerConstructor>;
-  private readonly storageFactory: NodeRoomStorageFactory;
-  private readonly records = new Map<string, RoomRecord>();
+  private readonly storage: NodeRoomStorageFactory | NodeRoomStorageProvider;
+  private readonly records = new Map<string, Promise<RoomRecord>>();
 
   constructor(
     private readonly ServerClass: NodeServerConstructor<TServer>,
@@ -78,7 +295,7 @@ export class NodeRoomTransport<TServer extends Party.Server = Party.Server> {
       main: ServerClass,
       ...(options.rooms ?? {}),
     };
-    this.storageFactory = options.storage ?? (() => new Storage() as unknown as Party.Storage);
+    this.storage = options.storage ?? createMemoryNodeRoomStorage();
   }
 
   async fetch(pathOrRequest: string | Request, init?: RequestInit): Promise<Response> {
@@ -201,16 +418,27 @@ export class NodeRoomTransport<TServer extends Party.Server = Party.Server> {
     const existing = this.records.get(key);
 
     if (existing) {
-      await existing.started;
       return existing;
     }
 
+    const recordPromise = this.createRecord(namespace, roomId);
+    this.records.set(key, recordPromise);
+
+    try {
+      return await recordPromise;
+    } catch (error) {
+      this.records.delete(key);
+      throw error;
+    }
+  }
+
+  private async createRecord(namespace: string, roomId: string): Promise<RoomRecord> {
     const ServerClass = this.rooms[namespace] ?? this.ServerClass;
     const room = new NodeRoom({
       id: roomId,
       name: namespace,
       env: this.env,
-      storage: this.storageFactory(namespace, roomId),
+      storage: await this.resolveStorage(namespace, roomId),
       transport: this,
     });
     const server = new ServerClass(room as Party.Room);
@@ -220,9 +448,16 @@ export class NodeRoomTransport<TServer extends Party.Server = Party.Server> {
       started: Promise.resolve(server.onStart?.()).then(() => undefined),
     };
 
-    this.records.set(key, record);
     await record.started;
     return record;
+  }
+
+  private async resolveStorage(namespace: string, roomId: string): Promise<NodeRoomStorage> {
+    if (typeof this.storage === "function") {
+      return this.storage(namespace, roomId);
+    }
+
+    return this.storage.getStorage(namespace, roomId);
   }
 
   private parsePartyRequest(url: string): ParsedPartyPath | null {
@@ -482,6 +717,33 @@ function toLocalUrl(path: string) {
 
 function trimSlashes(value: string) {
   return value.replace(/^\/+|\/+$/g, "");
+}
+
+function getStorageKey(namespace: string, roomId: string) {
+  return `${encodeURIComponent(namespace)}:${encodeURIComponent(roomId)}`;
+}
+
+function assertSafeSqlIdentifier(identifier: string) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier)) {
+    throw new Error(`Invalid SQLite table name: ${identifier}`);
+  }
+}
+
+function loadNodeSqliteModule(): typeof import("node:sqlite") {
+  const require = createRequire(`${process.cwd()}/package.json`);
+  return require("node:sqlite");
+}
+
+function cloneStorageValue<T>(value: T): T {
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(value);
+    } catch {
+      return value;
+    }
+  }
+
+  return value;
 }
 
 function createConnectionId() {

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
+    "dev:sqlite": "node --experimental-sqlite --import tsx server.sqlite.ts",
     "build": "tsc --noEmit"
   },
   "dependencies": {
