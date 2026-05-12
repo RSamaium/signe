@@ -4,8 +4,8 @@
   "description": "PartyKit room primitives with synchronized state, sessions, guards, and HTTP handlers.",
   "main": "./dist/index.js",
   "scripts": {
-    "build": "tsup src/index.ts",
-    "dev": "tsup src/index.ts --watch"
+    "build": "tsup src/index.ts src/node/index.ts",
+    "dev": "tsup src/index.ts src/node/index.ts --watch"
   },
   "keywords": [
     "partykit",
@@ -20,6 +20,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./node": {
+      "import": "./dist/node/index.js",
+      "types": "./dist/node/index.d.ts"
     }
   },
   "license": "MIT",
@@ -33,6 +37,7 @@
     "access": "public"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20240603.0"
+    "@cloudflare/workers-types": "^4.20240603.0",
+    "@types/node": "^22.13.9"
   }
 }

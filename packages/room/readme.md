@@ -641,6 +641,180 @@ connection.close();
 
 > https://docs.partykit.io/reference/partyserver-api/#partyconnection
 
+## Node.js adapter
+
+`@signe/room/node` runs a room server in a standard single-process Node.js
+application. It is useful for local development, self-hosting, Express/Fastify
+style integrations, Vite dev servers, and tests that do not need PartyKit.
+
+```ts
+import { createServer } from "node:http";
+import { WebSocketServer } from "ws";
+import { Action, Request, Room, Server } from "@signe/room";
+import { createMemoryNodeRoomStorage, createNodeRoomTransport } from "@signe/room/node";
+import { signal } from "@signe/reactive";
+import { sync } from "@signe/sync";
+
+@Room({ path: "demo" })
+class CounterRoom {
+  @sync() count = signal(0);
+
+  @Action("increment")
+  increment(_user: unknown, value: { amount?: number }) {
+    this.count.update((count) => count + (value.amount ?? 1));
+  }
+
+  @Request({ path: "/count" })
+  getCount() {
+    return { count: this.count() };
+  }
+}
+
+class CounterServer extends Server {
+  rooms = [CounterRoom];
+}
+
+const storage = createMemoryNodeRoomStorage();
+
+const transport = createNodeRoomTransport(CounterServer, {
+  partiesPath: "/parties/main",
+  storage,
+});
+
+const server = createServer((req, res) => {
+  void transport.handleNodeRequest(req, res);
+});
+
+const wsServer = new WebSocketServer({ noServer: true });
+
+server.on("upgrade", (request, socket, head) => {
+  transport.handleUpgrade(wsServer, request, socket, head);
+});
+
+server.listen(3000);
+```
+
+HTTP requests use the same PartyKit-style room path:
+
+```bash
+curl http://localhost:3000/parties/main/demo/count
+```
+
+WebSocket clients connect to the room URL and send normal action packets:
+
+```js
+const socket = new WebSocket("ws://localhost:3000/parties/main/demo");
+
+socket.send(JSON.stringify({
+  action: "increment",
+  value: { amount: 1 }
+}));
+```
+
+For middleware frameworks, pass a `next` callback. Requests that do not match
+the configured parties path are delegated to `next`.
+
+```ts
+app.use((req, res, next) => {
+  void transport.handleNodeRequest(req, res, next);
+});
+```
+
+Room-to-room requests are available through `room.context.parties`:
+
+```ts
+const response = await this.room.context.parties.main
+  .get("other-room")
+  .fetch("/count");
+```
+
+The Node adapter stores room state in memory by default. The package also
+provides explicit memory and SQLite storage providers.
+
+Use `createMemoryNodeRoomStorage()` when you want to keep a reference to the
+memory backend, inspect it, clear it, or save a snapshot for a later process
+restart.
+
+```ts
+const storage = createMemoryNodeRoomStorage();
+
+const transport = createNodeRoomTransport(CounterServer, {
+  storage,
+});
+
+const snapshot = storage.snapshot();
+const restoredStorage = createMemoryNodeRoomStorage({ snapshot });
+```
+
+Use `createSqliteNodeRoomStorage()` when you want room storage persisted in a
+SQLite database. This helper uses Node's built-in `node:sqlite` module.
+
+```ts
+import {
+  createNodeRoomTransport,
+  createSqliteNodeRoomStorage,
+} from "@signe/room/node";
+
+const transport = createNodeRoomTransport(CounterServer, {
+  storage: createSqliteNodeRoomStorage({
+    databasePath: "./rooms.sqlite",
+  }),
+});
+```
+
+To create your own storage backend, implement the key-value methods used by
+`@signe/room`: `get`, `put`, `delete`, and `list`, then return it from a storage
+provider.
+
+```ts
+import type { NodeRoomStorage, NodeRoomStorageProvider } from "@signe/room/node";
+
+class MyStorage implements NodeRoomStorage {
+  async get<T = unknown>(key: string): Promise<T | undefined> {
+    // Read from your database
+  }
+
+  async put<T = unknown>(key: string, value: T): Promise<void> {
+    // Write to your database
+  }
+
+  async delete(key: string): Promise<void | boolean> {
+    // Delete from your database
+  }
+
+  async list<T = unknown>(): Promise<Map<string, T>> {
+    // Return all key/value entries for the room
+  }
+}
+
+const storage: NodeRoomStorageProvider = {
+  getStorage(namespace, roomId) {
+    return new MyStorage(namespace, roomId);
+  },
+};
+
+const transport = createNodeRoomTransport(CounterServer, {
+  storage,
+});
+```
+
+To create your own Node transport integration, use the low-level methods exposed
+by `createNodeRoomTransport()`:
+
+- `transport.fetch(requestOrPath, init?)` for runtimes using Web
+  `Request`/`Response`;
+- `transport.handleNodeRequest(req, res, next?)` for Node HTTP middleware;
+- `transport.handleUpgrade(wsServer, request, socket, head)` for `ws`
+  WebSocket upgrades;
+- `transport.acceptWebSocket(webSocket, request)` when your framework already
+  accepted the WebSocket and you only need to attach it to a room.
+
+The first Node adapter version targets single-process Node.js only; clustering,
+multi-process coordination, Cloudflare Durable Objects, Bun WebSocket, and
+uWebSockets.js support are outside this adapter.
+
+See `packages/room/examples/node` for a runnable HTTP + WebSocket example.
+
 ## Testing
 
 ```ts
