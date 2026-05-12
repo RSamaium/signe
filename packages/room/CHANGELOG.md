@@ -1,5 +1,11 @@
 # @signe/room
 
+## 2.10.1
+
+### Patch Changes
+
+- 93039b3: Add a generic single-process Node.js room adapter with HTTP, WebSocket, memory, SQLite, custom storage providers, and local parties support.
+
 ## 2.10.0
 
 ### Minor Changes
