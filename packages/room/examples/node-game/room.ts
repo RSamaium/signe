@@ -23,7 +23,7 @@ class Player {
   @sync() score = signal(0);
 }
 
-@Room({ path: "{roomId}", sessionExpiryTime: 2000 })
+@Room({ path: "{roomId}", sessionExpiryTime: 2000, throttleStorage: 2500 })
 class GameRoom {
   @sync() star = signal<Point>(randomPoint());
   @users(Player) players = signal<Record<string, Player>>({});

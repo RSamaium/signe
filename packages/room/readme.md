@@ -797,6 +797,11 @@ const transport = createNodeRoomTransport(CounterServer, {
 });
 ```
 
+The SQLite helper enables `PRAGMA busy_timeout = 5000` and `PRAGMA journal_mode
+= WAL` by default to make development servers more tolerant of short-lived
+write contention. You can override those defaults with `busyTimeoutMs`,
+`journalMode`, and `busyRetries`.
+
 To create your own storage backend, implement the key-value methods used by
 `@signe/room`: `get`, `put`, `delete`, and `list`, then return it from a storage
 provider.

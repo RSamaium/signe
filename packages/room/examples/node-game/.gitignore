@@ -1,2 +1,4 @@
 node_modules
 rooms.sqlite
+rooms.sqlite-shm
+rooms.sqlite-wal

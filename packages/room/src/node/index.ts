@@ -34,7 +34,24 @@ export type NodeSqliteStorageOptions = {
   database?: NodeSqliteDatabase;
   databasePath?: string;
   tableName?: string;
+  busyTimeoutMs?: number;
+  journalMode?: NodeSqliteJournalMode;
+  busyRetries?: number;
 };
+
+export type NodeSqliteJournalMode =
+  | "DELETE"
+  | "TRUNCATE"
+  | "PERSIST"
+  | "MEMORY"
+  | "WAL"
+  | "OFF"
+  | "delete"
+  | "truncate"
+  | "persist"
+  | "memory"
+  | "wal"
+  | "off";
 
 export type NodeServerConstructor<TServer extends Party.Server = Party.Server> = {
   new (room: Party.Room): TServer;
@@ -82,6 +99,9 @@ type ParsedPartyPath = {
 
 const DEFAULT_PARTIES_PATH = "/parties/main";
 const WEBSOCKET_OPEN = 1;
+const DEFAULT_SQLITE_BUSY_TIMEOUT_MS = 5000;
+const DEFAULT_SQLITE_BUSY_RETRIES = 3;
+const SQLITE_RETRY_BASE_DELAY_MS = 25;
 
 export function createMemoryNodeRoomStorage(options: {
   snapshot?: NodeMemoryStorageSnapshot;
@@ -177,6 +197,7 @@ class MemoryNodeRoomStorageInstance implements NodeRoomStorage {
 export class SqliteNodeRoomStorage implements NodeRoomStorageProvider {
   private readonly tableName: string;
   private databasePromise?: Promise<NodeSqliteDatabase>;
+  private configured = false;
 
   constructor(private readonly options: NodeSqliteStorageOptions) {
     if (!options.database && !options.databasePath) {
@@ -189,8 +210,14 @@ export class SqliteNodeRoomStorage implements NodeRoomStorageProvider {
 
   async getStorage(namespace: string, roomId: string): Promise<NodeRoomStorage> {
     const database = await this.getDatabase();
-    await this.ensureSchema(database);
-    return new SqliteNodeRoomStorageInstance(database, this.tableName, namespace, roomId);
+    await this.ensureConfigured(database);
+    return new SqliteNodeRoomStorageInstance(
+      database,
+      this.tableName,
+      namespace,
+      roomId,
+      this.options.busyRetries ?? DEFAULT_SQLITE_BUSY_RETRIES
+    );
   }
 
   private async getDatabase() {
@@ -211,16 +238,33 @@ export class SqliteNodeRoomStorage implements NodeRoomStorageProvider {
     return new DatabaseSync(this.options.databasePath!) as NodeSqliteDatabase;
   }
 
-  private async ensureSchema(database: NodeSqliteDatabase) {
-    database.exec(`
-      CREATE TABLE IF NOT EXISTS ${this.tableName} (
-        namespace TEXT NOT NULL,
-        room_id TEXT NOT NULL,
-        key TEXT NOT NULL,
-        value TEXT NOT NULL,
-        PRIMARY KEY (namespace, room_id, key)
-      )
-    `);
+  private async ensureConfigured(database: NodeSqliteDatabase) {
+    if (this.configured) {
+      return;
+    }
+
+    const busyTimeoutMs = normalizeSqliteTimeout(
+      this.options.busyTimeoutMs ?? DEFAULT_SQLITE_BUSY_TIMEOUT_MS
+    );
+    const journalMode = normalizeSqliteJournalMode(this.options.journalMode ?? "WAL");
+
+    runSqliteOperation(
+      () => {
+        database.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
+        database.exec(`PRAGMA journal_mode = ${journalMode}`);
+        database.exec(`
+          CREATE TABLE IF NOT EXISTS ${this.tableName} (
+            namespace TEXT NOT NULL,
+            room_id TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            PRIMARY KEY (namespace, room_id, key)
+          )
+        `);
+      },
+      this.options.busyRetries ?? DEFAULT_SQLITE_BUSY_RETRIES
+    );
+    this.configured = true;
   }
 }
 
@@ -229,50 +273,63 @@ class SqliteNodeRoomStorageInstance implements NodeRoomStorage {
     private readonly database: NodeSqliteDatabase,
     private readonly tableName: string,
     private readonly namespace: string,
-    private readonly roomId: string
+    private readonly roomId: string,
+    private readonly busyRetries: number
   ) {}
 
   async get<T = unknown>(key: string): Promise<T | undefined> {
-    const row = this.database
-      .prepare(`
-        SELECT value
-        FROM ${this.tableName}
-        WHERE namespace = ? AND room_id = ? AND key = ?
-      `)
-      .get(this.namespace, this.roomId, key) as { value: string } | undefined;
+    const row = runSqliteOperation(
+      () => this.database
+        .prepare(`
+          SELECT value
+          FROM ${this.tableName}
+          WHERE namespace = ? AND room_id = ? AND key = ?
+        `)
+        .get(this.namespace, this.roomId, key) as { value: string } | undefined,
+      this.busyRetries
+    );
 
     return row ? JSON.parse(row.value) as T : undefined;
   }
 
   async put<T = unknown>(key: string, value: T): Promise<void> {
-    this.database
-      .prepare(`
-        INSERT INTO ${this.tableName} (namespace, room_id, key, value)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(namespace, room_id, key) DO UPDATE SET value = excluded.value
-      `)
-      .run(this.namespace, this.roomId, key, JSON.stringify(value));
+    runSqliteOperation(
+      () => this.database
+        .prepare(`
+          INSERT INTO ${this.tableName} (namespace, room_id, key, value)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(namespace, room_id, key) DO UPDATE SET value = excluded.value
+        `)
+        .run(this.namespace, this.roomId, key, JSON.stringify(value)),
+      this.busyRetries
+    );
   }
 
   async delete(key: string): Promise<boolean> {
-    const result = this.database
-      .prepare(`
-        DELETE FROM ${this.tableName}
-        WHERE namespace = ? AND room_id = ? AND key = ?
-      `)
-      .run(this.namespace, this.roomId, key);
+    const result = runSqliteOperation(
+      () => this.database
+        .prepare(`
+          DELETE FROM ${this.tableName}
+          WHERE namespace = ? AND room_id = ? AND key = ?
+        `)
+        .run(this.namespace, this.roomId, key),
+      this.busyRetries
+    );
 
     return Number(result.changes) > 0;
   }
 
   async list<T = unknown>(): Promise<Map<string, T>> {
-    const rows = this.database
-      .prepare(`
-        SELECT key, value
-        FROM ${this.tableName}
-        WHERE namespace = ? AND room_id = ?
-      `)
-      .all(this.namespace, this.roomId) as { key: string; value: string }[];
+    const rows = runSqliteOperation(
+      () => this.database
+        .prepare(`
+          SELECT key, value
+          FROM ${this.tableName}
+          WHERE namespace = ? AND room_id = ?
+        `)
+        .all(this.namespace, this.roomId) as { key: string; value: string }[],
+      this.busyRetries
+    );
 
     return new Map(rows.map((row) => [row.key, JSON.parse(row.value) as T]));
   }
@@ -732,6 +789,72 @@ function assertSafeSqlIdentifier(identifier: string) {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier)) {
     throw new Error(`Invalid SQLite table name: ${identifier}`);
   }
+}
+
+function normalizeSqliteTimeout(value: number) {
+  if (!Number.isFinite(value) || value < 0) {
+    return DEFAULT_SQLITE_BUSY_TIMEOUT_MS;
+  }
+
+  return Math.floor(value);
+}
+
+function normalizeSqliteJournalMode(value: NodeSqliteJournalMode) {
+  const journalMode = value.toUpperCase() as NodeSqliteJournalMode;
+  const allowedModes = new Set<NodeSqliteJournalMode>([
+    "DELETE",
+    "TRUNCATE",
+    "PERSIST",
+    "MEMORY",
+    "WAL",
+    "OFF",
+  ]);
+
+  if (!allowedModes.has(journalMode)) {
+    throw new Error(`Invalid SQLite journal mode: ${value}`);
+  }
+
+  return journalMode;
+}
+
+function runSqliteOperation<T>(operation: () => T, retries: number): T {
+  const maxRetries = Math.max(0, Math.floor(retries));
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return operation();
+    } catch (error) {
+      if (!isSqliteBusyError(error) || attempt >= maxRetries) {
+        throw error;
+      }
+
+      sleepSync(Math.min(250, SQLITE_RETRY_BASE_DELAY_MS * 2 ** attempt));
+    }
+  }
+}
+
+function isSqliteBusyError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const err = error as { errcode?: number; errstr?: string; code?: string; message?: string };
+  return (
+    err.errcode === 5 ||
+    err.errcode === 6 ||
+    err.errstr === "database is locked" ||
+    err.errstr === "database table is locked" ||
+    err.code === "SQLITE_BUSY" ||
+    err.code === "SQLITE_LOCKED" ||
+    err.message?.includes("database is locked") ||
+    err.message?.includes("database table is locked")
+  );
+}
+
+function sleepSync(ms: number) {
+  const buffer = new SharedArrayBuffer(4);
+  const view = new Int32Array(buffer);
+  Atomics.wait(view, 0, 0, ms);
 }
 
 function loadNodeSqliteModule(): typeof import("node:sqlite") {

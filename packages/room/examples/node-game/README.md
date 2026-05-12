@@ -58,3 +58,6 @@ pnpm --filter @signe/room-node-game-example dev:sqlite
 The SQLite example uses `createSqliteNodeRoomStorage()` from `@signe/room/node`
 and Node's built-in `node:sqlite` module. It stores room state in
 `packages/room/examples/node-game/rooms.sqlite`.
+
+The game room also throttles storage writes, so movement can stay responsive
+without persisting every single position update immediately.
