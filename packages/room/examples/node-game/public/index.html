@@ -1,0 +1,705 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Signe Node Game Room</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #eef2f6;
+        color: #17191c;
+      }
+
+      main {
+        width: min(1180px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 28px 0;
+        display: grid;
+        gap: 18px;
+      }
+
+      header {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      h1,
+      h2 {
+        margin: 0;
+        line-height: 1.1;
+      }
+
+      h1 {
+        font-size: 30px;
+      }
+
+      h2 {
+        font-size: 17px;
+      }
+
+      .muted,
+      .status {
+        color: #5b6472;
+      }
+
+      .panel,
+      .card {
+        border: 1px solid #d6dbe2;
+        border-radius: 8px;
+        background: #ffffff;
+      }
+
+      .panel {
+        padding: 20px;
+        display: grid;
+        gap: 16px;
+      }
+
+      .join {
+        max-width: 520px;
+      }
+
+      form {
+        display: grid;
+        gap: 12px;
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      input {
+        min-height: 42px;
+        border: 1px solid #c9d0d9;
+        border-radius: 6px;
+        padding: 0 12px;
+        font: inherit;
+      }
+
+      button {
+        min-height: 40px;
+        border: 1px solid #17191c;
+        border-radius: 6px;
+        background: #17191c;
+        color: #ffffff;
+        padding: 0 14px;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      button.secondary {
+        background: #ffffff;
+        color: #17191c;
+      }
+
+      .game {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 300px;
+        gap: 18px;
+        align-items: start;
+      }
+
+      .arena-panel {
+        padding: 16px;
+        gap: 12px;
+      }
+
+      .arena-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      kbd {
+        min-width: 28px;
+        height: 28px;
+        border: 1px solid #c9d0d9;
+        border-bottom-width: 2px;
+        border-radius: 6px;
+        background: #f8fafc;
+        color: #2f3742;
+        display: inline-grid;
+        place-items: center;
+        font: 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      }
+
+      .canvas-wrap {
+        width: 100%;
+        aspect-ratio: 900 / 560;
+        border: 1px solid #c8d0da;
+        border-radius: 8px;
+        overflow: hidden;
+        background: #dfe7ef;
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      .session {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        font-size: 12px;
+      }
+
+      .sidebar {
+        padding: 16px;
+        display: grid;
+        gap: 14px;
+        align-content: start;
+      }
+
+      .score-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .player {
+        display: grid;
+        grid-template-columns: 14px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 10px;
+        min-height: 44px;
+        padding: 8px 10px;
+        border: 1px solid #e0e5eb;
+        border-radius: 6px;
+      }
+
+      .swatch {
+        width: 12px;
+        height: 12px;
+        border-radius: 999px;
+      }
+
+      .player-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .score {
+        min-width: 32px;
+        text-align: right;
+        font-weight: 700;
+      }
+
+      .badge {
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 12px;
+        background: #edf1f5;
+        color: #4b5563;
+        white-space: nowrap;
+      }
+
+      .badge.online {
+        background: #e7f7ed;
+        color: #146c36;
+      }
+
+      .side-actions {
+        display: grid;
+        gap: 8px;
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      @media (max-width: 840px) {
+        header,
+        .game {
+          grid-template-columns: 1fr;
+          display: grid;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>Signe Node Game</h1>
+          <div class="muted" id="roomLabel">Choose a room</div>
+        </div>
+        <button id="leaveRoom" class="secondary hidden" type="button">Change room</button>
+      </header>
+
+      <section class="panel join" id="joinPanel">
+        <h2>Join a game</h2>
+        <form id="joinForm">
+          <label>
+            Room
+            <input id="roomInput" name="room" autocomplete="off" required value="demo" />
+          </label>
+          <label>
+            Name
+            <input id="nameInput" name="name" autocomplete="name" required />
+          </label>
+          <button type="submit">Enter arena</button>
+        </form>
+      </section>
+
+      <section class="game hidden" id="gamePanel">
+        <div class="panel arena-panel">
+          <div class="arena-toolbar">
+            <div>
+              <h2>Arena</h2>
+              <div class="status" id="status">Disconnected</div>
+            </div>
+            <div class="controls" aria-label="Movement keys">
+              <kbd>W</kbd>
+              <kbd>A</kbd>
+              <kbd>S</kbd>
+              <kbd>D</kbd>
+              <kbd>↑</kbd>
+              <kbd>←</kbd>
+              <kbd>↓</kbd>
+              <kbd>→</kbd>
+            </div>
+          </div>
+          <div class="canvas-wrap">
+            <canvas id="arena" width="900" height="560"></canvas>
+          </div>
+          <div class="muted session" id="sessionLabel"></div>
+        </div>
+
+        <aside class="card sidebar">
+          <h2>Players</h2>
+          <div class="score-list" id="players"></div>
+          <div class="side-actions">
+            <button id="reset" class="secondary" type="button">Reset scores</button>
+            <button id="resetSession" class="secondary" type="button">New session</button>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <script>
+      const ARENA_WIDTH = 900;
+      const ARENA_HEIGHT = 560;
+      const PLAYER_RADIUS = 16;
+      const STAR_RADIUS = 13;
+      const PLAYER_SPEED = 230;
+      const SEND_INTERVAL = 50;
+      const COLLECT_INTERVAL = 120;
+
+      const state = {
+        socket: null,
+        roomId: getRoomIdFromPath(),
+        name: localStorage.getItem("signe-node-game-name") || "",
+        sessionId: localStorage.getItem("signe-node-game-session-id") || "",
+        publicId: "",
+        players: {},
+        star: { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+        keys: new Set(),
+        lastSent: 0,
+        lastCollect: 0,
+        lastFrame: performance.now(),
+      };
+
+      const joinPanel = document.querySelector("#joinPanel");
+      const gamePanel = document.querySelector("#gamePanel");
+      const roomLabel = document.querySelector("#roomLabel");
+      const leaveRoom = document.querySelector("#leaveRoom");
+      const joinForm = document.querySelector("#joinForm");
+      const roomInput = document.querySelector("#roomInput");
+      const nameInput = document.querySelector("#nameInput");
+      const status = document.querySelector("#status");
+      const sessionLabel = document.querySelector("#sessionLabel");
+      const players = document.querySelector("#players");
+      const canvas = document.querySelector("#arena");
+      const ctx = canvas.getContext("2d");
+
+      nameInput.value = state.name;
+
+      if (state.roomId) {
+        roomInput.value = state.roomId;
+      }
+
+      joinForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const roomId = normalizeRoomId(roomInput.value);
+        const name = nameInput.value.trim() || "Anonymous";
+
+        localStorage.setItem("signe-node-game-name", name);
+        history.pushState({}, "", `/rooms/${encodeURIComponent(roomId)}`);
+        enterRoom(roomId, name);
+      });
+
+      leaveRoom.addEventListener("click", () => {
+        disconnect();
+        history.pushState({}, "", "/");
+        showJoin();
+      });
+
+      window.addEventListener("popstate", () => {
+        const roomId = getRoomIdFromPath();
+        if (roomId) {
+          enterRoom(roomId, state.name || "Anonymous");
+        } else {
+          disconnect();
+          showJoin();
+        }
+      });
+
+      window.addEventListener("keydown", (event) => {
+        if (isMovementKey(event.key)) {
+          state.keys.add(event.key.toLowerCase());
+          event.preventDefault();
+        }
+      });
+
+      window.addEventListener("keyup", (event) => {
+        if (isMovementKey(event.key)) {
+          state.keys.delete(event.key.toLowerCase());
+          event.preventDefault();
+        }
+      });
+
+      document.querySelector("#reset").addEventListener("click", async () => {
+        if (!state.roomId) return;
+        await fetch(`/parties/main/${encodeURIComponent(state.roomId)}/reset`, { method: "POST" });
+      });
+
+      document.querySelector("#resetSession").addEventListener("click", () => {
+        if (!state.roomId) return;
+        disconnect();
+        localStorage.removeItem("signe-node-game-session-id");
+        state.sessionId = "";
+        state.publicId = "";
+        enterRoom(state.roomId, state.name || "Anonymous");
+      });
+
+      requestAnimationFrame(frame);
+
+      if (state.roomId) {
+        enterRoom(state.roomId, state.name || "Anonymous");
+      } else {
+        showJoin();
+        draw();
+      }
+
+      function enterRoom(roomId, name) {
+        disconnect();
+        state.roomId = roomId;
+        state.name = name;
+        state.publicId = "";
+        state.players = {};
+        renderPlayers();
+        showGame();
+
+        const protocol = location.protocol === "https:" ? "wss" : "ws";
+        const sessionId = getSessionId();
+        const params = new URLSearchParams({ name, id: sessionId });
+        state.socket = new WebSocket(`${protocol}://${location.host}/parties/main/${encodeURIComponent(roomId)}?${params}`);
+
+        state.socket.addEventListener("open", () => {
+          status.textContent = "Connected";
+        });
+
+        state.socket.addEventListener("close", () => {
+          status.textContent = "Disconnected";
+        });
+
+        state.socket.addEventListener("message", (event) => {
+          const packet = JSON.parse(event.data);
+          if (packet.type !== "sync" || !packet.value) return;
+
+          if (packet.value.pId) {
+            state.publicId = packet.value.pId;
+          }
+
+          if (packet.value.star) {
+            state.star = mergeValue(state.star, packet.value.star);
+          }
+
+          if (packet.value.players) {
+            mergePlayers(state.players, packet.value.players);
+            renderPlayers();
+          }
+        });
+      }
+
+      function frame(now) {
+        const delta = Math.min(0.05, (now - state.lastFrame) / 1000);
+        state.lastFrame = now;
+
+        updateLocalPlayer(delta, now);
+        draw();
+        requestAnimationFrame(frame);
+      }
+
+      function updateLocalPlayer(delta, now) {
+        const player = state.players[state.publicId];
+        if (!player || !state.socket || state.socket.readyState !== WebSocket.OPEN) {
+          return;
+        }
+
+        let dx = 0;
+        let dy = 0;
+
+        if (state.keys.has("arrowleft") || state.keys.has("a")) dx -= 1;
+        if (state.keys.has("arrowright") || state.keys.has("d")) dx += 1;
+        if (state.keys.has("arrowup") || state.keys.has("w")) dy -= 1;
+        if (state.keys.has("arrowdown") || state.keys.has("s")) dy += 1;
+
+        if (dx !== 0 || dy !== 0) {
+          const length = Math.hypot(dx, dy);
+          player.x = clamp(player.x + (dx / length) * PLAYER_SPEED * delta, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS);
+          player.y = clamp(player.y + (dy / length) * PLAYER_SPEED * delta, PLAYER_RADIUS, ARENA_HEIGHT - PLAYER_RADIUS);
+
+          if (now - state.lastSent >= SEND_INTERVAL) {
+            send("move", { x: player.x, y: player.y });
+            state.lastSent = now;
+          }
+        }
+
+        const distance = Math.hypot(player.x - state.star.x, player.y - state.star.y);
+        if (distance <= PLAYER_RADIUS + STAR_RADIUS + 8 && now - state.lastCollect >= COLLECT_INTERVAL) {
+          send("collect", {});
+          state.lastCollect = now;
+        }
+      }
+
+      function draw() {
+        ctx.clearRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+        drawArena();
+        drawStar(state.star.x, state.star.y);
+
+        for (const [id, player] of Object.entries(state.players)) {
+          if (typeof player.x !== "number" || typeof player.y !== "number" || player.x < 0 || player.y < 0) {
+            continue;
+          }
+
+          drawPlayer(player, id === state.publicId);
+        }
+      }
+
+      function drawArena() {
+        ctx.fillStyle = "#f8fafc";
+        ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+
+        ctx.strokeStyle = "#e2e8f0";
+        ctx.lineWidth = 1;
+        for (let x = 40; x < ARENA_WIDTH; x += 40) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, ARENA_HEIGHT);
+          ctx.stroke();
+        }
+        for (let y = 40; y < ARENA_HEIGHT; y += 40) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(ARENA_WIDTH, y);
+          ctx.stroke();
+        }
+
+        ctx.strokeStyle = "#94a3b8";
+        ctx.lineWidth = 4;
+        ctx.strokeRect(2, 2, ARENA_WIDTH - 4, ARENA_HEIGHT - 4);
+      }
+
+      function drawStar(x, y) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(-Math.PI / 2);
+        ctx.beginPath();
+        for (let index = 0; index < 10; index += 1) {
+          const radius = index % 2 === 0 ? STAR_RADIUS : STAR_RADIUS * 0.45;
+          const angle = (Math.PI * 2 * index) / 10;
+          const px = Math.cos(angle) * radius;
+          const py = Math.sin(angle) * radius;
+          if (index === 0) {
+            ctx.moveTo(px, py);
+          } else {
+            ctx.lineTo(px, py);
+          }
+        }
+        ctx.closePath();
+        ctx.fillStyle = "#f59e0b";
+        ctx.fill();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#92400e";
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function drawPlayer(player, isCurrentPlayer) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, PLAYER_RADIUS, 0, Math.PI * 2);
+        ctx.fillStyle = player.color || "#2563eb";
+        ctx.fill();
+        ctx.lineWidth = isCurrentPlayer ? 5 : 3;
+        ctx.strokeStyle = isCurrentPlayer ? "#111827" : "#ffffff";
+        ctx.stroke();
+
+        ctx.font = "600 13px Inter, system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = "#ffffff";
+        ctx.strokeText(player.name || "Anonymous", player.x, player.y - PLAYER_RADIUS - 8);
+        ctx.fillStyle = "#111827";
+        ctx.fillText(player.name || "Anonymous", player.x, player.y - PLAYER_RADIUS - 8);
+        ctx.restore();
+      }
+
+      function send(action, value) {
+        state.socket?.send(JSON.stringify({ action, value }));
+      }
+
+      function disconnect() {
+        if (state.socket) {
+          state.socket.close();
+          state.socket = null;
+        }
+      }
+
+      function showJoin() {
+        state.roomId = null;
+        joinPanel.classList.remove("hidden");
+        gamePanel.classList.add("hidden");
+        leaveRoom.classList.add("hidden");
+        roomLabel.textContent = "Choose a room";
+        status.textContent = "Disconnected";
+        sessionLabel.textContent = "";
+      }
+
+      function showGame() {
+        joinPanel.classList.add("hidden");
+        gamePanel.classList.remove("hidden");
+        leaveRoom.classList.remove("hidden");
+        roomLabel.textContent = `/rooms/${state.roomId}`;
+        sessionLabel.textContent = `session ${getSessionId().slice(0, 8)}`;
+      }
+
+      function getSessionId() {
+        if (!state.sessionId) {
+          state.sessionId = crypto.randomUUID();
+          localStorage.setItem("signe-node-game-session-id", state.sessionId);
+        }
+
+        return state.sessionId;
+      }
+
+      function renderPlayers() {
+        const entries = Object.entries(state.players).sort(([, a], [, b]) => {
+          if ((b.score || 0) !== (a.score || 0)) {
+            return (b.score || 0) - (a.score || 0);
+          }
+
+          return String(a.name || "").localeCompare(String(b.name || ""));
+        });
+
+        players.innerHTML = entries.length
+          ? entries.map(([id, player]) => {
+              const name = escapeHtml(player.name || "Anonymous");
+              const color = escapeAttribute(player.color || "#2563eb");
+              const connected = Boolean(player.connected);
+              const score = Number(player.score || 0);
+              return `
+                <div class="player">
+                  <span class="swatch" style="background: ${color}"></span>
+                  <span>
+                    <span class="player-name">${name}${id === state.publicId ? " (you)" : ""}</span>
+                    <span class="badge ${connected ? "online" : ""}">${connected ? "connected" : "offline"}</span>
+                  </span>
+                  <span class="score">${score}</span>
+                </div>
+              `;
+            }).join("")
+          : `<div class="muted">No players yet</div>`;
+      }
+
+      function mergePlayers(target, patch) {
+        for (const [id, value] of Object.entries(patch)) {
+          if (value === "$delete") {
+            delete target[id];
+            continue;
+          }
+
+          target[id] = mergeValue(target[id], value);
+        }
+      }
+
+      function mergeValue(current, patch) {
+        if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+          return patch;
+        }
+
+        const next = current && typeof current === "object" && !Array.isArray(current)
+          ? { ...current }
+          : {};
+
+        for (const [key, value] of Object.entries(patch)) {
+          if (value === "$delete") {
+            delete next[key];
+          } else {
+            next[key] = mergeValue(next[key], value);
+          }
+        }
+
+        return next;
+      }
+
+      function isMovementKey(key) {
+        return ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "w", "a", "s", "d", "W", "A", "S", "D"].includes(key);
+      }
+
+      function getRoomIdFromPath() {
+        const match = location.pathname.match(/^\/rooms\/([^/]+)$/);
+        return match ? decodeURIComponent(match[1]) : null;
+      }
+
+      function normalizeRoomId(value) {
+        return value.trim().replace(/[^a-zA-Z0-9_-]/g, "-") || "demo";
+      }
+
+      function clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value));
+      }
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, (char) => ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          "\"": "&quot;",
+          "'": "&#039;",
+        }[char]));
+      }
+
+      function escapeAttribute(value) {
+        return escapeHtml(String(value).replace(/[^#a-zA-Z0-9(),.% -]/g, ""));
+      }
+    </script>
+  </body>
+</html>

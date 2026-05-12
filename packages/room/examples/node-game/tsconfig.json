@@ -1,0 +1,10 @@
+{
+  "extends": "../../../../tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node"]
+  },
+  "include": ["room.ts", "server.ts", "server.sqlite.ts"],
+  "exclude": []
+}

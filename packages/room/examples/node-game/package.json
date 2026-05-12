@@ -1,0 +1,23 @@
+{
+  "name": "@signe/room-node-game-example",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "dev:sqlite": "node --experimental-sqlite --import tsx server.sqlite.ts",
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@signe/reactive": "workspace:*",
+    "@signe/room": "workspace:*",
+    "@signe/sync": "workspace:*",
+    "ws": "^8.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.9",
+    "@types/ws": "^8.5.12",
+    "tsx": "^4.19.2",
+    "typescript": "^5.4.5"
+  }
+}

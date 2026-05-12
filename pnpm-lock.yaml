@@ -139,6 +139,34 @@ importers:
         specifier: ^5.4.5
         version: 5.4.5
 
+  packages/room/examples/node-game:
+    dependencies:
+      '@signe/reactive':
+        specifier: workspace:*
+        version: link:../../../reactive
+      '@signe/room':
+        specifier: workspace:*
+        version: link:../..
+      '@signe/sync':
+        specifier: workspace:*
+        version: link:../../../sync
+      ws:
+        specifier: ^8.17.0
+        version: 8.17.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.9
+        version: 22.13.9
+      '@types/ws':
+        specifier: ^8.5.12
+        version: 8.18.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.4.5
+        version: 5.4.5
+
   packages/schema-to-zod:
     dependencies:
       '@types/json-schema':
