@@ -76,6 +76,21 @@ class DemoServer extends Server {
   }
 }
 
+@Room({ path: "debounced-storage", throttleStorage: 2500 })
+class DebouncedStorageRoom {
+  @sync() count = signal(0);
+
+  @Request({ path: "/count", method: "POST" }, z.object({ count: z.number() }))
+  setCount(req: any) {
+    this.count.set(req.data.count);
+    return { count: this.count() };
+  }
+}
+
+class DebouncedStorageServer extends Server {
+  rooms = [DebouncedStorageRoom];
+}
+
 @Room({ path: "demo" })
 class AlternateRoom {
   @Request({ path: "/namespace" })
@@ -127,12 +142,27 @@ class FakeWebSocketServer extends EventEmitter implements NodeWebSocketServerLik
   }
 }
 
+async function setDebouncedCount(
+  transport: ReturnType<typeof createNodeRoomTransport>,
+  count: number
+) {
+  const response = await transport.fetch("/parties/main/debounced-storage/count", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ count }),
+  });
+
+  expect(response.status).toBe(200);
+  await expect(response.json()).resolves.toEqual({ count });
+}
+
 describe("@signe/room/node", () => {
   let cleanup: (() => Promise<void> | void) | undefined;
 
   afterEach(async () => {
     await cleanup?.();
     cleanup = undefined;
+    vi.useRealTimers();
   });
 
   it("routes Web Request objects to room request handlers", async () => {
@@ -367,6 +397,58 @@ describe("@signe/room/node", () => {
     expect(provider.getStorage).toHaveBeenCalledWith("main", "demo");
     expect(sqliteStorage.put).toHaveBeenCalledWith("value", "persisted");
     await expect(room.storage.get("value")).resolves.toBe("sqlite:value");
+  });
+
+  it("debounces throttled storage writes until the wait time has elapsed", async () => {
+    vi.useFakeTimers();
+    const put = vi.fn(async () => undefined);
+    const storage = {
+      get: vi.fn(async () => undefined),
+      put,
+      delete: vi.fn(async () => undefined),
+      list: vi.fn(async () => new Map()),
+    };
+    const transport = createNodeRoomTransport(DebouncedStorageServer, {
+      storage: () => storage,
+    });
+
+    await setDebouncedCount(transport, 1);
+    await setDebouncedCount(transport, 2);
+    await setDebouncedCount(transport, 3);
+
+    expect(put).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(2499);
+    expect(put).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(put).toHaveBeenCalledWith(".", { count: 3 });
+  });
+
+  it("restarts the throttled storage debounce window after each change", async () => {
+    vi.useFakeTimers();
+    const put = vi.fn(async () => undefined);
+    const storage = {
+      get: vi.fn(async () => undefined),
+      put,
+      delete: vi.fn(async () => undefined),
+      list: vi.fn(async () => new Map()),
+    };
+    const transport = createNodeRoomTransport(DebouncedStorageServer, {
+      storage: () => storage,
+    });
+
+    await setDebouncedCount(transport, 1);
+    await vi.advanceTimersByTimeAsync(2000);
+    await setDebouncedCount(transport, 2);
+
+    await vi.advanceTimersByTimeAsync(2499);
+    expect(put).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(put).toHaveBeenCalledWith(".", { count: 2 });
   });
 
   it("provides a SQLite storage provider", async () => {

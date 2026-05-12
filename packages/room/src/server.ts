@@ -493,10 +493,62 @@ export class Server implements Party.Server {
       values.clear();
     }
 
+    const debouncePersist = (wait: number) => {
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      let flushing = false;
+      const pending = new Map<string, any>();
+
+      const schedule = () => {
+        if (timeout) {
+          clearTimeout(timeout);
+        }
+        timeout = setTimeout(() => {
+          void flush();
+        }, wait);
+      };
+
+      const flush = async () => {
+        timeout = null;
+        if (flushing) {
+          schedule();
+          return;
+        }
+
+        const values = new Map(pending);
+        pending.clear();
+        if (!values.size) {
+          return;
+        }
+
+        flushing = true;
+        try {
+          await persistCb(values);
+        } finally {
+          flushing = false;
+          if (pending.size) {
+            schedule();
+          }
+        }
+      };
+
+      return (values: Map<string, any>) => {
+        if (initPersist) {
+          values.clear();
+          return;
+        }
+
+        for (const [path, value] of values) {
+          pending.set(path, value);
+        }
+        values.clear();
+        schedule();
+      };
+    };
+
     // Set up syncing and persistence with throttling to optimize performance
     syncClass(instance, {
       onSync: instance["throttleSync"] ? throttle(syncCb, instance["throttleSync"]) : syncCb,
-      onPersist: instance["throttleStorage"] ? throttle(persistCb, instance["throttleStorage"]) : persistCb,
+      onPersist: instance["throttleStorage"] ? debouncePersist(instance["throttleStorage"]) : persistCb,
     });
 
     await loadMemory();
