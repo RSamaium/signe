@@ -104,7 +104,10 @@ class GameRoom {
     message: { action: string; value: unknown },
     conn: Party.Connection
   ) {
-    console.warn("Unhandled action", message.action, message.value, conn.id);
+    console.warn("Unhandled action", message.action, message.value, {
+      connectionId: conn.id,
+      sessionId: conn.sessionId,
+    });
   }
 }
 ```
@@ -184,18 +187,33 @@ You can return:
 
 ### User Sessions and Reconnects
 
-Rooms use the connection id as the private session id (`privateId`). The
+Rooms use the WebSocket `id` query parameter as the private session id
+(`privateId`). Each active WebSocket still receives its own unique
+`conn.id`; the stable session id is available as `conn.sessionId`. The
 corresponding `publicId` is the key used in `@users()` collections. Query
 parameters such as a display name are user data only; they do not identify the
 session.
+
+Identifier summary:
+
+| Identifier | Meaning | Stability |
+| --- | --- | --- |
+| `conn.id` | Unique WebSocket connection id | New for every active socket |
+| `conn.sessionId` | Private session id from the WebSocket `id` query parameter | Stable across reconnects and shared by tabs using the same `id` |
+| `publicId` | User id stored in `@users()` collections | Stable for the restored session |
+
+Use `conn.id` when you need to address or exclude one physical WebSocket, for
+example `room.broadcast(message, [conn.id])`. Use `conn.sessionId` when you
+need to read, restore, transfer, or log the private user session.
 
 Pass a stable `id` when connecting if a browser refresh or reconnect should
 restore the same user. If `id` is omitted, each connection creates a new
 session and therefore a new user entry. To implement logout, remove or rotate
 the stored id before reconnecting.
 
-Use one active WebSocket per session id. If you want multiple tabs or devices
-online at the same time, give each connection a distinct id.
+Multiple active WebSockets can use the same session id. They share the same
+`publicId`, receive broadcasts independently, and the user is marked offline
+only after the last connection for that session closes.
 
 ```ts
 import { connectionRoom } from "@signe/sync/client";

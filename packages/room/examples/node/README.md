@@ -25,8 +25,10 @@ WebSocket `id` query parameter. That id is the private session id used by the
 room server, so refreshing or reconnecting brings the same user back online. If
 you click "New session" or clear local storage, the next connection gets a new
 session and the previous user remains visible as offline until normal session
-cleanup removes it. Use a different session id for each concurrently open tab;
-this example keeps one active browser session simple on purpose.
+cleanup removes it. Multiple tabs with the same stored session id stay attached
+to the same user and receive room broadcasts independently. Server handlers
+receive a unique `conn.id` for each WebSocket and the shared private session id
+as `conn.sessionId`.
 
 ## SQLite storage
 

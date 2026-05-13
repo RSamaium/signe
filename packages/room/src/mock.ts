@@ -8,9 +8,9 @@ export class MockPartyClient {
     id : string
     conn: MockConnection;
 
-    constructor(public server: Server, id?: string) {
-      this.id = id || generateShortUUID()
-      this.conn = new MockConnection(this)
+    constructor(public server: Server, sessionId?: string) {
+      this.id = generateShortUUID()
+      this.conn = new MockConnection(this, sessionId || this.id)
     }
     
     addEventListener(event, cb) {
@@ -49,8 +49,8 @@ export class MockPartyClient {
 class MockLobby {
   constructor(public server: Server, public lobbyId: string) {}
 
-  socket(_init?: any) {
-    return new MockPartyClient(this.server)
+  socket(init?: { id?: string }) {
+    return new MockPartyClient(this.server, init?.id)
   }
 
   async connection(idOrOptions?: string | { id?: string, query?: Record<string, string>, headers?: Record<string, string> }, maybeOptions?: { query?: Record<string, string>, headers?: Record<string, string> }) {
@@ -142,7 +142,13 @@ class MockPartyRoom {
   }
 
   getConnection(id: string) {
-    return this.clients.get(id)
+    let connection: MockConnection | undefined;
+    for (const client of this.clients.values()) {
+      if (client.conn.id === id || client.conn.sessionId === id) {
+        connection = client.conn;
+      }
+    }
+    return connection;
   }
 
   getConnections() {
@@ -152,15 +158,30 @@ class MockPartyRoom {
   clear() {
     this.clients.clear();
   }
+
+  deleteConnection(id: string, connection?: MockConnection) {
+    if (connection) {
+      this.clients.delete(connection.id);
+      return;
+    }
+
+    for (const [connectionKey, client] of this.clients) {
+      if (client.conn.id === id || client.conn.sessionId === id) {
+        this.clients.delete(connectionKey);
+      }
+    }
+  }
 }
 
 export class MockConnection {
   server: Server;
   id: string;
+  sessionId: string;
 
-  constructor(public client: MockPartyClient) {
+  constructor(public client: MockPartyClient, sessionId: string) {
     this.server = client.server
     this.id = client.id
+    this.sessionId = sessionId
   }
 
   state: any = {};
@@ -174,6 +195,7 @@ export class MockConnection {
   }
 
   close() {
+      (this.server.room as any).deleteConnection?.(this.id, this);
       this.server.onClose(this as any)
   }
 }

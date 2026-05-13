@@ -92,7 +92,7 @@ export async function testRoom(Room, options: {
             return client
         },
         getServerUser: async (client: any, prop = 'users') => {
-            const privateId = client.conn.id;
+            const privateId = client.conn.sessionId || client.conn.id;
             const session = await (server as Server).getSession(privateId);
             return (server as any).subRoom[prop]()[session?.publicId];
         }

@@ -89,6 +89,15 @@ export class Server implements Party.Server {
     return this.room.storage
   }
 
+  private getPrivateId(conn: Party.Connection) {
+    return (conn.state as any)?.privateId || conn.sessionId || conn.id;
+  }
+
+  private hasActiveSessionConnection(privateId: string) {
+    return Array.from(this.room.getConnections())
+      .some((conn) => this.getPrivateId(conn) === privateId);
+  }
+
   async send(conn: Party.Connection, obj: any, subRoom: any) {
     obj = structuredClone(obj);
     if (subRoom.interceptorPacket) {
@@ -140,7 +149,7 @@ export class Server implements Party.Server {
 
     // Get active connections
     const activeConnections = [...this.room.getConnections()];
-    const activePrivateIds = new Set(activeConnections.map(conn => conn.id));
+    const activePrivateIds = new Set(activeConnections.map(conn => this.getPrivateId(conn)));
 
     try {
       // Get all sessions from storage
@@ -221,7 +230,7 @@ export class Server implements Party.Server {
       return;
     }
 
-    if (this.room.getConnection(privateId)) {
+    if (this.hasActiveSessionConnection(privateId)) {
       return;
     }
 
@@ -753,7 +762,9 @@ export class Server implements Party.Server {
     }
 
     // Check for existing session
-    const existingSession = await this.getSession(conn.id)
+    const requestedPrivateId = this.getPrivateId(conn);
+    const privateId = transferData?.privateId || requestedPrivateId;
+    const existingSession = await this.getSession(privateId)
 
     // Generate IDs
     const publicId = existingSession?.publicId || transferData?.publicId || generateShortUUID();
@@ -784,13 +795,12 @@ export class Server implements Party.Server {
       // Only store new session if it doesn't exist
       if (!existingSession) {
         // Use the transferred privateId if available, otherwise use connection id
-        const sessionPrivateId = transferData?.privateId || conn.id;
-        await this.saveSession(sessionPrivateId, {
+        await this.saveSession(privateId, {
           publicId
         });
       }
       else {
-        await this.updateSessionConnection(conn.id, true);
+        await this.updateSessionConnection(privateId, true);
       }
     }
     // Update user connection status if applicable
@@ -799,7 +809,8 @@ export class Server implements Party.Server {
      // Store both IDs in connection state
      conn.setState({
       ...conn.state,
-      publicId
+      publicId,
+      privateId
     });
 
     // Call the room's onJoin method if it exists
@@ -1195,11 +1206,15 @@ export class Server implements Party.Server {
       return;
     }
 
-    const privateId = conn.id;
+    const privateId = this.getPrivateId(conn);
     const { publicId } = conn.state as any;
     const user = signal?.()[publicId];
 
     if (!user) return;
+
+    if (this.hasActiveSessionConnection(privateId)) {
+      return;
+    }
 
     // Mark session as disconnected instead of deleting it
     await this.updateSessionConnection(privateId, false);

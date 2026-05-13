@@ -36,13 +36,13 @@ describe('Session', () => {
     });
 
     it('should create a session when manually saved', async () => {
-      const privateId = client.conn.id;
+      const privateId = client.conn.sessionId;
       const sessionExists = await server.getSession(privateId);
       expect(sessionExists).not.toBeNull();
     });
 
     it('should maintain session when reconnecting with the same privateId', async () => {
-      const privateId = client.conn.id;
+      const privateId = client.conn.sessionId;
       const sessionBefore = await server.getSession(privateId);
       expect(sessionBefore).not.toBeNull();
       
@@ -66,7 +66,7 @@ describe('Session', () => {
       client = await test.createClient();
       room = test.room;
       server = test.server;
-      privateId = client.conn.id;
+      privateId = client.conn.sessionId;
     });
     
     afterEach(async () => {
@@ -172,7 +172,7 @@ describe('Session', () => {
         
         const joinInfo = onJoinCalls[0];
         expect(joinInfo.user).toBeDefined();
-        expect(joinInfo.conn.id).toBe(client.conn.id);
+        expect(joinInfo.conn.sessionId).toBe(client.conn.sessionId);
         client.conn.close();
       });
   });
@@ -191,7 +191,7 @@ describe('Session', () => {
     it('should preserve user data across reconnection', async () => {
       const client = await test.createClient();
       
-      const privateId = client.conn.id;
+      const privateId = client.conn.sessionId;
       const session = await server.getSession(privateId);
       expect(session).not.toBeNull();
       const publicId = session.publicId;
@@ -205,8 +205,7 @@ describe('Session', () => {
       
       client.conn.close();
       
-      const reconnectedClient = await test.createClient();
-      reconnectedClient.conn.id = privateId;
+      const reconnectedClient = await test.createClient(privateId);
       
       const usersObjAfter = room.users();
       expect(Object.keys(usersObjAfter)).toContain(publicId);

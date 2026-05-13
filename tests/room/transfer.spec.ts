@@ -126,7 +126,7 @@ describe('Session transfer between rooms', () => {
 
   it('should transfer session and user data from room-a to room-b', async () => {
     // Get publicId for client in room-a
-    const privateIdA = clientA.conn.id;
+    const privateIdA = clientA.conn.sessionId;
     const sessionA = await serverA.getSession(privateIdA);
     expect(sessionA).not.toBeNull();
     const publicId = sessionA!.publicId;
@@ -199,7 +199,7 @@ describe('Session transfer with onSessionRestore', () => {
   });
 
   it('should hydrate snapshot via onSessionRestore before load', async () => {
-    const privateIdA = clientA.conn.id;
+    const privateIdA = clientA.conn.sessionId;
     const sessionA = await serverA.getSession(privateIdA);
     expect(sessionA).not.toBeNull();
     const publicId = sessionA!.publicId;

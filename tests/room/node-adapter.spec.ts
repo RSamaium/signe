@@ -64,7 +64,8 @@ describe("Node room adapter sessions", () => {
       "session:browser-session"
     );
 
-    expect(connection.id).toBe("browser-session");
+    expect(connection.id).not.toBe("browser-session");
+    expect(connection.sessionId).toBe("browser-session");
     expect(session?.publicId).toBeTypeOf("string");
     expect(session?.connected).toBe(true);
   });
@@ -99,6 +100,68 @@ describe("Node room adapter sessions", () => {
 
     expect(secondSession?.publicId).toBe(firstSession?.publicId);
     expect(secondSession?.connected).toBe(true);
+  });
+
+  it("keeps multiple active websockets for the same session id", async () => {
+    const storage = createMemoryNodeRoomStorage();
+    const transport = createNodeRoomTransport(TestServer, { storage });
+    const firstWs = new FakeWebSocket();
+    const secondWs = new FakeWebSocket();
+
+    await transport.acceptWebSocket(
+      firstWs,
+      new Request("http://localhost/parties/main/demo?id=browser-session")
+    );
+    await transport.acceptWebSocket(
+      secondWs,
+      new Request("http://localhost/parties/main/demo?id=browser-session")
+    );
+
+    const room = await transport.getRoom("main", "demo");
+    const session = await room.storage.get<{ publicId: string; connected: boolean }>(
+      "session:browser-session"
+    );
+
+    expect(Array.from(room.getConnections())).toHaveLength(2);
+    expect(session?.connected).toBe(true);
+
+    firstWs.sent = [];
+    secondWs.sent = [];
+    room.broadcast("hello");
+
+    expect(firstWs.sent).toEqual(["hello"]);
+    expect(secondWs.sent).toEqual(["hello"]);
+
+    firstWs.sent = [];
+    secondWs.sent = [];
+    room.broadcast("without-first", [firstConnectionId(room, "browser-session")!]);
+
+    expect(firstWs.sent).toEqual([]);
+    expect(secondWs.sent).toEqual(["without-first"]);
+
+    firstWs.close();
+    await nextTick();
+
+    const stillConnectedSession = await room.storage.get<{ connected: boolean }>(
+      "session:browser-session"
+    );
+
+    expect(Array.from(room.getConnections())).toHaveLength(1);
+    expect(stillConnectedSession?.connected).toBe(true);
+
+    secondWs.sent = [];
+    room.broadcast("after-close");
+
+    expect(secondWs.sent).toEqual(["after-close"]);
+
+    secondWs.close();
+    await nextTick();
+
+    const disconnectedSession = await room.storage.get<{ connected: boolean }>(
+      "session:browser-session"
+    );
+
+    expect(disconnectedSession?.connected).toBe(false);
   });
 
   it("creates distinct users for websocket connections without an explicit id", async () => {
@@ -191,14 +254,15 @@ describe("Node room adapter sessions", () => {
 
     observerWs.sent = [];
     expiringWs.close();
-    await sleep(120);
 
-    expect(await room.storage.get("session:browser-session")).toBeUndefined();
-    expect(await room.storage.get(`users.${publicId}`)).toBeUndefined();
-    expect(syncValues(observerWs)).toContainEqual({
-      users: {
-        [publicId]: "$delete",
-      },
+    await waitFor(async () => {
+      expect(await room.storage.get("session:browser-session")).toBeUndefined();
+      expect(await room.storage.get(`users.${publicId}`)).toBeUndefined();
+      expect(syncValues(observerWs)).toContainEqual({
+        users: {
+          [publicId]: "$delete",
+        },
+      });
     });
   });
 
@@ -279,9 +343,30 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitFor(assertion: () => void | Promise<void>, timeout = 500) {
+  const deadline = Date.now() + timeout;
+  let lastError: unknown;
+
+  while (Date.now() < deadline) {
+    try {
+      await assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await sleep(10);
+    }
+  }
+
+  throw lastError;
+}
+
 function syncValues(ws: FakeWebSocket) {
   return ws.sent
     .map((data) => JSON.parse(String(data)))
     .filter((packet) => packet.type === "sync")
     .map((packet) => packet.value);
+}
+
+function firstConnectionId(room: { getConnections: () => Iterable<{ id: string; sessionId?: string }> }, sessionId: string) {
+  return Array.from(room.getConnections()).find((connection) => connection.sessionId === sessionId)?.id;
 }

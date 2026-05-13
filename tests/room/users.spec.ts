@@ -40,7 +40,7 @@ describe('Users Connection State', () => {
 
     it('should mark user as connected when they join', async () => {
       // Get the user's public ID
-      const privateId = client.conn.id;
+      const privateId = client.conn.sessionId;
       const session = await server.getSession(privateId);
       expect(session).not.toBeNull();
       
@@ -54,7 +54,7 @@ describe('Users Connection State', () => {
     
     it('should mark user as disconnected when they leave', async () => {
       // Get the user's public ID
-      const privateId = client.conn.id;
+      const privateId = client.conn.sessionId;
       const session = await server.getSession(privateId);
       const publicId = session!.publicId;
       
@@ -94,8 +94,8 @@ describe('Users Connection State', () => {
     
     it('should track connection state independently for each user', async () => {
       // Get users' public IDs
-      const session1 = await server.getSession(client1.conn.id);
-      const session2 = await server.getSession(client2.conn.id);
+      const session1 = await server.getSession(client1.conn.sessionId);
+      const session2 = await server.getSession(client2.conn.sessionId);
       
       const publicId1 = session1!.publicId;
       const publicId2 = session2!.publicId;
@@ -186,7 +186,7 @@ describe('Users Connection State', () => {
     it('should update connection state when user reconnects', async () => {
       // Connect a client
       const client = await test.createClient();
-      const privateId = client.conn.id;
+      const privateId = client.conn.sessionId;
       
       // Get public ID
       const session = await server.getSession(privateId);

@@ -133,7 +133,7 @@ export class SigneRoomDurableObject {
       );
     });
     server.addEventListener("close", () => {
-      record.room.deleteConnection(connection.id);
+      record.room.deleteConnection(connection.id, connection);
       void record.server.onClose?.(connection as unknown as Party.Connection);
     });
     server.addEventListener("error", (event) => {
@@ -237,7 +237,13 @@ export class CloudflareRoom implements Party.Room {
   }
 
   getConnection<TState = unknown>(id: string): Party.Connection<TState> | undefined {
-    return this.connections.get(id) as Party.Connection<TState> | undefined;
+    let connection: Party.Connection | undefined;
+    for (const current of this.connections.values()) {
+      if (current.id === id || current.sessionId === id) {
+        connection = current;
+      }
+    }
+    return connection as Party.Connection<TState> | undefined;
   }
 
   getConnections<TState = unknown>(): Iterable<Party.Connection<TState>> {
@@ -248,13 +254,23 @@ export class CloudflareRoom implements Party.Room {
     this.connections.set(connection.id, connection as unknown as Party.Connection);
   }
 
-  deleteConnection(id: string) {
-    this.connections.delete(id);
+  deleteConnection(id: string, connection?: CloudflareConnection) {
+    if (connection) {
+      this.connections.delete(connection.id);
+      return;
+    }
+
+    for (const [connectionKey, current] of this.connections) {
+      if (current.id === id || current.sessionId === id) {
+        this.connections.delete(connectionKey);
+      }
+    }
   }
 }
 
 export class CloudflareConnection<TState = unknown> {
-  readonly id: string;
+  readonly id = createConnectionId();
+  readonly sessionId: string;
   readonly socket: this = this;
   readonly uri: string;
   state: Party.ConnectionState<TState> | TState | null = null;
@@ -263,9 +279,9 @@ export class CloudflareConnection<TState = unknown> {
   constructor(
     private readonly webSocket: CloudflareWebSocket,
     uri: string,
-    id = createConnectionId()
+    sessionId?: string
   ) {
-    this.id = id;
+    this.sessionId = sessionId || this.id;
     this.uri = uri;
   }
 

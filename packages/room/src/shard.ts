@@ -15,7 +15,7 @@ export interface ShardOptions {
 
 export class Shard {
   ws: PartyWebSocket;
-  connectionMap = new Map<string, Party.Connection>(); // Map privateId -> connection
+  connectionMap = new Map<string, Set<Party.Connection>>(); // Map privateId -> active connections
   mainServerStub: any;
   worldUrl: string | null = null;
   worldId: string = 'default';
@@ -24,6 +24,10 @@ export class Shard {
   statsIntervalId: any = null;
 
   constructor(private room: Party.Room) {}
+
+  private getPrivateId(conn: Party.Connection) {
+    return conn.sessionId || conn.id;
+  }
 
   async onStart() {
     const roomId = this.room.id.split(':')[0];
@@ -47,11 +51,13 @@ export class Shard {
 
         // If the message is directed to a specific client, forward it
         if (message.targetClientId) {
-          const clientConn = this.connectionMap.get(message.targetClientId);
-          if (clientConn) {
+          const clientConnections = this.connectionMap.get(message.targetClientId);
+          if (clientConnections?.size) {
             // Remove the routing information before forwarding
             delete message.targetClientId;
-            clientConn.send(message.data);
+            for (const clientConn of clientConnections) {
+              clientConn.send(message.data);
+            }
           }
         } else {
           // Broadcast to all clients if no specific target
@@ -90,8 +96,12 @@ export class Shard {
   }
 
   onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
+    const privateId = this.getPrivateId(conn);
+
     // Store connection mapping
-    this.connectionMap.set(conn.id, conn);
+    const connections = this.connectionMap.get(privateId) ?? new Set<Party.Connection>();
+    connections.add(conn);
+    this.connectionMap.set(privateId, connections);
     
     // Capture all headers and request information
     const headers: Record<string, string> = {};
@@ -111,7 +121,7 @@ export class Shard {
     // Notify the main server about the new connection with complete connection metadata
     this.ws.send(JSON.stringify({
       type: 'shard.clientConnected',
-      privateId: conn.id,
+      privateId,
       requestInfo
     }));
 
@@ -126,7 +136,7 @@ export class Shard {
       // Wrap the original message with sender information
       const wrappedMessage = JSON.stringify({
         type: 'shard.clientMessage',
-        privateId: sender.id,
+        privateId: this.getPrivateId(sender),
         publicId: (sender.state as any)?.publicId,
         payload: parsedMessage
       });
@@ -139,13 +149,23 @@ export class Shard {
   }
 
   onClose(conn: Party.Connection) {
+    const privateId = this.getPrivateId(conn);
+
     // Remove connection from the map
-    this.connectionMap.delete(conn.id);
+    const connections = this.connectionMap.get(privateId);
+    connections?.delete(conn);
+
+    if (connections?.size) {
+      this.updateWorldStats();
+      return;
+    }
+
+    this.connectionMap.delete(privateId);
     
     // Notify main server about disconnection
     this.ws.send(JSON.stringify({
       type: 'shard.clientDisconnected',
-      privateId: conn.id,
+      privateId,
       publicId: (conn.state as any)?.publicId
     }));
 
@@ -153,7 +173,8 @@ export class Shard {
   }
 
   async updateWorldStats(): Promise<boolean> {
-    const currentConnections = this.connectionMap.size;
+    const currentConnections = Array.from(this.connectionMap.values())
+      .reduce((total, connections) => total + connections.size, 0);
     
     if (currentConnections === this.lastReportedConnections) {
       return true;

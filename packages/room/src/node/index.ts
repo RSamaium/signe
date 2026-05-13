@@ -446,7 +446,7 @@ export class NodeRoomTransport<TServer extends Party.Server = Party.Server> {
       void record.server.onMessage?.(normalizeWebSocketMessage(data), connection as unknown as Party.Connection);
     };
     const onClose = () => {
-      record.room.deleteConnection(connection.id);
+      record.room.deleteConnection(connection.id, connection);
       void record.server.onClose?.(connection as unknown as Party.Connection);
     };
     const onError = (error: Error) => {
@@ -602,7 +602,13 @@ export class NodeRoom implements Party.Room {
   }
 
   getConnection<TState = unknown>(id: string): Party.Connection<TState> | undefined {
-    return this.connections.get(id) as Party.Connection<TState> | undefined;
+    let connection: Party.Connection | undefined;
+    for (const current of this.connections.values()) {
+      if (current.id === id || current.sessionId === id) {
+        connection = current;
+      }
+    }
+    return connection as Party.Connection<TState> | undefined;
   }
 
   getConnections<TState = unknown>(): Iterable<Party.Connection<TState>> {
@@ -613,13 +619,23 @@ export class NodeRoom implements Party.Room {
     this.connections.set(connection.id, connection as unknown as Party.Connection);
   }
 
-  deleteConnection(id: string) {
-    this.connections.delete(id);
+  deleteConnection(id: string, connection?: NodeConnection) {
+    if (connection) {
+      this.connections.delete(connection.id);
+      return;
+    }
+
+    for (const [connectionKey, current] of this.connections) {
+      if (current.id === id || current.sessionId === id) {
+        this.connections.delete(connectionKey);
+      }
+    }
   }
 }
 
 export class NodeConnection<TState = unknown> {
-  readonly id: string;
+  readonly id = createConnectionId();
+  readonly sessionId: string;
   readonly socket: this = this;
   readonly uri: string;
   state: Party.ConnectionState<TState> | TState | null = null;
@@ -628,9 +644,9 @@ export class NodeConnection<TState = unknown> {
   constructor(
     private readonly webSocket: NodeWebSocketLike,
     uri: string,
-    id = createConnectionId()
+    sessionId?: string
   ) {
-    this.id = id;
+    this.sessionId = sessionId || this.id;
     this.uri = uri;
   }
 

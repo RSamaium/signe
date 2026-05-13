@@ -88,6 +88,44 @@ describe('ShardTests', () => {
       expect(forwardedMessage.payload).toEqual(message);
     });
 
+    it('should keep multiple shard clients for the same private id', async () => {
+      const first = await testRoom(MyRoom, {
+        shard: true,
+        env: { SHARD_SECRET: 'test-secret' }
+      });
+      const shard = first.server as Shard;
+      const clientA = await first.createClient('same-session');
+      const clientB = await first.createClient('same-session');
+      const messagesA: any[] = [];
+      const messagesB: any[] = [];
+
+      clientA.addEventListener('message', (message) => messagesA.push(message));
+      clientB.addEventListener('message', (message) => messagesB.push(message));
+
+      (shard.ws as any)._trigger('message', {
+        data: JSON.stringify({
+          targetClientId: 'same-session',
+          data: 'hello'
+        })
+      });
+
+      expect(messagesA).toContain('hello');
+      expect(messagesB).toContain('hello');
+      expect(shard.connectionMap.get('same-session')?.size).toBe(2);
+
+      const wsSendSpy = vi.spyOn(shard.ws, 'send');
+
+      clientA.conn.close();
+
+      expect(shard.connectionMap.get('same-session')?.size).toBe(1);
+      expect(wsSendSpy).not.toHaveBeenCalledWith(expect.stringContaining('shard.clientDisconnected'));
+
+      clientB.conn.close();
+
+      expect(shard.connectionMap.has('same-session')).toBe(false);
+      expect(wsSendSpy).toHaveBeenCalledWith(expect.stringContaining('shard.clientDisconnected'));
+    });
+
     it('should correctly handle HTTP requests through shard to main server', async () => {
       const response = await request(server, '/parties/shard/default/count', { method: 'GET' });
       expect(response.status).toBe(200);

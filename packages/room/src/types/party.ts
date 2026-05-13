@@ -150,6 +150,9 @@ import type {
   export type Connection<TState = unknown> = WebSocket & {
     /** Connection identifier */
     id: string;
+
+    /** Stable private session identifier shared by reconnects or multiple tabs. */
+    sessionId?: string;
   
     /** @deprecated You can access the socket properties directly on the connection*/
     socket: WebSocket;

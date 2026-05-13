@@ -25,7 +25,10 @@ panel shows every known player and whether they are currently connected.
 The browser stores a session id in `localStorage` and sends it as the WebSocket
 `id` query parameter. That id is the private session id used by the room server,
 so refreshing or reconnecting brings the same player back online. Use "New
-session" to create another player from the same browser.
+session" to create another player from the same browser. Multiple tabs with the
+same stored session id stay attached to the same player; server handlers receive
+a unique `conn.id` per WebSocket and the shared private session id as
+`conn.sessionId`.
 
 ## Game room
 

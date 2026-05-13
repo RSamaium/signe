@@ -1,5 +1,9 @@
 import type * as Party from "./types/party";
 
+function getPrivateId(sender: Party.Connection) {
+    return sender.sessionId || sender.id;
+}
+
 /**
  * @description Factory function that creates a session guard with access to room storage
  * @param {Party.Storage} storage - The room storage instance
@@ -29,7 +33,7 @@ export function createRequireSessionGuard(storage: Party.Storage) {
 
         try {
             // Check if session exists in storage
-            const session = await storage.get(`session:${sender.id}`);
+            const session = await storage.get(`session:${getPrivateId(sender)}`);
             
             // Return false if no session found
             if (!session) {
@@ -88,7 +92,7 @@ export const requireSession = async (sender: Party.Connection, value: any, room:
 
     try {
         // Check if session exists in storage
-        const session = await room.storage.get(`session:${sender.id}`);
+        const session = await room.storage.get(`session:${getPrivateId(sender)}`);
         
         // Return false if no session found
         if (!session) {
