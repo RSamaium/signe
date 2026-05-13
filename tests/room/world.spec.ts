@@ -109,6 +109,42 @@ describe('WorldRoom', () => {
         );
         expect(roomShards.length).toBe(3);
       });
+
+      it('should tag created shards with the owning world id', async () => {
+        const test = await testRoom(WorldRoom, {
+          id: 'world-eu',
+          env: {
+            AUTH_JWT_SECRET,
+            SHARD_SECRET
+          }
+        });
+        const worldRoom = test.room as WorldRoom;
+        const token = await (new JWTAuth(AUTH_JWT_SECRET)).sign({
+          worlds: ['world-eu']
+        });
+
+        const response = await request(test.server as any, '/parties/world/world-eu/register-room', {
+          method: 'POST',
+          headers: {
+            'Authorization': token
+          },
+          body: JSON.stringify({
+            name: 'multi-world-room',
+            balancingStrategy: 'round-robin',
+            public: true,
+            maxPlayersPerShard: 50,
+            minShards: 1
+          })
+        });
+
+        expect(response.status).toBe(200);
+        const shard = Object.values(worldRoom.shards()).find(
+          shard => shard.roomId() === 'multi-world-room'
+        );
+        expect(shard).toBeDefined();
+        expect(shard!.worldId()).toBe('world-eu');
+        expect(shard!.id).toContain('multi-world-room:world-eu:');
+      });
     });
 
     describe('Room Updates', () => {

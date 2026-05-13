@@ -30,6 +30,7 @@ import { Shard } from "./shard"
 export async function testRoom(Room, options: {
     hibernate?: boolean,
     shard?: boolean,
+    id?: string,
     env?: Record<string, string>,
     parties?: Record<string, (io: any) => any>,
     partyFn?: (io: any) => any
@@ -42,7 +43,7 @@ export async function testRoom(Room, options: {
     }
 
     const isShard = options.shard || false
-    const io = new ServerIo(Room.path, isShard ? {
+    const io = new ServerIo(options.id ?? Room.path, isShard ? {
         parties: {
             game: createServer,
             ...(options.parties || {})

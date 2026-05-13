@@ -1256,11 +1256,22 @@ export class Server implements Party.Server {
    */
   async onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
     if (ctx.request?.headers.has('x-shard-id')) {
+      if (!this.isAuthorizedShardRequest(ctx.request)) {
+        conn.close();
+        return;
+      }
       this.onConnectShard(conn, ctx);
     }
     else {
       await this.onConnectClient(conn, ctx);
     }
+  }
+
+  private isAuthorizedShardRequest(req?: Party.Request) {
+    const shardSecret = this.room.env.SHARD_SECRET;
+    return typeof shardSecret === 'string'
+      && shardSecret.length > 0
+      && req?.headers.get('x-access-shard') === shardSecret;
   }
 
   /**
@@ -1274,9 +1285,11 @@ export class Server implements Party.Server {
   onConnectShard(conn: Party.Connection, ctx: Party.ConnectionContext) {
     // Set shard metadata in connection state
     const shardId = ctx.request?.headers.get('x-shard-id') || 'unknown-shard';
+    const worldId = ctx.request?.headers.get('x-shard-world-id') || 'world-default';
     conn.setState({
       shard: true,
       shardId,
+      worldId,
       clients: new Map() // Track clients connected through this shard
     });
   }
@@ -1674,6 +1687,9 @@ export class Server implements Party.Server {
     }
 
     if (isFromShard) {
+      if (!this.isAuthorizedShardRequest(req)) {
+        return res.unauthorized('Invalid shard credentials');
+      }
       return this.handleShardRequest(req, res, shardId);
     }
 

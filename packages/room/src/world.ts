@@ -27,11 +27,14 @@ const RoomConfigSchema = z.object({
 const RegisterShardSchema = z.object({
   shardId: z.string(),
   roomId: z.string(),
+  worldId: z.string().optional(),
   url: z.string().url(),
   maxConnections: z.number().int().positive(),
 });
 
 const UpdateShardStatsSchema = z.object({
+  shardId: z.string(),
+  worldId: z.string().optional(),
   connections: z.number().int().min(0),
   status: z.enum(['active', 'maintenance', 'draining']).optional(),
 });
@@ -59,6 +62,7 @@ class RoomConfig {
 class ShardInfo {
   @id() id: string;
   @sync() roomId = signal("");
+  @sync() worldId = signal("");
   @sync() url = signal("");
   @sync({
     persist: false
@@ -95,8 +99,7 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
     if (!SHARD_SECRET) {
       throw new Error("SHARD_SECRET env variable is not set");
     }
-    // TODO
-    //setTimeout(() => this.cleanupInactiveShards(), 60000);
+    this.scheduleInactiveShardCleanup();
   }
 
   async onJoin(user: any, conn: Party.Connection, ctx: Party.ConnectionContext) {
@@ -115,6 +118,15 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
   }
 
   // Helper methods
+  private getWorldId() {
+    return this.room.id;
+  }
+
+  private scheduleInactiveShardCleanup() {
+    const timeoutId = setTimeout(() => this.cleanupInactiveShards(), 60000);
+    timeoutId?.unref?.();
+  }
+
   private cleanupInactiveShards() {
     const now = Date.now();
     const timeout = 5 * 60 * 1000; // 5 minutes timeout
@@ -130,7 +142,7 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
     });
 
     // Schedule next cleanup
-    setTimeout(() => this.cleanupInactiveShards(), 60000);
+    this.scheduleInactiveShardCleanup();
   }
 
   // Actions
@@ -139,8 +151,19 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
     method: 'POST',
   })
   @Guard([guardManageWorld])
-  async registerRoom(req: Party.Request) {
-    const roomConfig: z.infer<typeof RoomConfigSchema> = await req.json();
+  async registerRoom(req: Party.Request, res?: ServerResponse) {
+    const parseResult = RoomConfigSchema.safeParse(await req.json());
+    if (!parseResult.success) {
+      return res?.badRequest("Invalid room configuration", {
+        details: parseResult.error
+      });
+    }
+
+    const roomConfig = parseResult.data;
+    if (roomConfig.maxShards !== undefined && roomConfig.minShards > roomConfig.maxShards) {
+      return res?.badRequest("minShards cannot be greater than maxShards");
+    }
+
     const roomId = roomConfig.name;
 
     if (!this.rooms()[roomId]) {
@@ -170,6 +193,8 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
       room.minShards.set(roomConfig.minShards);
       room.maxShards.set(roomConfig.maxShards);
     }
+
+    await this.ensureMinShards(roomId);
   }
 
   @Request({
@@ -178,12 +203,23 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
   })
   @Guard([guardManageWorld])
   async updateShardStats(req: Party.Request, res: ServerResponse) {
-    const body: { shardId: string; connections: number; status: ShardStatus } = await req.json();
+    const parseResult = UpdateShardStatsSchema.safeParse(await req.json());
+    if (!parseResult.success) {
+      return res.badRequest("Invalid shard stats", {
+        details: parseResult.error
+      });
+    }
+
+    const body = parseResult.data;
     const { shardId, connections, status } = body;
     const shard = this.shards()[shardId];
 
     if (!shard) {
       return res.notFound(`Shard ${shardId} not found`);
+    }
+
+    if (body.worldId && body.worldId !== this.getWorldId()) {
+      return res.badRequest(`Shard ${shardId} belongs to world ${body.worldId}, not ${this.getWorldId()}`);
     }
 
     shard.currentConnections.set(connections);
@@ -199,7 +235,14 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
   })
   @Guard([guardManageWorld])
   async scaleRoom(req: Party.Request, res: ServerResponse) {
-    const data: z.infer<typeof ScaleRoomSchema> = await req.json();
+    const parseResult = ScaleRoomSchema.safeParse(await req.json());
+    if (!parseResult.success) {
+      return res.badRequest("Invalid scale room request", {
+        details: parseResult.error
+      });
+    }
+
+    const data = parseResult.data;
     const { targetShardCount, shardTemplate, roomId } = data;
 
     // Validate room exists
@@ -425,7 +468,8 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
     }
 
     // Generate shard ID
-    const shardId = `${roomId}:${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+    const worldId = this.getWorldId();
+    const shardId = `${roomId}:${worldId}:${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
     // Generate URL from template
     const template = urlTemplate || this.defaultShardUrlTemplate();
@@ -438,6 +482,7 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
     const newShard = new ShardInfo();
     newShard.id = shardId;
     newShard.roomId.set(roomId);
+    newShard.worldId.set(worldId);
     newShard.url.set(url);
     newShard.maxConnections.set(max);
     newShard.currentConnections.set(0);
@@ -447,5 +492,25 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
     // Update shards collection
     this.shards()[shardId] = newShard;
     return newShard;
+  }
+
+  private async ensureMinShards(roomId: string) {
+    const room = this.rooms()[roomId];
+    if (!room) {
+      return;
+    }
+
+    const currentShardCount = Object.values(this.shards())
+      .filter(shard => shard.roomId() === roomId)
+      .length;
+    const targetShardCount = room.minShards();
+
+    if (currentShardCount >= targetShardCount) {
+      return;
+    }
+
+    for (let i = currentShardCount; i < targetShardCount; i++) {
+      await this.createShard(roomId);
+    }
   }
 }

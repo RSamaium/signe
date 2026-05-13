@@ -18,19 +18,41 @@ export class Shard {
   connectionMap = new Map<string, Set<Party.Connection>>(); // Map privateId -> active connections
   mainServerStub: any;
   worldUrl: string | null = null;
-  worldId: string = 'default';
+  worldId: string;
   lastReportedConnections: number = 0;
   statsInterval: number = 30000; 
   statsIntervalId: any = null;
 
-  constructor(private room: Party.Room) {}
+  constructor(private room: Party.Room, options: ShardOptions = {}) {
+    this.worldUrl = options.worldUrl ?? null;
+    this.worldId = options.worldId
+      ?? this.getWorldIdFromShardId(room.id)
+      ?? this.getEnvString('WORLD_ID')
+      ?? this.getEnvString('SIGNE_WORLD_ID')
+      ?? 'world-default';
+    this.statsInterval = options.statsInterval ?? this.statsInterval;
+  }
 
   private getPrivateId(conn: Party.Connection) {
     return conn.sessionId || conn.id;
   }
 
+  private getEnvString(key: string) {
+    const value = this.room.env?.[key];
+    return typeof value === 'string' && value.length > 0 ? value : undefined;
+  }
+
+  private getRoomIdFromShardId(shardId: string) {
+    return shardId.split(':')[0];
+  }
+
+  private getWorldIdFromShardId(shardId: string) {
+    const parts = shardId.split(':');
+    return parts.length >= 3 ? parts[1] : undefined;
+  }
+
   async onStart() {
-    const roomId = this.room.id.split(':')[0];
+    const roomId = this.getRoomIdFromShardId(this.room.id);
     const roomStub = this.room.context.parties.main.get(roomId);
     if (!roomStub) {
       console.warn('No room room stub found in main party context');
@@ -40,7 +62,9 @@ export class Shard {
     this.mainServerStub = roomStub;
     this.ws = await roomStub.socket({
       headers: {
-        'x-shard-id': this.room.id
+        'x-shard-id': this.room.id,
+        'x-shard-world-id': this.worldId,
+        'x-access-shard': this.room.env.SHARD_SECRET as string
       }
     }) as unknown as PartyWebSocket;
     
@@ -48,6 +72,16 @@ export class Shard {
     this.ws.addEventListener("message", (event) => {
       try {
         const message = JSON.parse(event.data);
+
+        if (message.type === 'shard.closeClient' && message.privateId) {
+          const clientConnections = this.connectionMap.get(message.privateId);
+          if (clientConnections?.size) {
+            for (const clientConn of [...clientConnections]) {
+              clientConn.close();
+            }
+          }
+          return;
+        }
 
         // If the message is directed to a specific client, forward it
         if (message.targetClientId) {
@@ -68,12 +102,12 @@ export class Shard {
       }
     });
 
-    await this.updateWorldStats();
+    await this.updateWorldStats(true);
     this.startPeriodicStatsUpdates();
   }
 
   private startPeriodicStatsUpdates() {
-    if (!this.worldUrl) {
+    if (this.statsInterval <= 0 || !this.room.context.parties.world) {
       return;
     }
 
@@ -82,10 +116,11 @@ export class Shard {
     }
 
     this.statsIntervalId = setInterval(() => {
-      this.updateWorldStats().catch(error => {
+      this.updateWorldStats(true).catch(error => {
         console.error('Error in periodic stats update:', error);
       });
     }, this.statsInterval);
+    this.statsIntervalId?.unref?.();
   }
 
   private stopPeriodicStatsUpdates() {
@@ -172,16 +207,25 @@ export class Shard {
     this.updateWorldStats();
   }
 
-  async updateWorldStats(): Promise<boolean> {
+  async updateWorldStats(force = false): Promise<boolean> {
     const currentConnections = Array.from(this.connectionMap.values())
       .reduce((total, connections) => total + connections.size, 0);
     
-    if (currentConnections === this.lastReportedConnections) {
+    if (!force && currentConnections === this.lastReportedConnections) {
       return true;
     }
 
     try {
-      const worldRoom = this.room.context.parties.world.get('world-default');
+      const worldParty = this.room.context.parties.world;
+      if (!worldParty) {
+        return false;
+      }
+
+      const worldRoom = worldParty.get(this.worldId);
+      if (!worldRoom?.fetch) {
+        return false;
+      }
+
       const response = await worldRoom.fetch('/update-shard', {
         method: 'POST',
         headers: {
@@ -190,6 +234,7 @@ export class Shard {
         },
         body: JSON.stringify({
           shardId: this.room.id,
+          worldId: this.worldId,
           connections: currentConnections
         })
       });
@@ -240,7 +285,9 @@ export class Shard {
       
       // Add shard identification
       headers.set('x-shard-id', this.room.id);
+      headers.set('x-shard-world-id', this.worldId);
       headers.set('x-forwarded-by-shard', 'true');
+      headers.set('x-access-shard', this.room.env.SHARD_SECRET as string);
       
       // Client IP tracking for the main server
       const clientIp = req.headers.get('x-forwarded-for') || 'unknown';
@@ -255,7 +302,7 @@ export class Shard {
         body
       };
       // Forward the request to the main server
-      const response = await this.mainServerStub.fetch(path, requestInit);
+      const response = await this.mainServerStub.fetch(path + url.search, requestInit);
       return response;
     } catch (error) {
       return response(500, { error: 'Error forwarding request' });
@@ -268,7 +315,7 @@ export class Shard {
    * @description Executed periodically, used to perform maintenance tasks
    */
   async onAlarm() {
-    await this.updateWorldStats();
+    await this.updateWorldStats(true);
   }
 }
 

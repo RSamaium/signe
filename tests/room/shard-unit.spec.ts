@@ -78,9 +78,10 @@ describe("Shard unit behavior", () => {
     expect(console.error).toHaveBeenCalledWith("Error processing message from main server:", expect.any(Error));
   });
 
-  it("updates world stats and records the reported connection count", async () => {
+  it("updates world stats on the shard world and records the reported connection count", async () => {
     const fetch = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
     const room = createRoom({
+      id: "game:world-eu:shard-1",
       context: {
         parties: {
           main: { get: vi.fn() },
@@ -93,9 +94,10 @@ describe("Shard unit behavior", () => {
 
     await expect(shard.updateWorldStats()).resolves.toBe(true);
 
+    expect(room.context.parties.world.get).toHaveBeenCalledWith("world-eu");
     expect(fetch).toHaveBeenCalledWith("/update-shard", expect.objectContaining({
       method: "POST",
-      body: JSON.stringify({ shardId: "game:shard-1", connections: 1 }),
+      body: JSON.stringify({ shardId: "game:world-eu:shard-1", worldId: "world-eu", connections: 1 }),
     }));
     expect(shard.lastReportedConnections).toBe(1);
   });
@@ -148,14 +150,35 @@ describe("Shard unit behavior", () => {
     }) as any);
 
     expect(response).toBe(forwarded);
-    expect(fetch).toHaveBeenCalledWith("/api/action", expect.objectContaining({
+    expect(fetch).toHaveBeenCalledWith("/api/action?x=1", expect.objectContaining({
       method: "POST",
       body: "payload",
     }));
     const headers = fetch.mock.calls[0][1].headers as Headers;
     expect(headers.get("x-shard-id")).toBe("game:shard-1");
+    expect(headers.get("x-shard-world-id")).toBe("world-default");
     expect(headers.get("x-forwarded-by-shard")).toBe("true");
+    expect(headers.get("x-access-shard")).toBe("shard-secret");
     expect(headers.get("x-original-client-ip")).toBe("203.0.113.10");
+  });
+
+  it("forces world stats updates for heartbeat calls even when counts are unchanged", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    const room = createRoom({
+      context: {
+        parties: {
+          main: { get: vi.fn() },
+          world: { get: vi.fn(() => ({ fetch })) },
+        },
+      },
+    });
+    const shard = new Shard(room as any);
+
+    await expect(shard.updateWorldStats(true)).resolves.toBe(true);
+
+    expect(fetch).toHaveBeenCalledWith("/update-shard", expect.objectContaining({
+      body: JSON.stringify({ shardId: "game:shard-1", worldId: "world-default", connections: 0 }),
+    }));
   });
 
   it("returns an error response when request forwarding fails", async () => {

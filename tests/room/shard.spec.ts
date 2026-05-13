@@ -132,5 +132,21 @@ describe('ShardTests', () => {
       const body = await response.json();
       expect(body.count).toBe(0);
     });
+
+    it('should reject spoofed shard HTTP requests without the shard secret', async () => {
+      const test = await testRoom(MyRoom, {
+        env: { SHARD_SECRET: 'test-secret' }
+      });
+
+      const response = await request(test.server as any, '/parties/main/game/count', {
+        method: 'GET',
+        headers: {
+          'x-shard-id': 'game:world-default:fake',
+          'x-forwarded-by-shard': 'true'
+        }
+      });
+
+      expect(response.status).toBe(401);
+    });
   });
 });
