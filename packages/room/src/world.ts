@@ -145,6 +145,14 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
     this.scheduleInactiveShardCleanup();
   }
 
+  private removeShard(shardId: string) {
+    delete this.shards()[shardId];
+  }
+
+  private shouldCompleteDrain(shard: ShardInfo) {
+    return shard.status() === 'draining' && shard.currentConnections() === 0;
+  }
+
   // Actions
   @Request({
     path: 'register-room',
@@ -227,6 +235,10 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
       shard.status.set(status);
     }
     shard.lastHeartbeat.set(Date.now());
+
+    if (this.shouldCompleteDrain(shard)) {
+      this.removeShard(shard.id);
+    }
   }
 
   @Request({
@@ -266,8 +278,8 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
 
     // Handle scaling down
     if (targetShardCount < previousShardCount) {
-      // Find candidates for removal (prioritize draining or low-connection shards)
-      const shardsToRemove = [...roomShards]
+      // Find drain candidates (prioritize already-draining or low-connection shards)
+      const shardsToDrain = [...roomShards]
         .sort((a, b) => {
           // Prioritize draining status
           if (a.status() === 'draining' && b.status() !== 'draining') return -1;
@@ -278,14 +290,12 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
         })
         .slice(0, previousShardCount - targetShardCount);
 
-      // Remove the selected shards
-      const shardsToKeep = roomShards.filter(
-        shard => !shardsToRemove.some(s => s.id === shard.id)
-      );
-
-      // Update shards
-      for (const shard of shardsToRemove) {
-        delete this.shards()[shard.id];
+      // Complete empty drains immediately, otherwise stop routing new clients there.
+      for (const shard of shardsToDrain) {
+        shard.status.set('draining');
+        if (this.shouldCompleteDrain(shard)) {
+          this.removeShard(shard.id);
+        }
       }
 
       return;
@@ -411,11 +421,24 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
       }
     }
 
-    // Get active shards
-    const activeShards = roomShards
-      .filter(shard => shard && shard.status() === 'active');
+    // Get active shards with available capacity
+    let activeShards = this.getAvailableShards(roomShards);
 
     if (activeShards.length === 0) {
+      if (autoCreate && this.canCreateShard(room, roomShards.length)) {
+        const newShard = await this.createShard(roomId);
+        if (newShard) {
+          return {
+            shardId: newShard.id,
+            url: newShard.url()
+          };
+        }
+      }
+
+      if (roomShards.some(shard => shard.status() === 'active')) {
+        return { error: `No shard capacity available for room ${roomId}` };
+      }
+
       return { error: `No active shards available for room ${roomId}` };
     }
 
@@ -453,6 +476,18 @@ export class WorldRoom implements RoomInterceptorPacket, RoomOnJoin {
       shardId: selectedShard.id,
       url: selectedShard.url()
     };
+  }
+
+  private getAvailableShards(shards: ShardInfo[]) {
+    return shards.filter(shard =>
+      shard
+      && shard.status() === 'active'
+      && shard.currentConnections() < shard.maxConnections()
+    );
+  }
+
+  private canCreateShard(room: RoomConfig, currentShardCount: number) {
+    return room.maxShards() === undefined || currentShardCount < room.maxShards()!;
   }
 
   // Private methods

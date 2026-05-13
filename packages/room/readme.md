@@ -695,16 +695,19 @@ World tracks each shard with:
 - `status`: `active`, `maintenance`, or `draining`;
 - `lastHeartbeat`: the latest stats update timestamp.
 
-The built-in balancing strategies are:
-- `round-robin`: rotates through active shards;
-- `least-connections`: picks the active shard with the lowest reported connection count;
-- `random`: picks a random active shard.
+The built-in balancing strategies only consider active shards with available capacity (`currentConnections < maxConnections`):
+- `round-robin`: rotates through available shards;
+- `least-connections`: picks the available shard with the lowest reported connection count;
+- `random`: picks a random available shard.
+
+If every active shard is full and `autoCreate` is enabled, the world creates another shard when the room has not reached `maxShards`. If no capacity is available and the room cannot create another shard, `/connect` returns a capacity error.
 
 Shard stats are updated when connections change and through periodic forced heartbeats. Inactive shards are removed after the world cleanup timeout.
 
+When a shard is marked `draining`, the world stops assigning new clients to it. Existing WebSocket clients remain connected to that shard. Once the shard reports `currentConnections: 0`, the world removes it from the shard registry automatically. Scaling down uses the same flow: empty candidate shards are removed immediately, while occupied candidate shards are marked `draining` and removed later when they become empty.
+
 Current limitations:
-- Scaling down removes shard metadata from the world registry; it does not yet migrate connected clients.
-- `draining` shards are avoided for new assignments only after their status is updated.
+- Draining does not migrate connected clients; it waits for them to disconnect naturally.
 - The world registry is held in room state; use deployment-specific persistence if your topology requires an external global registry.
 
 ### Packet Interception

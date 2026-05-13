@@ -1,0 +1,777 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Signe Node Shard</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f6f8fb;
+        color: #17191f;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          linear-gradient(180deg, #eef4fb 0, #f6f8fb 260px),
+          #f6f8fb;
+      }
+
+      main {
+        width: min(1180px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 28px 0;
+        display: grid;
+        gap: 18px;
+      }
+
+      header {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 30px;
+        line-height: 1.1;
+      }
+
+      h2 {
+        font-size: 17px;
+        line-height: 1.2;
+      }
+
+      h3 {
+        font-size: 14px;
+      }
+
+      .muted,
+      .meta,
+      .status {
+        color: #5b6472;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 360px minmax(0, 1fr);
+        gap: 18px;
+        align-items: start;
+      }
+
+      .stack {
+        display: grid;
+        gap: 14px;
+      }
+
+      .panel,
+      .card {
+        border: 1px solid #d7dde6;
+        border-radius: 8px;
+        background: #ffffff;
+      }
+
+      .panel {
+        padding: 18px;
+        display: grid;
+        gap: 14px;
+      }
+
+      .section-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      form,
+      .controls {
+        display: grid;
+        gap: 12px;
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      input,
+      select {
+        width: 100%;
+        min-height: 40px;
+        border: 1px solid #c8d0da;
+        border-radius: 6px;
+        background: #ffffff;
+        color: #17191f;
+        padding: 0 10px;
+        font: inherit;
+      }
+
+      button {
+        min-height: 38px;
+        border: 1px solid #1f2937;
+        border-radius: 6px;
+        background: #1f2937;
+        color: #ffffff;
+        padding: 0 12px;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      button.secondary {
+        background: #ffffff;
+        color: #1f2937;
+      }
+
+      button.small {
+        min-height: 30px;
+        padding: 0 9px;
+        font-size: 12px;
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .split {
+        display: grid;
+        grid-template-columns: 1fr 120px;
+        gap: 10px;
+      }
+
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .metric {
+        border: 1px solid #e0e5ec;
+        border-radius: 8px;
+        padding: 12px;
+        background: #fbfcfe;
+      }
+
+      .metric strong {
+        display: block;
+        font-size: 24px;
+      }
+
+      .rooms,
+      .shards,
+      .users {
+        display: grid;
+        gap: 8px;
+      }
+
+      .room-item,
+      .shard-item,
+      .user-item {
+        border: 1px solid #e0e5ec;
+        border-radius: 8px;
+        padding: 12px;
+        display: grid;
+        gap: 10px;
+        background: #ffffff;
+      }
+
+      .room-line,
+      .shard-line,
+      .user-line {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        font-size: 12px;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 24px;
+        border-radius: 999px;
+        padding: 2px 8px;
+        background: #eef2f6;
+        color: #4b5563;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .badge.active {
+        background: #e7f7ed;
+        color: #146c36;
+      }
+
+      .badge.draining {
+        background: #fff4df;
+        color: #8a4b00;
+      }
+
+      .badge.maintenance {
+        background: #e8f0ff;
+        color: #1d4ed8;
+      }
+
+      .room-view {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 280px;
+        gap: 14px;
+      }
+
+      .count {
+        font-size: 68px;
+        line-height: 1;
+        font-weight: 760;
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      @media (max-width: 900px) {
+        header,
+        .layout,
+        .room-view,
+        .split,
+        .metrics {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>Signe Node Shard</h1>
+          <p class="muted" id="headerDetail">World dashboard and sharded room entry</p>
+        </div>
+        <div class="row">
+          <button id="refreshWorld" class="secondary" type="button">Refresh</button>
+          <button id="leaveRoom" class="secondary hidden" type="button">Leave room</button>
+        </div>
+      </header>
+
+      <section class="layout">
+        <aside class="stack">
+          <section class="panel">
+            <div class="section-title">
+              <h2>World</h2>
+              <span class="badge" id="worldState">Idle</span>
+            </div>
+            <form id="worldForm">
+              <label>
+                World id
+                <input id="worldInput" autocomplete="off" value="world-default" />
+              </label>
+              <label>
+                Room id
+                <input id="roomInput" autocomplete="off" value="demo" />
+              </label>
+              <label>
+                Name
+                <input id="nameInput" autocomplete="name" value="Sam" />
+              </label>
+              <label>
+                Room process origin
+                <input id="roomOriginInput" autocomplete="off" value="http://localhost:3003" />
+              </label>
+              <div class="split">
+                <button type="submit">Ensure room</button>
+                <button id="enterRoom" class="secondary" type="button">Enter</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="section-title">
+              <h2>Scale</h2>
+              <span class="meta" id="scaleMeta">target shards</span>
+            </div>
+            <div class="split">
+              <label>
+                Count
+                <input id="targetShardCount" type="number" min="1" max="12" value="2" />
+              </label>
+              <button id="scaleRoom" type="button">Apply</button>
+            </div>
+          </section>
+        </aside>
+
+        <section class="stack">
+          <section class="panel">
+            <div class="section-title">
+              <h2>World Overview</h2>
+              <span class="status" id="lastRefresh">Not loaded</span>
+            </div>
+            <div class="metrics">
+              <div class="metric">
+                <strong id="roomTotal">0</strong>
+                <span class="muted">rooms</span>
+              </div>
+              <div class="metric">
+                <strong id="shardTotal">0</strong>
+                <span class="muted">shards</span>
+              </div>
+              <div class="metric">
+                <strong id="connectionTotal">0</strong>
+                <span class="muted">connections</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="section-title">
+              <h2>Rooms</h2>
+              <span class="meta">registered in selected world</span>
+            </div>
+            <div class="rooms" id="rooms"></div>
+          </section>
+
+          <section class="panel">
+            <div class="section-title">
+              <h2>Shards</h2>
+              <span class="meta">status and load</span>
+            </div>
+            <div class="shards" id="shards"></div>
+          </section>
+
+          <section class="room-view hidden" id="roomView">
+            <div class="panel">
+              <div class="section-title">
+                <h2>Room</h2>
+                <span class="badge active" id="roomStatus">Connected</span>
+              </div>
+              <div class="count" id="count">0</div>
+              <div class="row">
+                <button id="increment" type="button">Increment</button>
+                <button id="reset" class="secondary" type="button">Reset</button>
+                <button id="newSession" class="secondary" type="button">New session</button>
+              </div>
+              <p class="muted mono" id="connectionDetail"></p>
+            </div>
+
+            <aside class="card panel">
+              <h2>Users</h2>
+              <div class="users" id="users"></div>
+            </aside>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      const state = {
+        dashboard: { rooms: [], shards: [] },
+        socket: null,
+        users: {},
+        roomId: getRoomIdFromPath() || "demo",
+        worldId: localStorage.getItem("signe-node-shard-world") || "world-default",
+        name: localStorage.getItem("signe-node-shard-name") || "Sam",
+        roomOrigin: localStorage.getItem("signe-node-shard-room-origin") || `${location.protocol}//${location.hostname}:3003`,
+        sessionId: localStorage.getItem("signe-node-shard-session") || "",
+        shardInfo: null,
+      };
+
+      const worldInput = document.querySelector("#worldInput");
+      const roomInput = document.querySelector("#roomInput");
+      const nameInput = document.querySelector("#nameInput");
+      const roomOriginInput = document.querySelector("#roomOriginInput");
+      const targetShardCount = document.querySelector("#targetShardCount");
+      const worldState = document.querySelector("#worldState");
+      const lastRefresh = document.querySelector("#lastRefresh");
+      const roomTotal = document.querySelector("#roomTotal");
+      const shardTotal = document.querySelector("#shardTotal");
+      const connectionTotal = document.querySelector("#connectionTotal");
+      const rooms = document.querySelector("#rooms");
+      const shards = document.querySelector("#shards");
+      const roomView = document.querySelector("#roomView");
+      const count = document.querySelector("#count");
+      const users = document.querySelector("#users");
+      const roomStatus = document.querySelector("#roomStatus");
+      const connectionDetail = document.querySelector("#connectionDetail");
+      const leaveRoom = document.querySelector("#leaveRoom");
+
+      worldInput.value = state.worldId;
+      roomInput.value = state.roomId;
+      nameInput.value = state.name;
+      roomOriginInput.value = state.roomOrigin;
+
+      document.querySelector("#worldForm").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        syncInputs();
+        await ensureRoom();
+      });
+
+      document.querySelector("#refreshWorld").addEventListener("click", () => {
+        syncInputs();
+        loadDashboard();
+      });
+
+      document.querySelector("#scaleRoom").addEventListener("click", async () => {
+        syncInputs();
+        const target = Math.max(1, Number(targetShardCount.value || 1));
+        await api(`/api/world/${encodeURIComponent(state.worldId)}/scale`, {
+          method: "POST",
+          body: {
+            roomId: state.roomId,
+            targetShardCount: target,
+            shardTemplate: {
+              urlTemplate: "{shardId}",
+              maxConnections: 75,
+            },
+          },
+        });
+        await loadDashboard();
+      });
+
+      document.querySelector("#enterRoom").addEventListener("click", async () => {
+        syncInputs();
+        await enterRoom();
+      });
+
+      document.querySelector("#increment").addEventListener("click", () => {
+        state.socket?.send(JSON.stringify({ action: "increment", value: { amount: 1 } }));
+      });
+
+      document.querySelector("#reset").addEventListener("click", async () => {
+        if (!state.roomId) return;
+        await fetch(`/api/room/${encodeURIComponent(state.roomId)}/reset`, { method: "POST" });
+      });
+
+      document.querySelector("#newSession").addEventListener("click", async () => {
+        disconnect();
+        localStorage.removeItem("signe-node-shard-session");
+        state.sessionId = "";
+        await enterRoom();
+      });
+
+      leaveRoom.addEventListener("click", () => {
+        disconnect();
+        roomView.classList.add("hidden");
+        leaveRoom.classList.add("hidden");
+        history.pushState({}, "", "/");
+      });
+
+      window.addEventListener("popstate", () => {
+        const roomId = getRoomIdFromPath();
+        if (roomId) {
+          state.roomId = roomId;
+          roomInput.value = roomId;
+          enterRoom();
+        }
+      });
+
+      rooms.addEventListener("click", (event) => {
+        const roomId = event.target.closest("[data-room-id]")?.dataset.roomId;
+        if (!roomId) return;
+        state.roomId = roomId;
+        roomInput.value = roomId;
+      });
+
+      shards.addEventListener("click", async (event) => {
+        const button = event.target.closest("[data-shard-status]");
+        if (!button) return;
+        const shard = state.dashboard.shards.find((item) => item.id === button.dataset.shardId);
+        if (!shard) return;
+
+        await api(`/api/world/${encodeURIComponent(state.worldId)}/shard-status`, {
+          method: "POST",
+          body: {
+            shardId: shard.id,
+            worldId: state.worldId,
+            connections: shard.currentConnections,
+            status: button.dataset.shardStatus,
+          },
+        });
+        await loadDashboard();
+      });
+
+      loadDashboard();
+      if (getRoomIdFromPath()) {
+        enterRoom();
+      }
+      setInterval(() => loadDashboard({ quiet: true }), 2500);
+
+      async function ensureRoom() {
+        setWorldState("Working");
+        const result = await api(`/api/world/${encodeURIComponent(state.worldId)}/connect`, {
+          method: "POST",
+          body: {
+            roomId: state.roomId,
+            autoCreate: true,
+          },
+        });
+        state.shardInfo = result;
+        await loadDashboard();
+        setWorldState("Ready");
+        return result;
+      }
+
+      async function enterRoom() {
+        const shardInfo = await ensureRoom();
+        disconnect();
+        state.users = {};
+        state.shardInfo = shardInfo;
+        count.textContent = "0";
+        renderUsers();
+        roomView.classList.remove("hidden");
+        leaveRoom.classList.remove("hidden");
+        history.pushState({}, "", `/rooms/${encodeURIComponent(state.roomId)}`);
+
+        const roomOrigin = new URL(state.roomOrigin);
+        const protocol = roomOrigin.protocol === "https:" ? "wss" : "ws";
+        const params = new URLSearchParams({
+          name: state.name || "Anonymous",
+          id: getSessionId(),
+        });
+        const shardRoom = encodeURIComponent(shardInfo.url || shardInfo.shardId);
+        state.socket = new WebSocket(`${protocol}://${roomOrigin.host}/parties/shard/${shardRoom}?${params}`);
+
+        roomStatus.textContent = "Connecting";
+        roomStatus.className = "badge maintenance";
+        connectionDetail.textContent = `world ${state.worldId} / room process ${state.roomOrigin} / shard ${shardInfo.shardId}`;
+
+        state.socket.addEventListener("open", () => {
+          roomStatus.textContent = "Connected";
+          roomStatus.className = "badge active";
+        });
+
+        state.socket.addEventListener("close", () => {
+          roomStatus.textContent = "Disconnected";
+          roomStatus.className = "badge";
+        });
+
+        state.socket.addEventListener("message", (event) => {
+          const packet = JSON.parse(event.data);
+          if (packet.type !== "sync" || !packet.value) return;
+
+          if (typeof packet.value.count === "number") {
+            count.textContent = String(packet.value.count);
+          }
+
+          if (packet.value.users) {
+            mergeUsers(state.users, packet.value.users);
+            renderUsers();
+          }
+        });
+      }
+
+      async function loadDashboard(options = {}) {
+        try {
+          const dashboard = await api(`/api/world/${encodeURIComponent(state.worldId)}/dashboard`);
+          state.dashboard = dashboard;
+          renderDashboard();
+          setWorldState("Ready");
+          lastRefresh.textContent = new Date().toLocaleTimeString();
+        } catch (error) {
+          if (!options.quiet) {
+            console.error(error);
+          }
+          setWorldState("Error");
+        }
+      }
+
+      async function api(path, options = {}) {
+        const response = await fetch(path, {
+          method: options.method || "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: options.body ? JSON.stringify(options.body) : undefined,
+        });
+
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.error || `Request failed with ${response.status}`);
+        }
+        return data;
+      }
+
+      function renderDashboard() {
+        const visibleRooms = state.dashboard.rooms || [];
+        const visibleShards = state.dashboard.shards || [];
+        const currentRoomShards = visibleShards.filter((shard) => shard.roomId === state.roomId);
+
+        roomTotal.textContent = String(visibleRooms.length);
+        shardTotal.textContent = String(visibleShards.length);
+        connectionTotal.textContent = String(visibleShards.reduce((total, shard) => total + shard.currentConnections, 0));
+        targetShardCount.value = String(Math.max(1, currentRoomShards.length || Number(targetShardCount.value || 1)));
+
+        rooms.innerHTML = visibleRooms.length
+          ? visibleRooms.map((room) => `
+              <button class="room-item" type="button" data-room-id="${escapeHtml(room.id)}">
+                <span class="room-line">
+                  <strong>${escapeHtml(room.id)}</strong>
+                  <span class="badge">${escapeHtml(room.balancingStrategy)}</span>
+                </span>
+                <span class="muted">min ${room.minShards} / max ${room.maxShards ?? "unlimited"} / capacity ${room.maxPlayersPerShard}</span>
+              </button>
+            `).join("")
+          : `<div class="muted">No rooms in this world yet.</div>`;
+
+        shards.innerHTML = visibleShards.length
+          ? visibleShards.map((shard) => renderShard(shard)).join("")
+          : `<div class="muted">No shards in this world yet.</div>`;
+      }
+
+      function renderShard(shard) {
+        const heartbeat = shard.lastHeartbeat ? `${Math.max(0, Math.round((Date.now() - shard.lastHeartbeat) / 1000))}s ago` : "never";
+        return `
+          <article class="shard-item">
+            <div class="shard-line">
+              <div>
+                <strong class="mono">${escapeHtml(shard.id)}</strong>
+                <div class="muted">room ${escapeHtml(shard.roomId)} / heartbeat ${heartbeat}</div>
+              </div>
+              <span class="badge ${escapeHtml(shard.status)}">${escapeHtml(shard.status)}</span>
+            </div>
+            <div class="shard-line">
+              <span>${shard.currentConnections} / ${shard.maxConnections} connections</span>
+              <span class="row">
+                <button class="small secondary" type="button" data-shard-id="${escapeHtml(shard.id)}" data-shard-status="active">Active</button>
+                <button class="small secondary" type="button" data-shard-id="${escapeHtml(shard.id)}" data-shard-status="draining">Drain</button>
+                <button class="small secondary" type="button" data-shard-id="${escapeHtml(shard.id)}" data-shard-status="maintenance">Maint.</button>
+              </span>
+            </div>
+          </article>
+        `;
+      }
+
+      function renderUsers() {
+        const entries = Object.entries(state.users);
+        users.innerHTML = entries.length
+          ? entries.map(([id, user]) => `
+              <div class="user-item">
+                <span class="user-line">
+                  <strong>${escapeHtml(user.name || "Anonymous")}</strong>
+                  <span class="badge ${user.connected ? "active" : ""}">${user.connected ? "connected" : "offline"}</span>
+                </span>
+                <span class="muted mono">${escapeHtml(id)}</span>
+              </div>
+            `).join("")
+          : `<div class="muted">No users in the room.</div>`;
+      }
+
+      function disconnect() {
+        if (state.socket) {
+          state.socket.close();
+          state.socket = null;
+        }
+      }
+
+      function syncInputs() {
+        state.worldId = normalizeId(worldInput.value, "world-default");
+        state.roomId = normalizeId(roomInput.value, "demo");
+        state.name = nameInput.value.trim() || "Anonymous";
+        state.roomOrigin = normalizeOrigin(roomOriginInput.value);
+        worldInput.value = state.worldId;
+        roomInput.value = state.roomId;
+        nameInput.value = state.name;
+        roomOriginInput.value = state.roomOrigin;
+        localStorage.setItem("signe-node-shard-world", state.worldId);
+        localStorage.setItem("signe-node-shard-name", state.name);
+        localStorage.setItem("signe-node-shard-room-origin", state.roomOrigin);
+      }
+
+      function getSessionId() {
+        if (!state.sessionId) {
+          state.sessionId = crypto.randomUUID();
+          localStorage.setItem("signe-node-shard-session", state.sessionId);
+        }
+        return state.sessionId;
+      }
+
+      function mergeUsers(target, patch) {
+        for (const [id, value] of Object.entries(patch)) {
+          if (value === "$delete") {
+            delete target[id];
+            continue;
+          }
+          target[id] = mergeValue(target[id], value);
+        }
+      }
+
+      function mergeValue(current, patch) {
+        if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+          return patch;
+        }
+
+        const next = current && typeof current === "object" && !Array.isArray(current)
+          ? { ...current }
+          : {};
+
+        for (const [key, value] of Object.entries(patch)) {
+          if (value === "$delete") {
+            delete next[key];
+          } else {
+            next[key] = mergeValue(next[key], value);
+          }
+        }
+
+        return next;
+      }
+
+      function setWorldState(value) {
+        worldState.textContent = value;
+        worldState.className = `badge ${value === "Ready" ? "active" : value === "Working" ? "maintenance" : ""}`;
+      }
+
+      function getRoomIdFromPath() {
+        const match = location.pathname.match(/^\/rooms\/([^/]+)$/);
+        return match ? decodeURIComponent(match[1]) : null;
+      }
+
+      function normalizeId(value, fallback) {
+        return value.trim().replace(/[^a-zA-Z0-9_-]/g, "-") || fallback;
+      }
+
+      function normalizeOrigin(value) {
+        try {
+          return new URL(value.trim()).origin;
+        } catch {
+          return `${location.protocol}//${location.hostname}:3003`;
+        }
+      }
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, (char) => ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          "\"": "&quot;",
+          "'": "&#039;",
+        }[char]));
+      }
+    </script>
+  </body>
+</html>

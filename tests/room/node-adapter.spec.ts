@@ -185,6 +185,29 @@ describe("Node room adapter sessions", () => {
     expect(firstSession?.publicId).not.toBe(secondSession?.publicId);
   });
 
+  it("supports in-memory party stub socket connections", async () => {
+    const storage = createMemoryNodeRoomStorage();
+    const transport = createNodeRoomTransport(TestServer, { storage });
+    const sourceRoom = await transport.getRoom("main", "source");
+    const socket = await sourceRoom.context.parties.main.get("demo").socket({
+      headers: {
+        "x-test": "stub-socket",
+      },
+    });
+
+    const packet = await new Promise<any>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Timed out waiting for sync")), 500);
+      (socket as any).addEventListener("message", (event: { data: string }) => {
+        clearTimeout(timeout);
+        resolve(JSON.parse(event.data));
+      });
+    });
+
+    expect(packet.type).toBe("sync");
+    expect(packet.value.pId).toBeTypeOf("string");
+    socket.close();
+  });
+
   it("marks a session offline when the websocket closes", async () => {
     const storage = createMemoryNodeRoomStorage();
     const transport = createNodeRoomTransport(TestServer, { storage });

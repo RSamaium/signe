@@ -350,6 +350,53 @@ describe('WorldRoom', () => {
         
         expect(room.shards()[shard!.id].status()).toBe('draining');
       });
+
+      it('should remove a draining shard once its connections reach zero', async () => {
+        await request(server, `${baseUrl}/register-room`, {
+          method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
+          body: JSON.stringify({
+            name: 'complete-drain-room',
+            balancingStrategy: 'round-robin',
+            public: true,
+            maxPlayersPerShard: 50,
+            minShards: 1
+          })
+        });
+
+        const shard = Object.values(room.shards()).find(
+          s => s.roomId() === 'complete-drain-room'
+        );
+
+        await request(server, `${baseUrl}/update-shard`, {
+          method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
+          body: JSON.stringify({
+            shardId: shard!.id,
+            connections: 2,
+            status: 'draining'
+          })
+        });
+
+        expect(room.shards()[shard!.id]).toBeDefined();
+
+        await request(server, `${baseUrl}/update-shard`, {
+          method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
+          body: JSON.stringify({
+            shardId: shard!.id,
+            connections: 0
+          })
+        });
+
+        expect(room.shards()[shard!.id]).toBeUndefined();
+      });
     });
 
     describe('Shard Scaling', () => {
@@ -489,7 +536,7 @@ describe('WorldRoom', () => {
         expect(finalShards.length).toBe(1);
       });
 
-      it('should prioritize draining shards when scaling down', async () => {
+      it('should drain occupied shards instead of removing them immediately when scaling down', async () => {
         // First register a room with 3 shards
         await request(server, `${baseUrl}/register-room`, {
           method: 'POST',
@@ -536,12 +583,31 @@ describe('WorldRoom', () => {
           })
         });
         
-        // Verify the draining shard was removed
+        // Verify the occupied draining shard is kept but no longer active.
         const finalShards = Object.values(room.shards()).filter(
           shard => shard.roomId() === 'drain-priority-room'
         );
-        expect(finalShards.length).toBe(2);
-        expect(finalShards.find(shard => shard.id === shards[1].id)).toBeUndefined();
+        expect(finalShards.length).toBe(3);
+        expect(finalShards.find(shard => shard.id === shards[1].id)?.status()).toBe('draining');
+        expect(finalShards.filter(shard => shard.status() === 'active').length).toBe(2);
+
+        // Once existing clients have left, the world completes the drain.
+        await request(server, `${baseUrl}/update-shard`, {
+          method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
+          body: JSON.stringify({
+            shardId: shards[1].id,
+            connections: 0
+          })
+        });
+
+        const drainedShards = Object.values(room.shards()).filter(
+          shard => shard.roomId() === 'drain-priority-room'
+        );
+        expect(drainedShards.length).toBe(2);
+        expect(drainedShards.find(shard => shard.id === shards[1].id)).toBeUndefined();
       });
     });
   });
@@ -598,6 +664,58 @@ describe('WorldRoom', () => {
         
         const data = await response.json();
         expect(data.shardId).toBe(assignedShards[0]);
+      });
+
+      it('should skip full shards when distributing round-robin connections', async () => {
+        await request(server, `${baseUrl}/register-room`, {
+          method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
+          body: JSON.stringify({
+            name: 'round-robin-capacity-room',
+            balancingStrategy: 'round-robin',
+            public: true,
+            maxPlayersPerShard: 2,
+            minShards: 3
+          })
+        });
+
+        const shards = Object.values(room.shards()).filter(
+          shard => shard.roomId() === 'round-robin-capacity-room'
+        );
+
+        await request(server, `${baseUrl}/update-shard`, {
+          method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
+          body: JSON.stringify({
+            shardId: shards[0].id,
+            connections: 2,
+            status: 'active'
+          })
+        });
+
+        const assignedShards = [];
+        for (let i = 0; i < 4; i++) {
+          const response = await request(server, `${baseUrl}/connect`, {
+            method: 'POST',
+            body: JSON.stringify({
+              roomId: 'round-robin-capacity-room',
+              autoCreate: false
+            })
+          });
+          const data = await response.json();
+          assignedShards.push(data.shardId);
+        }
+
+        expect(assignedShards).toEqual([
+          shards[1].id,
+          shards[2].id,
+          shards[1].id,
+          shards[2].id,
+        ]);
       });
     });
 
@@ -672,6 +790,60 @@ describe('WorldRoom', () => {
         const data = await response.json();
         expect(data.shardId).toBe(shards[1].id);
       });
+
+      it('should ignore full shards when selecting least connections', async () => {
+        await request(server, `${baseUrl}/register-room`, {
+          method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
+          body: JSON.stringify({
+            name: 'least-conn-capacity-room',
+            balancingStrategy: 'least-connections',
+            public: true,
+            maxPlayersPerShard: 10,
+            minShards: 2
+          })
+        });
+
+        const shards = Object.values(room.shards()).filter(
+          shard => shard.roomId() === 'least-conn-capacity-room'
+        );
+
+        await request(server, `${baseUrl}/update-shard`, {
+          method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
+          body: JSON.stringify({
+            shardId: shards[0].id,
+            connections: 10,
+            status: 'active'
+          })
+        });
+        await request(server, `${baseUrl}/update-shard`, {
+          method: 'POST',
+          headers: {
+            'Authorization': jwtSecret
+          },
+          body: JSON.stringify({
+            shardId: shards[1].id,
+            connections: 9,
+            status: 'active'
+          })
+        });
+
+        const response = await request(server, `${baseUrl}/connect`, {
+          method: 'POST',
+          body: JSON.stringify({
+            roomId: 'least-conn-capacity-room',
+            autoCreate: false
+          })
+        });
+
+        const data = await response.json();
+        expect(data.shardId).toBe(shards[1].id);
+      });
     });
 
     describe('Random Strategy', () => {
@@ -724,6 +896,103 @@ describe('WorldRoom', () => {
           expect(count / numberOfConnections).toBeLessThan(0.4);
         }
       });
+    });
+  });
+
+  describe('Shard Capacity', () => {
+    it('should create another shard when all active shards are full and maxShards allows it', async () => {
+      await request(server, `${baseUrl}/register-room`, {
+        method: 'POST',
+        headers: {
+          'Authorization': jwtSecret
+        },
+        body: JSON.stringify({
+          name: 'auto-capacity-room',
+          balancingStrategy: 'round-robin',
+          public: true,
+          maxPlayersPerShard: 1,
+          minShards: 1,
+          maxShards: 2
+        })
+      });
+
+      const initialShard = Object.values(room.shards()).find(
+        shard => shard.roomId() === 'auto-capacity-room'
+      );
+
+      await request(server, `${baseUrl}/update-shard`, {
+        method: 'POST',
+        headers: {
+          'Authorization': jwtSecret
+        },
+        body: JSON.stringify({
+          shardId: initialShard!.id,
+          connections: 1,
+          status: 'active'
+        })
+      });
+
+      const response = await request(server, `${baseUrl}/connect`, {
+        method: 'POST',
+        body: JSON.stringify({
+          roomId: 'auto-capacity-room',
+          autoCreate: true
+        })
+      });
+
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.shardId).not.toBe(initialShard!.id);
+
+      const roomShards = Object.values(room.shards()).filter(
+        shard => shard.roomId() === 'auto-capacity-room'
+      );
+      expect(roomShards.length).toBe(2);
+    });
+
+    it('should reject connections when all shards are full and maxShards is reached', async () => {
+      await request(server, `${baseUrl}/register-room`, {
+        method: 'POST',
+        headers: {
+          'Authorization': jwtSecret
+        },
+        body: JSON.stringify({
+          name: 'full-capacity-room',
+          balancingStrategy: 'round-robin',
+          public: true,
+          maxPlayersPerShard: 1,
+          minShards: 1,
+          maxShards: 1
+        })
+      });
+
+      const shard = Object.values(room.shards()).find(
+        shard => shard.roomId() === 'full-capacity-room'
+      );
+
+      await request(server, `${baseUrl}/update-shard`, {
+        method: 'POST',
+        headers: {
+          'Authorization': jwtSecret
+        },
+        body: JSON.stringify({
+          shardId: shard!.id,
+          connections: 1,
+          status: 'active'
+        })
+      });
+
+      const response = await request(server, `${baseUrl}/connect`, {
+        method: 'POST',
+        body: JSON.stringify({
+          roomId: 'full-capacity-room',
+          autoCreate: true
+        })
+      });
+
+      expect(response.status).toBe(404);
+      const data = await response.json();
+      expect(data.error).toContain('No shard capacity available');
     });
   });
 

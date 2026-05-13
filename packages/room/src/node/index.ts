@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse as NodeServerResponse } from "node:http";
+import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
 import type { Duplex } from "node:stream";
 import type * as Party from "../types/party";
@@ -72,6 +73,9 @@ export type NodeRoomTransportOptions = {
   env?: Record<string, unknown>;
   storage?: NodeRoomStorageFactory | NodeRoomStorageProvider;
   rooms?: Record<string, NodeServerConstructor>;
+  externalParties?: Record<string, {
+    get(id: string): Partial<Party.Stub>;
+  }>;
 };
 
 export type NodeRequestNext = (error?: unknown) => void;
@@ -436,6 +440,9 @@ class SqliteNodeRoomStorageInstance implements NodeRoomStorage {
 export class NodeRoomTransport<TServer extends Party.Server = Party.Server> {
   readonly partiesPath: string;
   readonly env: Record<string, unknown>;
+  readonly externalParties: Record<string, {
+    get(id: string): Partial<Party.Stub>;
+  }>;
   private readonly rooms: Record<string, NodeServerConstructor>;
   private readonly storage: NodeRoomStorageFactory | NodeRoomStorageProvider;
   private readonly records = new Map<string, Promise<RoomRecord>>();
@@ -451,6 +458,7 @@ export class NodeRoomTransport<TServer extends Party.Server = Party.Server> {
       ...(options.rooms ?? {}),
     };
     this.storage = options.storage ?? createMemoryNodeRoomStorage();
+    this.externalParties = options.externalParties ?? {};
   }
 
   async fetch(pathOrRequest: string | Request, init?: RequestInit): Promise<Response> {
@@ -777,14 +785,31 @@ export class NodeConnection<TState = unknown> {
 function createPartiesContext(transport: NodeRoomTransport): Party.Context["parties"] {
   return new Proxy({}, {
     get(_target, namespace: string) {
+      const externalNamespace = transport.externalParties[namespace];
+      if (externalNamespace) {
+        return externalNamespace;
+      }
+
       return {
         get(roomId: string) {
           return {
             connect: () => {
               throw new Error("Party stub connect() is not implemented by @signe/room/node");
             },
-            socket: async () => {
-              throw new Error("Party stub socket() is not implemented by @signe/room/node");
+            async socket(pathOrInit?: string | RequestInit, init?: RequestInit) {
+              const path = typeof pathOrInit === "string" ? pathOrInit : "/";
+              const requestInit = typeof pathOrInit === "string" ? init : pathOrInit;
+              const request = new Request(
+                toLocalUrl(`${transport.getNamespacePath(namespace, roomId)}${normalizeStubPath(path)}`),
+                requestInit
+              );
+              const pair = createInMemoryWebSocketPair();
+
+              void transport.acceptWebSocket(pair.server, request).catch(() => {
+                pair.client.close(1011, "Unable to start room connection");
+              });
+
+              return pair.client as unknown as WebSocket;
             },
             fetch(pathOrInit?: string | RequestInit | Request, init?: RequestInit) {
               const path = typeof pathOrInit === "string" ? pathOrInit : "/";
@@ -796,6 +821,82 @@ function createPartiesContext(transport: NodeRoomTransport): Party.Context["part
       };
     },
   }) as Party.Context["parties"];
+}
+
+function createInMemoryWebSocketPair() {
+  const client = new InMemoryWebSocket();
+  const server = new InMemoryWebSocket();
+
+  client.setPeer(server);
+  server.setPeer(client);
+
+  return { client, server };
+}
+
+class InMemoryWebSocket implements NodeWebSocketLike {
+  readyState = WEBSOCKET_OPEN;
+  private readonly emitter = new EventEmitter();
+  private peer?: InMemoryWebSocket;
+
+  setPeer(peer: InMemoryWebSocket) {
+    this.peer = peer;
+  }
+
+  send(data: string | ArrayBuffer | ArrayBufferView, cb?: (error?: Error) => void): void {
+    if (this.readyState !== WEBSOCKET_OPEN || this.peer?.readyState !== WEBSOCKET_OPEN) {
+      cb?.(new Error("WebSocket is not open"));
+      return;
+    }
+
+    queueMicrotask(() => {
+      this.peer?.emitMessage(data);
+      cb?.();
+    });
+  }
+
+  close(code?: number, reason?: string | Buffer): void {
+    if (this.readyState !== WEBSOCKET_OPEN) {
+      return;
+    }
+
+    this.readyState = 3;
+    this.emitter.emit("close", code, reason);
+
+    if (this.peer?.readyState === WEBSOCKET_OPEN) {
+      this.peer.readyState = 3;
+      this.peer.emitter.emit("close", code, reason);
+    }
+  }
+
+  on(event: string, listener: (...args: any[]) => void): unknown {
+    this.emitter.on(event, listener);
+    return this;
+  }
+
+  off(event: string, listener: (...args: any[]) => void): unknown {
+    this.emitter.off(event, listener);
+    return this;
+  }
+
+  removeListener(event: string, listener: (...args: any[]) => void): unknown {
+    this.emitter.removeListener(event, listener);
+    return this;
+  }
+
+  addEventListener(type: string, listener: (event: any) => void): void {
+    if (type === "message") {
+      this.on("message", (data) => listener({ data }));
+      return;
+    }
+
+    this.on(type, (event) => listener(event));
+  }
+
+  private emitMessage(data: string | ArrayBuffer | ArrayBufferView) {
+    if (this.readyState === WEBSOCKET_OPEN) {
+      this.emitter.emit("message", data);
+    }
+  }
 }
 
 async function createWebRequest(req: IncomingMessage, url: string, includeBody = true): Promise<Request> {
@@ -862,8 +963,14 @@ function getRequestUrl(req: IncomingMessage) {
 }
 
 function normalizeWebSocketMessage(data: unknown): string | ArrayBuffer | ArrayBufferView {
-  if (typeof data === "string" || data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+  if (typeof data === "string") {
     return data;
+  }
+  if (data instanceof ArrayBuffer) {
+    return new TextDecoder().decode(data);
+  }
+  if (ArrayBuffer.isView(data)) {
+    return new TextDecoder().decode(data);
   }
 
   return String(data);
