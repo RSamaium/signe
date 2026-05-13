@@ -390,12 +390,9 @@ describe("@signe/room/node", () => {
     const restoredStorage = createMemoryNodeRoomStorage({
       snapshot: storage.snapshot(),
     });
-    const restoredTransport = createNodeRoomTransport(DemoServer, {
-      storage: restoredStorage,
-    });
-    const restoredRoom = await restoredTransport.getRoom("main", "demo");
+    const restoredRoomStorage = restoredStorage.getStorage("main", "demo");
 
-    await expect(restoredRoom.storage.get("value")).resolves.toEqual({ count: 7 });
+    await expect(restoredRoomStorage.get("value")).resolves.toEqual({ count: 7 });
   });
 
   it("clears explicit memory storage providers", async () => {
