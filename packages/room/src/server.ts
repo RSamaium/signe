@@ -33,6 +33,23 @@ type CreateRoomOptions = {
   throttleStorage?: number;
 };
 
+export type StorageRestoreContext<TSnapshot = any> = {
+  snapshot: TSnapshot;
+  room: Party.Room;
+  server: Server;
+  legacy: boolean;
+};
+
+export type UserStorageRestoreContext<TUser = any, TSnapshot = any> = {
+  userSnapshot: TSnapshot;
+  user: TUser | undefined;
+  publicId: string;
+  usersPropName: string;
+  room: Party.Room;
+  server: Server;
+  legacy: boolean;
+};
+
 type SessionData = {
   publicId: string;
   state?: any;
@@ -198,6 +215,96 @@ export class Server implements Party.Server {
       path,
     ]);
     await this.saveStatePath(path, DELETE_TOKEN);
+  }
+
+  private createUserFromClassType(classType: any, ...args: any[]) {
+    if (!classType) {
+      return undefined;
+    }
+    return isClass(classType) ? new classType() : classType(...args);
+  }
+
+  private async restoreUsersStorageSnapshot(
+    instance: any,
+    snapshot: any,
+    options: { legacy: boolean }
+  ) {
+    if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+      return snapshot;
+    }
+
+    const restoreUser = instance["onUserStorageRestore"];
+    if (typeof restoreUser !== "function") {
+      return snapshot;
+    }
+
+    const signal = this.getUsersProperty(instance);
+    const usersPropName = this.getUsersPropName(instance);
+    if (!signal || !usersPropName) {
+      return snapshot;
+    }
+
+    const usersSnapshot = snapshot[usersPropName];
+    if (!usersSnapshot || typeof usersSnapshot !== "object" || Array.isArray(usersSnapshot)) {
+      return snapshot;
+    }
+
+    const { classType } = signal.options || {};
+    let nextSnapshot = snapshot;
+    let nextUsersSnapshot = usersSnapshot;
+
+    for (const [publicId, userSnapshot] of Object.entries(usersSnapshot)) {
+      const user = this.createUserFromClassType(classType, publicId);
+      const restoredUserSnapshot = await awaitReturn(
+        restoreUser.call(instance, {
+          userSnapshot,
+          user,
+          publicId,
+          usersPropName,
+          room: this.room,
+          server: this,
+          legacy: options.legacy,
+        } satisfies UserStorageRestoreContext)
+      );
+
+      if (restoredUserSnapshot !== undefined && restoredUserSnapshot !== userSnapshot) {
+        if (nextSnapshot === snapshot) {
+          nextSnapshot = { ...snapshot };
+        }
+        if (nextUsersSnapshot === usersSnapshot) {
+          nextUsersSnapshot = { ...usersSnapshot };
+          nextSnapshot[usersPropName] = nextUsersSnapshot;
+        }
+        nextUsersSnapshot[publicId] = restoredUserSnapshot;
+      }
+    }
+
+    return nextSnapshot;
+  }
+
+  private async restoreStorageSnapshot(
+    instance: any,
+    snapshot: any,
+    options: { legacy: boolean }
+  ) {
+    const restoreSnapshot = instance["onStorageRestore"];
+    let restoredSnapshot = snapshot;
+
+    if (typeof restoreSnapshot === "function") {
+      const result = await awaitReturn(
+        restoreSnapshot.call(instance, {
+          snapshot,
+          room: this.room,
+          server: this,
+          legacy: options.legacy,
+        } satisfies StorageRestoreContext)
+      );
+      if (result !== undefined) {
+        restoredSnapshot = result;
+      }
+    }
+
+    return this.restoreUsersStorageSnapshot(instance, restoredSnapshot, options);
   }
 
   private createStorageMetrics(): StorageMetrics {
@@ -606,12 +713,18 @@ export class Server implements Party.Server {
         if (legacyRoot !== undefined) {
           await this.deleteStorageKeys(legacyDeleteKeys);
         }
-        load(instance, legacyObject, true);
+        const restoredLegacyObject = await this.restoreStorageSnapshot(instance, legacyObject, {
+          legacy: true,
+        });
+        load(instance, restoredLegacyObject, true);
         metrics.loadMs = Date.now() - startedAt;
         return;
       }
 
-      load(instance, tmpObject, true);
+      const restoredObject = await this.restoreStorageSnapshot(instance, tmpObject, {
+        legacy: false,
+      });
+      load(instance, restoredObject, true);
       metrics.loadMs = Date.now() - startedAt;
     };
 
@@ -1188,7 +1301,7 @@ export class Server implements Party.Server {
         if (transferData?.restored && signal()[publicId]) {
           user = signal()[publicId];
         } else {
-          user = isClass(classType) ? new classType() : classType(conn, ctx);
+          user = this.createUserFromClassType(classType, conn, ctx);
           signal()[publicId] = user;
           const snapshot = createStatesSnapshotDeep(user);
           await this.saveStatePath(`${usersPropName}.${publicId}`, snapshot);
@@ -1743,7 +1856,7 @@ export class Server implements Party.Server {
           const { classType } = signal.options;
           
           // Create new user instance
-          const user = isClass(classType) ? new classType() : classType();
+          const user = this.createUserFromClassType(classType);
 
           const hydratedSnapshot =
             (await awaitReturn(

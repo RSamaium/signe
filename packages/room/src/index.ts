@@ -1,6 +1,6 @@
 export * from './decorators';
 export { ClientIo, MockConnection, ServerIo } from './mock';
-export { Server } from './server';
+export { Server, type StorageRestoreContext, type UserStorageRestoreContext } from './server';
 export * from './testing';
 export * from './shard';
 export * from './world';

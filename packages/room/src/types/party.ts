@@ -253,6 +253,32 @@ import type {
      * @param conn The connection object
      */
     onLeave?(user: TUser, conn: Connection): void | Promise<void>;
+
+    /**
+     * Called before persisted room state is loaded into the room instance.
+     * Return a replacement snapshot to hydrate serialized values before load.
+     */
+    onStorageRestore?(context: {
+      snapshot: any;
+      room: Room;
+      server: Server;
+      legacy: boolean;
+    }): any | Promise<any>;
+
+    /**
+     * Called for each restored entry in the room's @users() collection before
+     * persisted room state is loaded. Return a replacement user snapshot to
+     * hydrate serialized nested values before load.
+     */
+    onUserStorageRestore?(context: {
+      userSnapshot: any;
+      user: TUser | undefined;
+      publicId: string;
+      usersPropName: string;
+      room: Room;
+      server: Server;
+      legacy: boolean;
+    }): any | Promise<any>;
   }
   
   /** @deprecated Use `Party.Room` instead */

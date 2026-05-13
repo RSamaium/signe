@@ -299,6 +299,47 @@ const hydrated = { ...snapshot, items };
 load(user, hydrated, true);
 ```
 
+### Storage Restore Hydration
+
+Room storage is loaded automatically when a room starts. If persisted snapshots
+contain complex values that must become runtime instances again, implement
+`onStorageRestore` or `onUserStorageRestore` on the room.
+
+Use `onStorageRestore` to transform the full room snapshot before it is loaded:
+
+```ts
+class GameRoom {
+  async onStorageRestore({ snapshot, room, legacy }) {
+    return {
+      ...snapshot,
+      status: snapshot.status ?? "waiting",
+    };
+  }
+}
+```
+
+Use `onUserStorageRestore` to transform each persisted entry in the room's
+`@users()` collection. The hook receives a fresh user helper instance so you can
+reuse instance methods to hydrate nested data before the snapshot is loaded.
+
+```ts
+class GameRoom {
+  @users(Player) players = signal({});
+
+  async onUserStorageRestore({ userSnapshot, user, publicId }) {
+    return {
+      ...userSnapshot,
+      items: await user.resolveItems(userSnapshot.items),
+      skills: await user.resolveSkills(userSnapshot.skills),
+    };
+  }
+}
+```
+
+Returning `undefined` keeps the original snapshot unchanged. The `legacy` flag is
+`true` only when loading data from the pre-`state:` storage layout during
+automatic migration.
+
 ### Room Configuration
 
 The `@Room` decorator accepts various configuration options:
