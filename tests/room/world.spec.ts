@@ -25,6 +25,7 @@ describe('WorldRoom', () => {
 
   beforeEach(async () => {
     const test = await testRoom(WorldRoom, {
+      id: 'world-default',
       env: {
         AUTH_JWT_SECRET,
         SHARD_SECRET

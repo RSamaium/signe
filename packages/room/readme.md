@@ -605,6 +605,44 @@ const worldConnection = await connectionRoom({
 }, worldRoom);
 ```
 
+#### World Admin Authorization
+
+World management endpoints and world-room WebSocket connections require a JWT signed with `AUTH_JWT_SECRET`. The token must include a `worlds` claim listing the world ids that the operator can access:
+
+```json
+{
+  "sub": "operator-1",
+  "worlds": ["world-default", "world-eu"]
+}
+```
+
+Use `["*"]` for a global operator:
+
+```json
+{
+  "sub": "admin",
+  "worlds": ["*"]
+}
+```
+
+Tokens without a `worlds` claim, or without the current world id in that claim, are rejected even when the JWT signature is valid. Admin clients can pass the token either with an `Authorization: Bearer <token>` header or with the `world-auth-token` query parameter:
+
+```js
+await fetch('/parties/world/world-eu/register-room', {
+  method: 'POST',
+  headers: {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    name: 'match-123',
+    balancingStrategy: 'round-robin',
+    public: true,
+    maxPlayersPerShard: 50
+  })
+});
+```
+
 The same `worldId` must be used consistently by:
 - the client request to `connectionWorld()`;
 - the `WorldRoom` party id;

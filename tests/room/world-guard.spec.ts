@@ -4,6 +4,7 @@ import { guardManageWorld } from "../../packages/room/src/world.guard";
 
 describe("guardManageWorld", () => {
   const room = {
+    id: "world-default",
     env: {
       AUTH_JWT_SECRET: "auth-secret",
       SHARD_SECRET: "shard-secret",
@@ -34,18 +35,46 @@ describe("guardManageWorld", () => {
   });
 
   it("accepts valid authorization header tokens", async () => {
-    const token = await new JWTAuth("auth-secret").sign({ sub: "admin" });
+    const token = await new JWTAuth("auth-secret").sign({ sub: "admin", worlds: ["world-default"] });
 
     await expect(guardManageWorld(null, request({ Authorization: token }) as any, room as any))
       .resolves.toBe(true);
   });
 
+  it("accepts bearer authorization header tokens", async () => {
+    const token = await new JWTAuth("auth-secret").sign({ sub: "admin", worlds: ["world-default"] });
+
+    await expect(guardManageWorld(null, request({ Authorization: `Bearer ${token}` }) as any, room as any))
+      .resolves.toBe(true);
+  });
+
   it("accepts valid world auth query tokens", async () => {
-    const token = await new JWTAuth("auth-secret").sign({ sub: "admin" });
+    const token = await new JWTAuth("auth-secret").sign({ sub: "admin", worlds: ["world-default"] });
     const url = `https://example.com/world?world-auth-token=${encodeURIComponent(token)}`;
 
     await expect(guardManageWorld(null, request({}, url) as any, room as any))
       .resolves.toBe(true);
+  });
+
+  it("accepts wildcard world tokens", async () => {
+    const token = await new JWTAuth("auth-secret").sign({ sub: "admin", worlds: ["*"] });
+
+    await expect(guardManageWorld(null, request({ Authorization: token }) as any, room as any))
+      .resolves.toBe(true);
+  });
+
+  it("rejects tokens that do not include the requested world", async () => {
+    const token = await new JWTAuth("auth-secret").sign({ sub: "admin", worlds: ["world-eu"] });
+
+    await expect(guardManageWorld(null, request({ Authorization: token }) as any, room as any))
+      .resolves.toBe(false);
+  });
+
+  it("rejects valid tokens without world grants", async () => {
+    const token = await new JWTAuth("auth-secret").sign({ sub: "admin" });
+
+    await expect(guardManageWorld(null, request({ Authorization: token }) as any, room as any))
+      .resolves.toBe(false);
   });
 
   it("rejects invalid JWT tokens", async () => {
