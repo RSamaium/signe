@@ -1,6 +1,6 @@
 {
   "name": "signe",
-  "version": "2.10.0",
+  "version": "3.0.0",
   "private": true,
   "packageManager": "pnpm@9.1.4",
   "description": "Reactive state, synchronization, and real-time room primitives for TypeScript applications.",

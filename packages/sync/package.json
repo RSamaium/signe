@@ -1,6 +1,6 @@
 {
   "name": "@signe/sync",
-  "version": "2.10.0",
+  "version": "3.0.0",
   "description": "Decorator-based state synchronization and loading utilities for Signe signals.",
   "main": "./dist/index.js",
   "scripts": {
