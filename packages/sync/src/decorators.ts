@@ -1,10 +1,50 @@
 import { type } from "./core";
 
-interface SyncOptions {
+export interface SyncOptions {
   classType?: Function;
   persist?: boolean;
   syncToClient?: boolean;
   transform?: (value: any) => any;
+}
+
+export type NormalizedSyncOptions = Required<Pick<SyncOptions, "persist" | "syncToClient">> & {
+  classType?: Function;
+  transform?: (value: any) => any;
+};
+
+export function normalizeSyncOptions(options?: SyncOptions | Function): NormalizedSyncOptions {
+  let classType: Function | undefined;
+  let persist = true;
+  let syncToClient = true;
+  let transform: ((value: any) => any) | undefined;
+
+  if (typeof options === "function") {
+    classType = options;
+  } else if (typeof options === "object") {
+    classType = options.classType;
+    if (options.hasOwnProperty("persist")) {
+      persist = options.persist!;
+    }
+    if (options.hasOwnProperty("syncToClient")) {
+      syncToClient = options.syncToClient!;
+    }
+    if (options.hasOwnProperty("transform")) {
+      transform = options.transform;
+    }
+  }
+
+  return { classType, persist, syncToClient, transform };
+}
+
+function setSyncMetadata(
+  target: any,
+  propertyKey: string,
+  options: NormalizedSyncOptions
+) {
+  if (!target.constructor._syncMetadata) {
+    target.constructor._syncMetadata = new Map();
+  }
+  target.constructor._syncMetadata.set(propertyKey, options);
 }
 
 /**
@@ -35,27 +75,11 @@ interface SyncOptions {
  * ```
  */
 export function sync(options?: SyncOptions | Function): PropertyDecorator {
-  let classType: Function | undefined;
-  let persist = true;
-  let syncToClient = true;
-  let transform: ((value: any) => any) | undefined;
-
-  if (typeof options === "function") {
-    classType = options;
-  } else if (typeof options === "object") {
-    classType = options.classType;
-    if (options.hasOwnProperty("persist")) {
-      persist = options.persist!;
-    }
-    if (options.hasOwnProperty("syncToClient")) {
-      syncToClient = options.syncToClient!;
-    }
-    if (options.hasOwnProperty("transform")) {
-      transform = options.transform;
-    }
-  }
+  const normalizedOptions = normalizeSyncOptions(options);
 
   return function (target: any, propertyKey: string) {
+    setSyncMetadata(target, propertyKey, normalizedOptions);
+
     const privatePropertyKey = `__${propertyKey}`;
 
     const getter = function () {
@@ -66,7 +90,7 @@ export function sync(options?: SyncOptions | Function): PropertyDecorator {
       this[privatePropertyKey] = type(
         newVal,
         propertyKey,
-        { classType, persist, syncToClient, transform },
+        normalizedOptions,
         this
       );
     };

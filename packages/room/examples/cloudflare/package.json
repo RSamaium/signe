@@ -1,0 +1,24 @@
+{
+  "name": "@signe/room-cloudflare-example",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "tsc --noEmit",
+    "types": "wrangler types"
+  },
+  "dependencies": {
+    "@signe/reactive": "workspace:*",
+    "@signe/room": "workspace:*",
+    "@signe/sync": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241218.0",
+    "@types/node": "^22.13.9",
+    "typescript": "^5.4.5",
+    "wrangler": "3.99.0",
+    "zod": "^3.23.8"
+  }
+}

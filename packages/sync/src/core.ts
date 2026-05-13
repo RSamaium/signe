@@ -9,6 +9,7 @@ import {
 } from "@signe/reactive";
 import { isInstanceOfClass, isObject } from "./utils";
 import { type Observable } from "rxjs";
+import type { NormalizedSyncOptions } from "./decorators";
 
 interface SyncOptions {
   onSync?: (value: Map<string, any>) => void;
@@ -20,7 +21,10 @@ interface TypeOptions {
   persist?: boolean;
   classType?: any;
   transform?: (value: any) => any;
+  skipInitialSync?: boolean;
 }
+
+type SyncMetadata = Map<string, NormalizedSyncOptions>;
 
 interface ExtendedWritableSignal<T>
   extends Omit<WritableSignal<T>, "observable"> {
@@ -268,6 +272,7 @@ export const createSyncClass = (
   if (parentKey) {
     setMetadata(currentClass, "id", parentKey);
   }
+  applyDecoratedSignalMetadata(currentClass);
   if (currentClass.$snapshot) {
     for (const key of currentClass.$snapshot.keys()) {
       const signal = currentClass.$snapshot.get(key);
@@ -310,13 +315,35 @@ export const createSyncClass = (
   }
 };
 
+function applyDecoratedSignalMetadata(currentClass: any) {
+  const syncMetadata = currentClass.constructor?._syncMetadata as SyncMetadata | undefined;
+
+  if (!syncMetadata) {
+    return;
+  }
+
+  for (const [propertyKey, options] of syncMetadata) {
+    const signal = currentClass[propertyKey];
+    if (!isSignal(signal) || signal.options) {
+      continue;
+    }
+
+    currentClass[propertyKey] = type(
+      signal,
+      propertyKey,
+      { ...options, skipInitialSync: true },
+      currentClass
+    );
+  }
+}
+
 export const type = <T>(
   _signal: ExtendedWritableSignal<T>,
   path: string,
   options: TypeOptions = {},
   currentInstance: SyncInstance
 ): ExtendedWritableSignal<T> => {
-  const { syncToClient = true, persist = true, transform } = options;
+  const { syncToClient = true, persist = true, transform, skipInitialSync = false } = options;
   let init = true;
 
   const handleObjectSubject = (value: SubjectValue, propPath: string) => {
@@ -393,10 +420,13 @@ export const type = <T>(
     if (!isSignal(signal)) return;
 
     // For initial sync of direct property values
-    if (syncToClient && currentInstance.$valuesChanges) {
+    if (syncToClient && !skipInitialSync && currentInstance.$valuesChanges) {
       const initialValue = signal();
       const transformedInitialValue = transform ? transform(initialValue) : initialValue;
-      currentInstance.$valuesChanges.set(signalPath, transformedInitialValue);
+      const initialPath = currentInstance.$path !== undefined
+        ? `${currentInstance.$path ? `${currentInstance.$path}.` : ""}${signalPath}`
+        : signalPath;
+      currentInstance.$valuesChanges.set(initialPath, transformedInitialValue);
     }
 
     signal.options = options;

@@ -59,6 +59,64 @@ describe("onSync", () => {
     expect(onSync).toHaveBeenCalledWith(new Map<string, any>([["count", 1]]));
   });
 
+  it("should sync decorated class fields when emitted fields mask decorator accessors", () => {
+    class TestClass {
+      @sync() count = signal(0);
+    }
+
+    const instance = new TestClass();
+    Object.defineProperty(instance, "count", {
+      value: signal(0),
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    const onSync = vi.fn();
+
+    syncClass(instance, { onSync });
+
+    expect(instance.count.options).toMatchObject({
+      persist: true,
+      syncToClient: true,
+    });
+    expect(onSync).toHaveBeenCalledTimes(1);
+    expect(onSync).toHaveBeenCalledWith(new Map<string, any>([["count", 0]]));
+
+    instance.count.set(2);
+
+    expect(onSync).toHaveBeenCalledWith(new Map<string, any>([["count", 2]]));
+  });
+
+  it("should prefix nested decorated class fields when emitted fields mask decorator accessors", () => {
+    class NestedClass {
+      @sync() name = signal("nested");
+    }
+
+    class TestClass {
+      @sync() users = signal<Record<string, NestedClass>>({});
+    }
+
+    const instance = new TestClass();
+    Object.defineProperty(instance, "users", {
+      value: signal<Record<string, NestedClass>>({}),
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    const onSync = vi.fn();
+
+    syncClass(instance, { onSync });
+    instance.users()["abc"] = new NestedClass();
+
+    expect(onSync).toHaveBeenLastCalledWith(
+      new Map<string, any>([
+        ["users", {}],
+        ["users.abc.name", "nested"],
+      ])
+    );
+    expect(onSync).not.toHaveBeenCalledWith(new Map<string, any>([["name", "nested"]]));
+  });
+
   it("should sync multiple properties", () => {
     class TestClass {
       @sync() count = signal(0);
