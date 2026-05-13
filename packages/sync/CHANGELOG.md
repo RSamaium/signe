@@ -1,5 +1,11 @@
 # @signe/sync
 
+## 3.0.0
+
+### Major Changes
+
+- Release the Signe 3.0 package line for the room and sync runtime updates.
+
 ## 2.10.0
 
 ### Minor Changes

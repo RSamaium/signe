@@ -1,5 +1,11 @@
 # @signe/di
 
+## 3.0.0
+
+### Major Changes
+
+- Release the Signe 3.0 package line.
+
 ## 2.10.0
 
 ### Minor Changes

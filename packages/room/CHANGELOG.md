@@ -1,5 +1,12 @@
 # @signe/room
 
+## 3.0.0
+
+### Major Changes
+
+- Add multi-world room support, shard authorization, enhanced world stats, and stable session handling across reconnects and multiple tabs.
+- Add Cloudflare Durable Object, Node shard, and Node game examples for the 3.0 room runtime.
+
 ## 2.10.0
 
 ### Minor Changes
