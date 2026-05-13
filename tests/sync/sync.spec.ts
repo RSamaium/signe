@@ -545,7 +545,7 @@ describe("onPersist", () => {
 
     instance.count.set(1);
 
-    expect(onPersist).toHaveBeenCalledWith(new Map<string, any>([[".", 1]]));
+    expect(onPersist).toHaveBeenCalledWith(new Map<string, any>([["count", 1]]));
   });
 
   it("should multi persist", () => {
@@ -562,9 +562,10 @@ describe("onPersist", () => {
     instance.count.set(1);
     instance.name.set("updated");
 
-    expect(onPersist).toHaveBeenCalledWith(new Map<string, any>([[
-      ".", 'updated'
-    ]]));
+    expect(onPersist).toHaveBeenCalledWith(new Map<string, any>([
+      ["count", 1],
+      ["name", "updated"],
+    ]));
   });
 
   it("should multi persist with object", () => {
@@ -582,7 +583,7 @@ describe("onPersist", () => {
     });
 
     expect(onPersist).toHaveBeenCalledWith(new Map<string, any>([[
-      ".", 3
+      "data.a", 3
     ]]));
   });
 

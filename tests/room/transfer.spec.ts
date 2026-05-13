@@ -100,6 +100,27 @@ class TargetRoomWithItems {
   }
 }
 
+@Room({
+  path: 'room-a-expiring-transfer',
+  sessionExpiryTime: 2000,
+  throttleSync: 0
+})
+class SourceRoomWithExpiringTransfer {
+  @users(Player) users = signal({});
+  id = 'room-a-expiring-transfer';
+}
+
+@Room({
+  path: 'room-b-expiring-transfer',
+  sessionExpiryTime: 2000,
+  throttleSync: 0
+})
+class TargetRoomWithExpiringTransfer {
+  transferExpiryTime = 1;
+  @users(Player) users = signal({});
+  id = 'room-b-expiring-transfer';
+}
+
 describe('Session transfer between rooms', () => {
   let serverA: Server;
   let roomA: any;
@@ -171,6 +192,41 @@ describe('Session transfer between rooms', () => {
 
     } finally {
       clientB.conn.close();
+    }
+  });
+});
+
+describe('Session transfer token cleanup', () => {
+  it('removes expired transfer tokens during room activity', async () => {
+    const test = await testRoom(SourceRoomWithExpiringTransfer, {
+      partyFn: async (lobbyId) => {
+        const s = new Server(new ServerIo(lobbyId) as any);
+        s.rooms = [SourceRoomWithExpiringTransfer, TargetRoomWithExpiringTransfer];
+        await s.onStart();
+        return s;
+      }
+    });
+    const serverA = test.server as Server;
+    const clientA = await test.createClient('test');
+
+    try {
+      const transferToken = await (serverA as any).subRoom.$sessionTransfer(
+        clientA.conn,
+        'room-b-expiring-transfer'
+      );
+      expect(transferToken).toBeTruthy();
+
+      const lobbyB = await (serverA as any).room.context.parties.main.get('room-b-expiring-transfer');
+      const targetRoom = lobbyB.server.room;
+      expect(await targetRoom.storage.get(`transfer:${transferToken}`)).toBeDefined();
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const observer = await lobbyB.connection('observer');
+      observer.conn.close();
+
+      expect(await targetRoom.storage.get(`transfer:${transferToken}`)).toBeUndefined();
+    } finally {
+      clientA.conn.close();
     }
   });
 });

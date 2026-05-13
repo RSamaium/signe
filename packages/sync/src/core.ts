@@ -406,7 +406,7 @@ export const type = <T>(
     }
     if (persist && currentInstance.$path !== undefined) {
       currentInstance.$valuesChanges.setPersist(
-        transformedValue == DELETE_TOKEN ? propPath : currentInstance.$path,
+        propPath,
         transformedValue
       );
     }

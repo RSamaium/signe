@@ -41,12 +41,38 @@ type SessionData = {
   disconnectedAt?: number;
 };
 
+type TransferData = {
+  privateId: string;
+  publicId: string;
+  restored: boolean;
+  created: number;
+};
+
+type StorageMetrics = {
+  loadMs: number;
+  loadStateKeys: number;
+  loadLegacyKeys: number;
+  persistFlushes: number;
+  persistWrites: number;
+  persistDeletes: number;
+  persistLastFlushMs: number;
+  sessionGcRuns: number;
+  sessionGcScanned: number;
+  sessionGcExpired: number;
+  sessionIndexRepairs: number;
+  transferGcRuns: number;
+  transferGcScanned: number;
+  transferGcExpired: number;
+};
+
 const STATE_PREFIX = "state:";
 const SESSION_PREFIX = "session:";
 const SESSION_PUBLIC_PREFIX = "session-public:";
 const TRANSFER_PREFIX = "transfer:";
 const INTERNAL_PREFIX = "$room:";
 const SESSION_GC_LAST_RUN_KEY = `${INTERNAL_PREFIX}session-gc:last-run`;
+const TRANSFER_GC_LAST_RUN_KEY = `${INTERNAL_PREFIX}transfer-gc:last-run`;
+const DEFAULT_TRANSFER_EXPIRY_MS = 5 * 60 * 1000;
 
 /**
  * @class Server
@@ -143,11 +169,61 @@ export class Server implements Party.Server {
     await this.room.storage.put(this.stateKey(path), value);
   }
 
+  private async putStorageEntries(entries: Record<string, any>) {
+    const keys = Object.keys(entries);
+    if (keys.length === 0) return;
+    if (keys.length === 1) {
+      const key = keys[0];
+      await this.room.storage.put(key, entries[key]);
+      return;
+    }
+    await this.room.storage.put(entries);
+  }
+
+  private async deleteStorageKeys(keys: string[]) {
+    const uniqueKeys = Array.from(new Set(keys));
+    if (uniqueKeys.length === 0) return;
+    if (uniqueKeys.length === 1) {
+      await this.room.storage.delete(uniqueKeys[0]);
+      return;
+    }
+    await this.room.storage.delete(uniqueKeys);
+  }
+
   private async deleteStatePath(path: string) {
-    await Promise.all([
-      this.room.storage.delete(this.stateKey(path)),
-      this.room.storage.delete(path),
+    const stateKey = this.stateKey(path);
+    const descendantEntries = await this.listStorage(`${stateKey}.`);
+    await this.deleteStorageKeys([
+      ...Array.from(descendantEntries.keys()),
+      path,
     ]);
+    await this.saveStatePath(path, DELETE_TOKEN);
+  }
+
+  private createStorageMetrics(): StorageMetrics {
+    return {
+      loadMs: 0,
+      loadStateKeys: 0,
+      loadLegacyKeys: 0,
+      persistFlushes: 0,
+      persistWrites: 0,
+      persistDeletes: 0,
+      persistLastFlushMs: 0,
+      sessionGcRuns: 0,
+      sessionGcScanned: 0,
+      sessionGcExpired: 0,
+      sessionIndexRepairs: 0,
+      transferGcRuns: 0,
+      transferGcScanned: 0,
+      transferGcExpired: 0,
+    };
+  }
+
+  private getTransferExpiryTime(subRoom: any) {
+    return subRoom?.transferExpiryTime
+      ?? subRoom?.constructor?.prototype?.transferExpiryTime
+      ?? subRoom?.constructor?.transferExpiryTime
+      ?? DEFAULT_TRANSFER_EXPIRY_MS;
   }
 
   private getPrivateId(conn: Party.Connection) {
@@ -222,6 +298,11 @@ export class Server implements Party.Server {
       const sessions = await this.listStorage<SessionData>(SESSION_PREFIX);
       const users = this.getUsersProperty(subRoom);
       const usersPropName = this.getUsersPropName(subRoom);
+      const metrics = subRoom.$storageMetrics as StorageMetrics | undefined;
+      if (metrics) {
+        metrics.sessionGcRuns += 1;
+        metrics.sessionGcScanned += sessions.size;
+      }
 
       // Store valid publicIds from sessions
       const validPublicIds = new Set<string>();
@@ -246,11 +327,16 @@ export class Server implements Party.Server {
           // Delete expired session
           await this.deleteSession(privateId);
           expiredPublicIds.add(typedSession.publicId);
+          if (metrics) {
+            metrics.sessionGcExpired += 1;
+          }
         } else if (typedSession && typedSession.publicId) {
           // Keep track of valid publicIds from active or recent sessions
           validPublicIds.add(typedSession.publicId);
         }
       }
+
+      await this.repairSessionPublicIndexes(sessions, metrics);
 
       // Clean up users only if ALL their sessions are expired
       if (users && usersPropName) {
@@ -303,6 +389,105 @@ export class Server implements Party.Server {
 
     await this.room.storage.put(SESSION_GC_LAST_RUN_KEY, now);
     return true;
+  }
+
+  private async shouldRunInterval(key: string, interval: number) {
+    const normalizedInterval = Number(interval);
+    if (!Number.isFinite(normalizedInterval) || normalizedInterval < 0) {
+      return false;
+    }
+
+    const now = Date.now();
+    const lastRun = await this.room.storage.get<number>(key);
+    if (lastRun && now - lastRun < normalizedInterval) {
+      return false;
+    }
+
+    await this.room.storage.put(key, now);
+    return true;
+  }
+
+  private async repairSessionPublicIndexes(
+    sessions?: Map<string, SessionData>,
+    metrics?: StorageMetrics
+  ) {
+    const sessionEntries = sessions ?? await this.listStorage<SessionData>(SESSION_PREFIX);
+    const expected = new Map<string, string[]>();
+
+    for (const [key, session] of sessionEntries) {
+      if (!session?.publicId) continue;
+      const privateId = key.slice(SESSION_PREFIX.length);
+      const privateIds = expected.get(session.publicId) ?? [];
+      privateIds.push(privateId);
+      expected.set(session.publicId, privateIds);
+    }
+
+    const publicIndexes = await this.listStorage<string[]>(SESSION_PUBLIC_PREFIX);
+    const writes: Record<string, string[]> = {};
+    const deletes: string[] = [];
+    let repairs = 0;
+
+    for (const [publicId, privateIds] of expected) {
+      privateIds.sort();
+      const key = this.sessionPublicKey(publicId);
+      const existing = publicIndexes.get(key) ?? [];
+      const normalizedExisting = Array.isArray(existing) ? [...existing].sort() : [];
+      if (JSON.stringify(normalizedExisting) !== JSON.stringify(privateIds)) {
+        writes[key] = privateIds;
+        repairs += 1;
+      }
+    }
+
+    for (const [key] of publicIndexes) {
+      const publicId = key.slice(SESSION_PUBLIC_PREFIX.length);
+      if (!expected.has(publicId)) {
+        deletes.push(key);
+        repairs += 1;
+      }
+    }
+
+    await Promise.all([
+      this.putStorageEntries(writes),
+      this.deleteStorageKeys(deletes),
+    ]);
+
+    if (metrics) {
+      metrics.sessionIndexRepairs += repairs;
+    }
+  }
+
+  private isTransferExpired(transfer: Partial<TransferData> | null | undefined, transferExpiryTime: number) {
+    if (!transfer) return true;
+    if (!Number.isFinite(transferExpiryTime) || transferExpiryTime < 0) {
+      return false;
+    }
+    const created = Number(transfer.created);
+    if (!Number.isFinite(created)) {
+      return false;
+    }
+    return Date.now() - created >= transferExpiryTime;
+  }
+
+  private async cleanupExpiredTransfers(transferExpiryTime: number, metrics?: StorageMetrics) {
+    if (!Number.isFinite(transferExpiryTime) || transferExpiryTime < 0) {
+      return;
+    }
+
+    const transfers = await this.listStorage<TransferData>(TRANSFER_PREFIX);
+    const expiredKeys: string[] = [];
+    for (const [key, transfer] of transfers) {
+      if (this.isTransferExpired(transfer, transferExpiryTime)) {
+        expiredKeys.push(key);
+      }
+    }
+
+    await this.deleteStorageKeys(expiredKeys);
+
+    if (metrics) {
+      metrics.transferGcRuns += 1;
+      metrics.transferGcScanned += transfers.size;
+      metrics.transferGcExpired += expiredKeys.length;
+    }
   }
 
   private async expireDisconnectedSession(privateId: string, sessionExpiryTime: number) {
@@ -377,8 +562,11 @@ export class Server implements Party.Server {
     // Load the room's memory from storage
     // This ensures persistence across server restarts
     const loadMemory = async () => {
+      const startedAt = Date.now();
+      const metrics = instance.$storageMetrics as StorageMetrics;
       const root = await this.loadStatePath(".");
       const memory = await this.listStorage(STATE_PREFIX);
+      metrics.loadStateKeys = memory.size;
       const tmpObject: any = root || {};
       for (let [storageKey, value] of memory) {
         const key = storageKey.slice(STATE_PREFIX.length);
@@ -393,9 +581,11 @@ export class Server implements Party.Server {
         const legacyMemory = await this.room.storage.list();
         const legacyObject: any = legacyRoot || {};
         const migratedEntries: Array<[string, any]> = [];
+        const legacyDeleteKeys: string[] = [];
 
         if (legacyRoot !== undefined) {
           migratedEntries.push([".", legacyRoot]);
+          legacyDeleteKeys.push(".");
         }
 
         for (let [key, value] of legacyMemory) {
@@ -404,19 +594,29 @@ export class Server implements Party.Server {
           }
           dset(legacyObject, key, value);
           migratedEntries.push([key, value]);
+          legacyDeleteKeys.push(key);
         }
 
-        await Promise.all(
-          migratedEntries.map(([path, value]) => this.saveStatePath(path, value))
+        metrics.loadLegacyKeys = migratedEntries.length;
+        await this.putStorageEntries(
+          Object.fromEntries(
+            migratedEntries.map(([path, value]) => [this.stateKey(path), value])
+          )
         );
+        if (legacyRoot !== undefined) {
+          await this.deleteStorageKeys(legacyDeleteKeys);
+        }
         load(instance, legacyObject, true);
+        metrics.loadMs = Date.now() - startedAt;
         return;
       }
 
       load(instance, tmpObject, true);
+      metrics.loadMs = Date.now() - startedAt;
     };
 
     instance.$memoryAll = {}
+    instance.$storageMetrics = this.createStorageMetrics();
     instance.$autoSync = instance["autoSync"] !== false; // Default to true
     instance.$pendingSync = new Map<string, any>();
     instance.$pendingInitialSync = new Map<Party.Connection, string>(); // Store connections waiting for initial sync with their publicId
@@ -590,18 +790,32 @@ export class Server implements Party.Server {
         values.clear();
         return;
       }
-      const writes: Promise<unknown>[] = [];
+      const startedAt = Date.now();
+      const stateWrites: Record<string, any> = {};
+      const deleteTasks: Promise<void>[] = [];
       for (let [path, value] of values) {
         const _instance =
           path == "." ? instance : getByPath(instance, path);
-        const itemValue = createStatesSnapshot(_instance);
         if (value == DELETE_TOKEN) {
-          writes.push(this.deleteStatePath(path));
+          deleteTasks.push(this.deleteStatePath(path));
         } else {
-          writes.push(this.saveStatePath(path, itemValue));
+          const itemValue = _instance?.$snapshot
+            ? createStatesSnapshot(_instance)
+            : value;
+          stateWrites[this.stateKey(path)] = itemValue;
         }
       }
-      await Promise.all(writes);
+      await Promise.all([
+        this.putStorageEntries(stateWrites),
+        ...deleteTasks,
+      ]);
+      const metrics = instance.$storageMetrics as StorageMetrics | undefined;
+      if (metrics) {
+        metrics.persistFlushes += 1;
+        metrics.persistWrites += Object.keys(stateWrites).length;
+        metrics.persistDeletes += deleteTasks.length;
+        metrics.persistLastFlushMs = Date.now() - startedAt;
+      }
       values.clear();
     }
 
@@ -917,6 +1131,13 @@ export class Server implements Party.Server {
     if (await this.shouldRunSessionGarbageCollector(sessionExpiryTime)) {
       await this.garbageCollector({ sessionExpiryTime });
     }
+    const transferExpiryTime = this.getTransferExpiryTime(subRoom);
+    if (await this.shouldRunInterval(TRANSFER_GC_LAST_RUN_KEY, transferExpiryTime)) {
+      await this.cleanupExpiredTransfers(
+        transferExpiryTime,
+        subRoom.$storageMetrics as StorageMetrics | undefined
+      );
+    }
 
     // Check room guards
     const roomGuards = subRoom.constructor['_roomGuards'] || [];
@@ -936,9 +1157,13 @@ export class Server implements Party.Server {
     }
     let transferData: any = null;
     if (transferToken) {
-      transferData = await this.room.storage.get(this.transferKey(transferToken));
+      const transferKey = this.transferKey(transferToken);
+      transferData = await this.room.storage.get<TransferData>(transferKey);
       if (transferData) {
-        await this.room.storage.delete(this.transferKey(transferToken));
+        if (this.isTransferExpired(transferData, transferExpiryTime)) {
+          transferData = null;
+        }
+        await this.room.storage.delete(transferKey);
       }
     }
 
@@ -1532,7 +1757,8 @@ export class Server implements Party.Server {
       await this.room.storage.put(this.transferKey(transferToken), {
         privateId,
         publicId,
-        restored: true
+        restored: true,
+        created: Date.now(),
       });
 
       return res.success({ transferToken });

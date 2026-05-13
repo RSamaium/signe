@@ -91,6 +91,26 @@ class DebouncedStorageServer extends Server {
   rooms = [DebouncedStorageRoom];
 }
 
+@Room({ path: "batched-storage", throttleStorage: 2500 })
+class BatchedStorageRoom {
+  @sync() count = signal(0);
+  @sync() text = signal("");
+
+  @Request(
+    { path: "/state", method: "POST" },
+    z.object({ count: z.number(), text: z.string() })
+  )
+  setState(req: any) {
+    this.count.set(req.data.count);
+    this.text.set(req.data.text);
+    return { count: this.count(), text: this.text() };
+  }
+}
+
+class BatchedStorageServer extends Server {
+  rooms = [BatchedStorageRoom];
+}
+
 @Room({ path: "demo" })
 class AlternateRoom {
   @Request({ path: "/namespace" })
@@ -154,6 +174,20 @@ async function setDebouncedCount(
 
   expect(response.status).toBe(200);
   await expect(response.json()).resolves.toEqual({ count });
+}
+
+async function setBatchedState(
+  transport: ReturnType<typeof createNodeRoomTransport>,
+  state: { count: number; text: string }
+) {
+  const response = await transport.fetch("/parties/main/batched-storage/state", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(state),
+  });
+
+  expect(response.status).toBe(200);
+  await expect(response.json()).resolves.toEqual(state);
 }
 
 describe("@signe/room/node", () => {
@@ -423,7 +457,7 @@ describe("@signe/room/node", () => {
 
     await vi.advanceTimersByTimeAsync(1);
     expect(put).toHaveBeenCalledTimes(1);
-    expect(put).toHaveBeenCalledWith("state:.", { count: 3 });
+    expect(put).toHaveBeenCalledWith("state:count", 3);
   });
 
   it("restarts the throttled storage debounce window after each change", async () => {
@@ -448,7 +482,31 @@ describe("@signe/room/node", () => {
 
     await vi.advanceTimersByTimeAsync(1);
     expect(put).toHaveBeenCalledTimes(1);
-    expect(put).toHaveBeenCalledWith("state:.", { count: 2 });
+    expect(put).toHaveBeenCalledWith("state:count", 2);
+  });
+
+  it("batches multiple throttled storage writes in one put call", async () => {
+    vi.useFakeTimers();
+    const put = vi.fn(async () => undefined);
+    const storage = {
+      get: vi.fn(async () => undefined),
+      put,
+      delete: vi.fn(async () => undefined),
+      list: vi.fn(async () => new Map()),
+    };
+    const transport = createNodeRoomTransport(BatchedStorageServer, {
+      storage: () => storage,
+    });
+
+    await setBatchedState(transport, { count: 7, text: "ready" });
+
+    await vi.advanceTimersByTimeAsync(2500);
+
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(put).toHaveBeenCalledWith({
+      "state:count": 7,
+      "state:text": "ready",
+    });
   });
 
   it("provides a SQLite storage provider", async () => {

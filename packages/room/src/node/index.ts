@@ -6,7 +6,8 @@ import type * as Party from "../types/party";
 export type NodeRoomStorage = {
   get<T = unknown>(key: string): Promise<T | undefined>;
   put<T = unknown>(key: string, value: T): Promise<void>;
-  delete(key: string): Promise<void | boolean>;
+  put<T = unknown>(entries: Record<string, T>): Promise<void>;
+  delete(key: string | string[]): Promise<void | boolean | number>;
   list<T = unknown>(options?: NodeRoomStorageListOptions): Promise<Map<string, T>>;
 };
 
@@ -186,16 +187,33 @@ export class MemoryNodeRoomStorage implements NodeRoomStorageProvider {
 class MemoryNodeRoomStorageInstance implements NodeRoomStorage {
   constructor(private readonly memory: Map<string, unknown>) {}
 
-  async put<T = unknown>(key: string, value: T) {
-    this.memory.set(key, value);
+  async put<T = unknown>(keyOrEntries: string | Record<string, T>, value?: T) {
+    if (typeof keyOrEntries === "string") {
+      this.memory.set(keyOrEntries, value);
+      return;
+    }
+
+    for (const [key, entryValue] of Object.entries(keyOrEntries)) {
+      this.memory.set(key, entryValue);
+    }
   }
 
   async get<T = unknown>(key: string) {
     return this.memory.get(key) as T | undefined;
   }
 
-  async delete(key: string) {
-    this.memory.delete(key);
+  async delete(keyOrKeys: string | string[]) {
+    if (Array.isArray(keyOrKeys)) {
+      let deleted = 0;
+      for (const key of keyOrKeys) {
+        if (this.memory.delete(key)) {
+          deleted += 1;
+        }
+      }
+      return deleted;
+    }
+
+    return this.memory.delete(keyOrKeys);
   }
 
   async list<T = unknown>(options: NodeRoomStorageListOptions = {}) {
@@ -324,27 +342,52 @@ class SqliteNodeRoomStorageInstance implements NodeRoomStorage {
     return row ? JSON.parse(row.value) as T : undefined;
   }
 
-  async put<T = unknown>(key: string, value: T): Promise<void> {
+  async put<T = unknown>(keyOrEntries: string | Record<string, T>, value?: T): Promise<void> {
+    const entries = typeof keyOrEntries === "string"
+      ? [[keyOrEntries, value] as const]
+      : Object.entries(keyOrEntries);
+
     runSqliteOperation(
-      () => this.database
-        .prepare(`
+      () => {
+        const statement = this.database.prepare(`
           INSERT INTO ${this.tableName} (namespace, room_id, key, value)
           VALUES (?, ?, ?, ?)
           ON CONFLICT(namespace, room_id, key) DO UPDATE SET value = excluded.value
-        `)
-        .run(this.namespace, this.roomId, key, JSON.stringify(value)),
+        `);
+        for (const [key, entryValue] of entries) {
+          statement.run(this.namespace, this.roomId, key, JSON.stringify(entryValue));
+        }
+      },
       this.busyRetries
     );
   }
 
-  async delete(key: string): Promise<boolean> {
+  async delete(keyOrKeys: string | string[]): Promise<boolean | number> {
+    if (Array.isArray(keyOrKeys)) {
+      if (keyOrKeys.length === 0) {
+        return 0;
+      }
+
+      const result = runSqliteOperation(
+        () => this.database
+          .prepare(`
+            DELETE FROM ${this.tableName}
+            WHERE namespace = ? AND room_id = ? AND key IN (${keyOrKeys.map(() => "?").join(", ")})
+          `)
+          .run(this.namespace, this.roomId, ...keyOrKeys),
+        this.busyRetries
+      );
+
+      return Number(result.changes);
+    }
+
     const result = runSqliteOperation(
       () => this.database
         .prepare(`
           DELETE FROM ${this.tableName}
           WHERE namespace = ? AND room_id = ? AND key = ?
         `)
-        .run(this.namespace, this.roomId, key),
+        .run(this.namespace, this.roomId, keyOrKeys),
       this.busyRetries
     );
 
