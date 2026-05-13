@@ -1,6 +1,6 @@
 {
   "name": "@signe/schema-to-zod",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Convert JSON Schema definitions into Zod schemas.",
   "main": "./dist/index.js",
   "scripts": {
