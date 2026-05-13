@@ -9,7 +9,15 @@ export class Storage {
   async delete(key) {
     this.memory.delete(key);
   }
-  async list() {
-    return this.memory;
+  async list(options?: { prefix?: string }) {
+    if (!options?.prefix) {
+      return this.memory;
+    }
+
+    return new Map(
+      Array.from(this.memory.entries()).filter(([key]) =>
+        String(key).startsWith(options.prefix!)
+      )
+    );
   }
 }

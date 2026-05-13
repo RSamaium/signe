@@ -7,7 +7,16 @@ export type NodeRoomStorage = {
   get<T = unknown>(key: string): Promise<T | undefined>;
   put<T = unknown>(key: string, value: T): Promise<void>;
   delete(key: string): Promise<void | boolean>;
-  list<T = unknown>(): Promise<Map<string, T>>;
+  list<T = unknown>(options?: NodeRoomStorageListOptions): Promise<Map<string, T>>;
+};
+
+export type NodeRoomStorageListOptions = {
+  prefix?: string;
+  start?: string;
+  startAfter?: string;
+  end?: string;
+  reverse?: boolean;
+  limit?: number;
 };
 
 export type NodeRoomStorageFactory = (
@@ -189,8 +198,31 @@ class MemoryNodeRoomStorageInstance implements NodeRoomStorage {
     this.memory.delete(key);
   }
 
-  async list<T = unknown>() {
-    return new Map(this.memory) as Map<string, T>;
+  async list<T = unknown>(options: NodeRoomStorageListOptions = {}) {
+    let entries = Array.from(this.memory.entries());
+
+    if (options.prefix !== undefined) {
+      entries = entries.filter(([key]) => key.startsWith(options.prefix!));
+    }
+    if (options.start !== undefined) {
+      entries = entries.filter(([key]) => key >= options.start!);
+    }
+    if (options.startAfter !== undefined) {
+      entries = entries.filter(([key]) => key > options.startAfter!);
+    }
+    if (options.end !== undefined) {
+      entries = entries.filter(([key]) => key < options.end!);
+    }
+
+    entries.sort(([a], [b]) => a.localeCompare(b));
+    if (options.reverse) {
+      entries.reverse();
+    }
+    if (options.limit !== undefined) {
+      entries = entries.slice(0, options.limit);
+    }
+
+    return new Map(entries) as Map<string, T>;
   }
 }
 
@@ -319,15 +351,38 @@ class SqliteNodeRoomStorageInstance implements NodeRoomStorage {
     return Number(result.changes) > 0;
   }
 
-  async list<T = unknown>(): Promise<Map<string, T>> {
+  async list<T = unknown>(options: NodeRoomStorageListOptions = {}): Promise<Map<string, T>> {
+    const conditions = ["namespace = ?", "room_id = ?"];
+    const params: unknown[] = [this.namespace, this.roomId];
+
+    if (options.prefix !== undefined) {
+      conditions.push("key >= ?", "key < ?");
+      params.push(options.prefix, getPrefixEnd(options.prefix));
+    }
+    if (options.start !== undefined) {
+      conditions.push("key >= ?");
+      params.push(options.start);
+    }
+    if (options.startAfter !== undefined) {
+      conditions.push("key > ?");
+      params.push(options.startAfter);
+    }
+    if (options.end !== undefined) {
+      conditions.push("key < ?");
+      params.push(options.end);
+    }
+
+    const limit = options.limit !== undefined ? normalizeSqliteLimit(options.limit) : undefined;
     const rows = runSqliteOperation(
       () => this.database
         .prepare(`
           SELECT key, value
           FROM ${this.tableName}
-          WHERE namespace = ? AND room_id = ?
+          WHERE ${conditions.join(" AND ")}
+          ORDER BY key ${options.reverse ? "DESC" : "ASC"}
+          ${limit !== undefined ? `LIMIT ${limit}` : ""}
         `)
-        .all(this.namespace, this.roomId) as { key: string; value: string }[],
+        .all(...params) as { key: string; value: string }[],
       this.busyRetries
     );
 
@@ -805,6 +860,18 @@ function assertSafeSqlIdentifier(identifier: string) {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier)) {
     throw new Error(`Invalid SQLite table name: ${identifier}`);
   }
+}
+
+function getPrefixEnd(prefix: string) {
+  return `${prefix}\uffff`;
+}
+
+function normalizeSqliteLimit(value: number) {
+  if (!Number.isFinite(value) || value < 0) {
+    return 0;
+  }
+
+  return Math.floor(value);
 }
 
 function normalizeSqliteTimeout(value: number) {

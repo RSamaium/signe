@@ -423,7 +423,7 @@ describe("@signe/room/node", () => {
 
     await vi.advanceTimersByTimeAsync(1);
     expect(put).toHaveBeenCalledTimes(1);
-    expect(put).toHaveBeenCalledWith(".", { count: 3 });
+    expect(put).toHaveBeenCalledWith("state:.", { count: 3 });
   });
 
   it("restarts the throttled storage debounce window after each change", async () => {
@@ -448,7 +448,7 @@ describe("@signe/room/node", () => {
 
     await vi.advanceTimersByTimeAsync(1);
     expect(put).toHaveBeenCalledTimes(1);
-    expect(put).toHaveBeenCalledWith(".", { count: 2 });
+    expect(put).toHaveBeenCalledWith("state:.", { count: 2 });
   });
 
   it("provides a SQLite storage provider", async () => {

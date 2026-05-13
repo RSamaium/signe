@@ -33,6 +33,21 @@ type CreateRoomOptions = {
   throttleStorage?: number;
 };
 
+type SessionData = {
+  publicId: string;
+  state?: any;
+  created?: number;
+  connected?: boolean;
+  disconnectedAt?: number;
+};
+
+const STATE_PREFIX = "state:";
+const SESSION_PREFIX = "session:";
+const SESSION_PUBLIC_PREFIX = "session-public:";
+const TRANSFER_PREFIX = "transfer:";
+const INTERNAL_PREFIX = "$room:";
+const SESSION_GC_LAST_RUN_KEY = `${INTERNAL_PREFIX}session-gc:last-run`;
+
 /**
  * @class Server
  * @implements {Party.Server}
@@ -87,6 +102,52 @@ export class Server implements Party.Server {
 
   get roomStorage(): Party.Storage {
     return this.room.storage
+  }
+
+  private stateKey(path: string) {
+    return `${STATE_PREFIX}${path}`;
+  }
+
+  private sessionKey(privateId: string) {
+    return `${SESSION_PREFIX}${privateId}`;
+  }
+
+  private sessionPublicKey(publicId: string) {
+    return `${SESSION_PUBLIC_PREFIX}${publicId}`;
+  }
+
+  private transferKey(token: string) {
+    return `${TRANSFER_PREFIX}${token}`;
+  }
+
+  private isInternalStorageKey(key: string) {
+    return key.startsWith(STATE_PREFIX)
+      || key.startsWith(SESSION_PREFIX)
+      || key.startsWith(SESSION_PUBLIC_PREFIX)
+      || key.startsWith(TRANSFER_PREFIX)
+      || key.startsWith(INTERNAL_PREFIX);
+  }
+
+  private async listStorage<T = unknown>(prefix?: string) {
+    if (!prefix) {
+      return this.room.storage.list<T>();
+    }
+    return this.room.storage.list<T>({ prefix });
+  }
+
+  private async loadStatePath<T = unknown>(path: string) {
+    return this.room.storage.get<T>(this.stateKey(path));
+  }
+
+  private async saveStatePath(path: string, value: any) {
+    await this.room.storage.put(this.stateKey(path), value);
+  }
+
+  private async deleteStatePath(path: string) {
+    await Promise.all([
+      this.room.storage.delete(this.stateKey(path)),
+      this.room.storage.delete(path),
+    ]);
   }
 
   private getPrivateId(conn: Party.Connection) {
@@ -147,28 +208,32 @@ export class Server implements Party.Server {
     const subRoom = await this.getSubRoom();
     if (!subRoom) return;
 
+    const SESSION_EXPIRY_TIME = Number(options.sessionExpiryTime);
+    if (!Number.isFinite(SESSION_EXPIRY_TIME)) {
+      return;
+    }
+
     // Get active connections
     const activeConnections = [...this.room.getConnections()];
     const activePrivateIds = new Set(activeConnections.map(conn => this.getPrivateId(conn)));
 
     try {
       // Get all sessions from storage
-      const sessions = await this.room.storage.list();
+      const sessions = await this.listStorage<SessionData>(SESSION_PREFIX);
       const users = this.getUsersProperty(subRoom);
       const usersPropName = this.getUsersPropName(subRoom);
 
       // Store valid publicIds from sessions
       const validPublicIds = new Set<string>();
       const expiredPublicIds = new Set<string>();
-      const SESSION_EXPIRY_TIME = options.sessionExpiryTime
       const now = Date.now();
 
       for (const [key, session] of sessions) {
         // Only process session entries
-        if (!key.startsWith('session:')) continue;
+        if (!key.startsWith(SESSION_PREFIX)) continue;
 
-        const privateId = key.replace('session:', '');
-        const typedSession = session as { publicId: string, created: number, connected: boolean, disconnectedAt?: number };
+        const privateId = key.slice(SESSION_PREFIX.length);
+        const typedSession = session as SessionData;
 
         // Check if session should be deleted based on:
         // 1. Connection is not active
@@ -224,6 +289,22 @@ export class Server implements Party.Server {
       ?? subRoom?.constructor?.sessionExpiryTime;
   }
 
+  private async shouldRunSessionGarbageCollector(sessionExpiryTime: number | undefined) {
+    const normalizedSessionExpiryTime = Number(sessionExpiryTime);
+    if (!Number.isFinite(normalizedSessionExpiryTime) || normalizedSessionExpiryTime < 0) {
+      return false;
+    }
+
+    const now = Date.now();
+    const lastRun = await this.room.storage.get<number>(SESSION_GC_LAST_RUN_KEY);
+    if (lastRun && now - lastRun < normalizedSessionExpiryTime) {
+      return false;
+    }
+
+    await this.room.storage.put(SESSION_GC_LAST_RUN_KEY, now);
+    return true;
+  }
+
   private async expireDisconnectedSession(privateId: string, sessionExpiryTime: number) {
     const session = await this.getSession(privateId);
     if (!session || session.connected || session.disconnectedAt === undefined) {
@@ -234,16 +315,20 @@ export class Server implements Party.Server {
       return;
     }
 
-    if (Date.now() - session.disconnectedAt < sessionExpiryTime) {
+    const elapsed = Date.now() - session.disconnectedAt;
+    if (elapsed < sessionExpiryTime) {
+      setTimeout(() => {
+        void this.expireDisconnectedSession(privateId, sessionExpiryTime);
+      }, sessionExpiryTime - elapsed);
       return;
     }
 
     await this.deleteSession(privateId);
 
-    const sessions = await this.room.storage.list();
-    for (const [key, otherSession] of sessions) {
-      if (!key.startsWith("session:")) continue;
-      if ((otherSession as any).publicId === session.publicId) {
+    const privateIds = await this.getSessionPrivateIds(session.publicId);
+    for (const otherPrivateId of privateIds) {
+      const otherSession = await this.getSession(otherPrivateId);
+      if (otherSession?.publicId === session.publicId) {
         return;
       }
     }
@@ -292,18 +377,42 @@ export class Server implements Party.Server {
     // Load the room's memory from storage
     // This ensures persistence across server restarts
     const loadMemory = async () => {
-      const root = await this.room.storage.get(".");
-      const memory = await this.room.storage.list();
+      const root = await this.loadStatePath(".");
+      const memory = await this.listStorage(STATE_PREFIX);
       const tmpObject: any = root || {};
-      for (let [key, value] of memory) {
-        if (key.startsWith('session:')) {
-          continue;
-        }
-        if (key == ".") {
+      for (let [storageKey, value] of memory) {
+        const key = storageKey.slice(STATE_PREFIX.length);
+        if (key === ".") {
           continue;
         }
         dset(tmpObject, key, value);
       }
+
+      if (root === undefined && memory.size === 0) {
+        const legacyRoot = await this.room.storage.get(".");
+        const legacyMemory = await this.room.storage.list();
+        const legacyObject: any = legacyRoot || {};
+        const migratedEntries: Array<[string, any]> = [];
+
+        if (legacyRoot !== undefined) {
+          migratedEntries.push([".", legacyRoot]);
+        }
+
+        for (let [key, value] of legacyMemory) {
+          if (key === "." || this.isInternalStorageKey(key)) {
+            continue;
+          }
+          dset(legacyObject, key, value);
+          migratedEntries.push([key, value]);
+        }
+
+        await Promise.all(
+          migratedEntries.map(([path, value]) => this.saveStatePath(path, value))
+        );
+        load(instance, legacyObject, true);
+        return;
+      }
+
       load(instance, tmpObject, true);
     };
 
@@ -394,17 +503,9 @@ export class Server implements Party.Server {
         return null;
       }
 
-      const sessions = await this.room.storage.list();
-      let userSession: any = null;
-      let privateId: string | null = null;
-
-      for (const [key, session] of sessions) {
-        if (key.startsWith('session:') && (session as any).publicId === publicId) {
-          userSession = session;
-          privateId = key.replace('session:', '');
-          break;
-        }
-      }
+      const sessionEntry = await this.getSessionEntryByPublicId(publicId);
+      const userSession = sessionEntry?.session;
+      const privateId = sessionEntry?.privateId ?? null;
 
       if (!userSession || !privateId) {
         console.error(`[sessionTransfer] Session for publicId ${publicId} not found.`);
@@ -489,16 +590,18 @@ export class Server implements Party.Server {
         values.clear();
         return;
       }
+      const writes: Promise<unknown>[] = [];
       for (let [path, value] of values) {
         const _instance =
           path == "." ? instance : getByPath(instance, path);
         const itemValue = createStatesSnapshot(_instance);
         if (value == DELETE_TOKEN) {
-          await this.room.storage.delete(path);
+          writes.push(this.deleteStatePath(path));
         } else {
-          await this.room.storage.put(path, itemValue);
+          writes.push(this.saveStatePath(path, itemValue));
         }
       }
+      await Promise.all(writes);
       values.clear();
     }
 
@@ -677,23 +780,92 @@ export class Server implements Party.Server {
    * console.log(session);
    * ```
    */
-  async getSession(privateId: string): Promise<{ publicId: string, state?: any, created?: number, connected?: boolean, disconnectedAt?: number } | null> {
+  async getSession(privateId: string): Promise<SessionData | null> {
     if (!privateId) return null;
     try {
-      const session = await this.room.storage.get(`session:${privateId}`);
-      return session as { publicId: string, state?: any, created: number, connected: boolean, disconnectedAt?: number } | null;
+      const session = await this.room.storage.get(this.sessionKey(privateId));
+      return session as SessionData | null;
     } catch (e) {
       return null;
     }
   }
 
-  private async saveSession(privateId: string, data: { publicId: string, state?: any, created?: number, connected?: boolean, disconnectedAt?: number }) {
+  private async getSessionPrivateIds(publicId: string): Promise<string[]> {
+    if (!publicId) return [];
+    const privateIds = await this.room.storage.get<string[]>(this.sessionPublicKey(publicId));
+    return Array.isArray(privateIds) ? privateIds : [];
+  }
+
+  private async saveSessionPrivateIds(publicId: string, privateIds: string[]) {
+    const key = this.sessionPublicKey(publicId);
+    if (privateIds.length === 0) {
+      await this.room.storage.delete(key);
+      return;
+    }
+    await this.room.storage.put(key, privateIds);
+  }
+
+  private async addSessionToPublicIndex(privateId: string, publicId: string) {
+    const privateIds = await this.getSessionPrivateIds(publicId);
+    if (privateIds.includes(privateId)) {
+      return;
+    }
+    await this.saveSessionPrivateIds(publicId, [...privateIds, privateId]);
+  }
+
+  private async removeSessionFromPublicIndex(privateId: string, publicId: string) {
+    const privateIds = await this.getSessionPrivateIds(publicId);
+    await this.saveSessionPrivateIds(
+      publicId,
+      privateIds.filter((id) => id !== privateId)
+    );
+  }
+
+  private async getSessionEntryByPublicId(publicId: string): Promise<{ privateId: string; session: SessionData } | null> {
+    const indexedPrivateIds = await this.getSessionPrivateIds(publicId);
+    const stalePrivateIds: string[] = [];
+
+    for (const privateId of indexedPrivateIds) {
+      const session = await this.getSession(privateId);
+      if (session?.publicId === publicId) {
+        return { privateId, session };
+      }
+      stalePrivateIds.push(privateId);
+    }
+
+    if (stalePrivateIds.length) {
+      await this.saveSessionPrivateIds(
+        publicId,
+        indexedPrivateIds.filter((id) => !stalePrivateIds.includes(id))
+      );
+    }
+
+    const sessions = await this.listStorage<SessionData>(SESSION_PREFIX);
+    for (const [key, session] of sessions) {
+      const privateId = key.slice(SESSION_PREFIX.length);
+      if (session?.publicId) {
+        await this.addSessionToPublicIndex(privateId, session.publicId);
+      }
+      if (session?.publicId === publicId) {
+        return { privateId, session };
+      }
+    }
+
+    return null;
+  }
+
+  private async saveSession(privateId: string, data: SessionData) {
+    const existingSession = await this.getSession(privateId);
     const sessionData = {
       ...data,
       created: data.created || Date.now(),
       connected: data.connected !== undefined ? data.connected : true
     };
-    await this.room.storage.put(`session:${privateId}`, sessionData);
+    await this.room.storage.put(this.sessionKey(privateId), sessionData);
+    if (existingSession?.publicId && existingSession.publicId !== sessionData.publicId) {
+      await this.removeSessionFromPublicIndex(privateId, existingSession.publicId);
+    }
+    await this.addSessionToPublicIndex(privateId, sessionData.publicId);
   }
 
   private async updateSessionConnection(privateId: string, connected: boolean) {
@@ -704,6 +876,9 @@ export class Server implements Party.Server {
         delete nextSession.disconnectedAt;
       } else {
         nextSession.disconnectedAt = Date.now();
+      }
+      if (!await this.getSession(privateId)) {
+        return;
       }
       await this.saveSession(privateId, nextSession);
     }
@@ -721,7 +896,11 @@ export class Server implements Party.Server {
    * ```
    */
   async deleteSession(privateId: string) {
-    await this.room.storage.delete(`session:${privateId}`);
+    const session = await this.getSession(privateId);
+    await this.room.storage.delete(this.sessionKey(privateId));
+    if (session?.publicId) {
+      await this.removeSessionFromPublicIndex(privateId, session.publicId);
+    }
   }
 
   async onConnectClient(conn: Party.Connection, ctx: Party.ConnectionContext) {
@@ -735,7 +914,9 @@ export class Server implements Party.Server {
     }
 
     const sessionExpiryTime = this.getSessionExpiryTime(subRoom);
-    await this.garbageCollector({ sessionExpiryTime });
+    if (await this.shouldRunSessionGarbageCollector(sessionExpiryTime)) {
+      await this.garbageCollector({ sessionExpiryTime });
+    }
 
     // Check room guards
     const roomGuards = subRoom.constructor['_roomGuards'] || [];
@@ -755,9 +936,9 @@ export class Server implements Party.Server {
     }
     let transferData: any = null;
     if (transferToken) {
-      transferData = await this.room.storage.get(`transfer:${transferToken}`);
+      transferData = await this.room.storage.get(this.transferKey(transferToken));
       if (transferData) {
-        await this.room.storage.delete(`transfer:${transferToken}`);
+        await this.room.storage.delete(this.transferKey(transferToken));
       }
     }
 
@@ -785,7 +966,7 @@ export class Server implements Party.Server {
           user = isClass(classType) ? new classType() : classType(conn, ctx);
           signal()[publicId] = user;
           const snapshot = createStatesSnapshotDeep(user);
-          this.room.storage.put(`${usersPropName}.${publicId}`, snapshot);
+          await this.saveStatePath(`${usersPropName}.${publicId}`, snapshot);
         }
       }
       else {
@@ -1342,13 +1523,13 @@ export class Server implements Party.Server {
           load(user, hydratedSnapshot, true);
           
           // Save user snapshot to storage
-          await this.room.storage.put(`${usersPropName}.${publicId}`, userSnapshot);
+          await this.saveStatePath(`${usersPropName}.${publicId}`, userSnapshot);
         }
       }
 
       // Generate transfer token for the client to use when connecting
       const transferToken = generateShortUUID();
-      await this.room.storage.put(`transfer:${transferToken}`, {
+      await this.room.storage.put(this.transferKey(transferToken), {
         privateId,
         publicId,
         restored: true
