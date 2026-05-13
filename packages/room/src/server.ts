@@ -69,6 +69,8 @@ type StorageMetrics = {
   loadMs: number;
   loadStateKeys: number;
   loadLegacyKeys: number;
+  stateCompactions: number;
+  stateCompactionDeletes: number;
   persistFlushes: number;
   persistWrites: number;
   persistDeletes: number;
@@ -212,9 +214,40 @@ export class Server implements Party.Server {
     const descendantEntries = await this.listStorage(`${stateKey}.`);
     await this.deleteStorageKeys([
       ...Array.from(descendantEntries.keys()),
-      path,
+      stateKey,
     ]);
     await this.saveStatePath(path, DELETE_TOKEN);
+  }
+
+  private containsDeleteToken(value: any): boolean {
+    if (value === DELETE_TOKEN) {
+      return true;
+    }
+    if (!value || typeof value !== "object") {
+      return false;
+    }
+    if (Array.isArray(value)) {
+      return value.some((item) => this.containsDeleteToken(item));
+    }
+    return Object.values(value).some((item) => this.containsDeleteToken(item));
+  }
+
+  private async compactStateStorage(instance: any) {
+    const entries = await this.listStorage(STATE_PREFIX);
+    const keys = Array.from(entries.keys());
+    if (keys.length === 0) {
+      return;
+    }
+
+    const snapshot = createStatesSnapshotDeep(instance);
+    await this.deleteStorageKeys(keys);
+    await this.saveStatePath(".", snapshot);
+
+    const metrics = instance.$storageMetrics as StorageMetrics | undefined;
+    if (metrics) {
+      metrics.stateCompactions += 1;
+      metrics.stateCompactionDeletes += keys.length;
+    }
   }
 
   private createUserFromClassType(classType: any, ...args: any[]) {
@@ -312,6 +345,8 @@ export class Server implements Party.Server {
       loadMs: 0,
       loadStateKeys: 0,
       loadLegacyKeys: 0,
+      stateCompactions: 0,
+      stateCompactionDeletes: 0,
       persistFlushes: 0,
       persistWrites: 0,
       persistDeletes: 0,
@@ -710,13 +745,16 @@ export class Server implements Party.Server {
             migratedEntries.map(([path, value]) => [this.stateKey(path), value])
           )
         );
-        if (legacyRoot !== undefined) {
+        if (legacyDeleteKeys.length > 0) {
           await this.deleteStorageKeys(legacyDeleteKeys);
         }
         const restoredLegacyObject = await this.restoreStorageSnapshot(instance, legacyObject, {
           legacy: true,
         });
         load(instance, restoredLegacyObject, true);
+        if (this.containsDeleteToken(restoredLegacyObject)) {
+          await this.compactStateStorage(instance);
+        }
         metrics.loadMs = Date.now() - startedAt;
         return;
       }
@@ -725,6 +763,9 @@ export class Server implements Party.Server {
         legacy: false,
       });
       load(instance, restoredObject, true);
+      if (this.containsDeleteToken(restoredObject)) {
+        await this.compactStateStorage(instance);
+      }
       metrics.loadMs = Date.now() - startedAt;
     };
 
@@ -897,19 +938,16 @@ export class Server implements Party.Server {
       values.clear();
     }
 
-    // Persist callback: Save changes to storage
-    const persistCb = async (values: Map<string, any>) => {
-      if (initPersist) {
-        values.clear();
-        return;
-      }
+    const flushPersist = async (values: Map<string, any>) => {
       const startedAt = Date.now();
       const stateWrites: Record<string, any> = {};
       const deleteTasks: Promise<void>[] = [];
+      let hasDeletes = false;
       for (let [path, value] of values) {
         const _instance =
           path == "." ? instance : getByPath(instance, path);
         if (value == DELETE_TOKEN) {
+          hasDeletes = true;
           deleteTasks.push(this.deleteStatePath(path));
         } else {
           const itemValue = _instance?.$snapshot
@@ -922,6 +960,9 @@ export class Server implements Party.Server {
         this.putStorageEntries(stateWrites),
         ...deleteTasks,
       ]);
+      if (hasDeletes) {
+        await this.compactStateStorage(instance);
+      }
       const metrics = instance.$storageMetrics as StorageMetrics | undefined;
       if (metrics) {
         metrics.persistFlushes += 1;
@@ -929,7 +970,25 @@ export class Server implements Party.Server {
         metrics.persistDeletes += deleteTasks.length;
         metrics.persistLastFlushMs = Date.now() - startedAt;
       }
+    }
+
+    let persistQueue = Promise.resolve();
+
+    // Persist callback: Save changes to storage
+    const persistCb = async (values: Map<string, any>) => {
+      if (initPersist) {
+        values.clear();
+        return;
+      }
+
+      const valuesSnapshot = new Map(values);
       values.clear();
+
+      persistQueue = persistQueue.then(
+        () => flushPersist(valuesSnapshot),
+        () => flushPersist(valuesSnapshot)
+      );
+      await persistQueue;
     }
 
     const debouncePersist = (wait: number) => {

@@ -74,4 +74,49 @@ describe("storage restore hooks", () => {
     expect(restoredPlayer.items()[0].id()).toBe("potion");
     expect((restoredPlayer as any).usedHelperInstance).toBe(true);
   });
+
+  it("compacts persisted delete markers when loading room storage", async () => {
+    @Room({ path: "demo" })
+    class DemoRoom {
+      @sync()
+      items = signal<Record<string, number>>({});
+    }
+
+    class DemoServer extends Server {
+      rooms = [DemoRoom];
+    }
+
+    const io = new ServerIo("demo");
+    await io.storage.put("state:items.a", "$delete");
+
+    const server = new DemoServer(io as any);
+    await server.onStart();
+
+    const storageEntries = await io.storage.list({ prefix: "state:" });
+    expect(storageEntries.get("state:items.a")).toBeUndefined();
+    expect(storageEntries.get("state:.")).toEqual({ items: {} });
+  });
+
+  it("compacts runtime deletes instead of leaving delete markers in storage", async () => {
+    @Room({ path: "demo" })
+    class DemoRoom {
+      @sync()
+      items = signal<Record<string, number>>({ a: 1, b: 2 });
+    }
+
+    class DemoServer extends Server {
+      rooms = [DemoRoom];
+    }
+
+    const io = new ServerIo("demo");
+    const server = new DemoServer(io as any);
+    await server.onStart();
+
+    delete (server.subRoom as any).items().a;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const storageEntries = await io.storage.list({ prefix: "state:" });
+    expect(storageEntries.get("state:items.a")).toBeUndefined();
+    expect(storageEntries.get("state:.")).toEqual({ items: { b: 2 } });
+  });
 });
