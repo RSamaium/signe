@@ -56,6 +56,17 @@ class TargetRoom {
 }
 
 @Room({
+  path: 'room-b-volatile-hibernate',
+  sessionExpiryTime: 2000,
+  throttleSync: 0,
+  persistState: false
+})
+class VolatileHibernateTargetRoom {
+  @users(Player) users = signal({});
+  id = 'room-b-volatile-hibernate';
+}
+
+@Room({
   path: 'room-a-items',
   sessionExpiryTime: 2000,
   throttleSync: 0
@@ -225,6 +236,64 @@ describe('Session transfer token cleanup', () => {
       observer.conn.close();
 
       expect(await targetRoom.storage.get(`transfer:${transferToken}`)).toBeUndefined();
+    } finally {
+      clientA.conn.close();
+    }
+  });
+});
+
+describe('Session transfer to volatile hibernating rooms', () => {
+  it('preserves transferred user state without persistent room state', async () => {
+    const test = await testRoom(SourceRoom, {
+      partyFn: async (lobbyId) => {
+        const s = new Server(new ServerIo(lobbyId) as any);
+        s.rooms = [SourceRoom, VolatileHibernateTargetRoom];
+        (s as any).options = {
+          hibernate: lobbyId === 'room-b-volatile-hibernate',
+        };
+        await s.onStart();
+        return s;
+      }
+    });
+    const serverA = test.server as Server;
+    const roomA = test.room as any;
+    const clientA = await test.createClient('test');
+
+    try {
+      const privateIdA = clientA.conn.sessionId;
+      const sessionA = await serverA.getSession(privateIdA);
+      expect(sessionA).not.toBeNull();
+      const publicId = sessionA!.publicId;
+
+      roomA.users()[publicId].name.set('Alice');
+
+      const transferToken = await (serverA as any).subRoom.$sessionTransfer(
+        clientA.conn,
+        'room-b-volatile-hibernate'
+      );
+      expect(transferToken).toBeTruthy();
+
+      const lobbyB = await (serverA as any).room.context.parties.main.get('room-b-volatile-hibernate');
+      const serverB = lobbyB.server as Server;
+      const transferEntry = await serverB.room.storage.get<any>(`transfer:${transferToken}`);
+      expect(transferEntry?.userSnapshot?.name).toBe('Alice');
+      await expect(serverB.room.storage.get(`state:users.${publicId}`)).resolves.toBeUndefined();
+
+      const syncMessages: any[] = [];
+      const clientB = lobbyB.socket({ id: privateIdA });
+      clientB.addEventListener('message', (msg: string) => {
+        const packet = JSON.parse(msg);
+        if (packet.type === 'sync') {
+          syncMessages.push(packet.value);
+        }
+      });
+
+      await serverB.onConnect(clientB.conn as any, {
+        request: new Request(`http://localhost?transferToken=${transferToken}`)
+      } as any);
+
+      expect(syncMessages.some((value) => value.users?.[publicId]?.name === 'Alice')).toBe(true);
+      await expect(serverB.room.storage.get(`state:users.${publicId}`)).resolves.toBeUndefined();
     } finally {
       clientA.conn.close();
     }

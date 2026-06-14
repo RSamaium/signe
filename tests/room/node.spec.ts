@@ -111,6 +111,34 @@ class BatchedStorageServer extends Server {
   rooms = [BatchedStorageRoom];
 }
 
+@Room({ path: "volatile", persistState: false })
+class VolatileStateRoom {
+  constructor(readonly room: any) {}
+
+  @sync() count = signal(0);
+
+  @Request({ path: "/count" })
+  getCount() {
+    return { count: this.count() };
+  }
+
+  @Request({ path: "/count", method: "POST" }, z.object({ count: z.number() }))
+  setCount(req: any) {
+    this.count.set(req.data.count);
+    return { count: this.count() };
+  }
+
+  @Request({ path: "/manual-storage", method: "POST" }, z.object({ value: z.string() }))
+  async setManualStorage(req: any) {
+    await this.room.storage.put("manual", req.data.value);
+    return { value: await this.room.storage.get("manual") };
+  }
+}
+
+class VolatileStateServer extends Server {
+  rooms = [VolatileStateRoom];
+}
+
 @Room({ path: "demo" })
 class AlternateRoom {
   @Request({ path: "/namespace" })
@@ -428,6 +456,46 @@ describe("@signe/room/node", () => {
     expect(provider.getStorage).toHaveBeenCalledWith("main", "demo");
     expect(sqliteStorage.put).toHaveBeenCalledWith("value", "persisted");
     await expect(room.storage.get("value")).resolves.toBe("sqlite:value");
+  });
+
+  it("restores persisted state by default", async () => {
+    const storage = createMemoryNodeRoomStorage();
+    await storage.getStorage("main", "demo").put("state:count", 7);
+    const transport = createNodeRoomTransport(DemoServer, { storage });
+
+    const response = await transport.fetch("/parties/main/demo/count");
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ count: 7 });
+  });
+
+  it("can disable automatic state restore and writes while keeping manual storage", async () => {
+    const storage = createMemoryNodeRoomStorage();
+    const roomStorage = storage.getStorage("main", "volatile");
+    await roomStorage.put("state:count", 7);
+    const transport = createNodeRoomTransport(VolatileStateServer, { storage });
+
+    const initialResponse = await transport.fetch("/parties/main/volatile/count");
+    expect(initialResponse.status).toBe(200);
+    await expect(initialResponse.json()).resolves.toEqual({ count: 0 });
+
+    const updateResponse = await transport.fetch("/parties/main/volatile/count", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ count: 5 }),
+    });
+    expect(updateResponse.status).toBe(200);
+    await expect(updateResponse.json()).resolves.toEqual({ count: 5 });
+    await expect(roomStorage.get("state:count")).resolves.toBe(7);
+
+    const manualResponse = await transport.fetch("/parties/main/volatile/manual-storage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: "kept" }),
+    });
+    expect(manualResponse.status).toBe(200);
+    await expect(manualResponse.json()).resolves.toEqual({ value: "kept" });
+    await expect(roomStorage.get("manual")).resolves.toBe("kept");
   });
 
   it("debounces throttled storage writes until the wait time has elapsed", async () => {

@@ -105,6 +105,60 @@ pnpm run build
 The repository is a pnpm workspace. The root package is private; publishable
 packages live under `packages/*`.
 
+## Release
+
+Releases are made from `master`. The package versions are kept aligned across the
+root `package.json` and every publishable package under `packages/*`.
+
+1. Start from an up-to-date and clean `master` branch:
+
+```bash
+git checkout master
+git pull origin master
+git status
+```
+
+2. Run the local checks:
+
+```bash
+pnpm test
+pnpm run typecheck
+pnpm run build
+```
+
+3. Bump every package to the target version, commit it, and push it:
+
+```bash
+pnpm exec bumpp 3.0.1 --no-tag package.json packages/*/package.json --all --yes
+git push origin master
+```
+
+Replace `3.0.1` with the version being released. Pass the version as a positional
+argument; do not use `--version`, because that prints the `bumpp` version.
+
+4. Wait for the GitHub Actions CI run on `master` to pass. The workflow builds,
+tests, and publishes changed packages to npm through Changesets.
+
+5. Verify that npm has the expected version:
+
+```bash
+npm view @signe/room version
+npm view @signe/reactive version
+npm view @signe/sync version
+npm view @signe/di version
+npm view @signe/schema-to-zod version
+```
+
+6. Create and push the release tag only after CI is green and npm is updated:
+
+```bash
+git tag -a v3.0.1 -m "v3.0.1"
+git push origin v3.0.1
+```
+
+If CI fails after the version bump, fix the failure on `master`, wait for the new
+run to pass, then create the tag on the passing commit.
+
 ## Current Stability Notes
 
 - `@signe/reactive`, `@signe/sync`, `@signe/di`, and `@signe/schema-to-zod` are

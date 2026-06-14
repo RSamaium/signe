@@ -62,6 +62,7 @@ export function Request(options: RequestOptions, bodyValidation?: z.ZodSchema) {
 export interface RoomOptions {
   path: string;
   maxUsers?: number;
+  persistState?: boolean;
   throttleStorage?: number;
   throttleSync?: number;
   hibernate?: boolean;
@@ -73,6 +74,7 @@ export function Room(options: RoomOptions) {
   return function (target: any) {
     target.path = options.path;
     target.prototype.maxUsers = options.maxUsers;
+    target.prototype.persistState = options.persistState ?? true;
     target.prototype.throttleStorage = options.throttleStorage;
     target.prototype.throttleSync = options.throttleSync;
     target.prototype.sessionExpiryTime = options.sessionExpiryTime ?? 5 * 60 * 1000;

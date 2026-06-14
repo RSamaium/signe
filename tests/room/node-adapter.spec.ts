@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { signal } from "../../packages/reactive/src";
-import { Room, Server } from "../../packages/room/src";
+import { Request as RoomRequest, Room, Server } from "../../packages/room/src";
 import {
   createMemoryNodeRoomStorage,
   createNodeRoomTransport,
@@ -19,6 +19,24 @@ class TestRoom {
 
 class TestServer extends Server {
   rooms = [TestRoom];
+}
+
+@Room({ path: "volatile", persistState: false, sessionExpiryTime: 1000 })
+class VolatileTestRoom {
+  @users(TestUser) users = signal<Record<string, TestUser>>({});
+
+  @RoomRequest({ path: "/users/:id" })
+  getUser(req: any) {
+    const user = this.users()[req.params.id];
+    return {
+      exists: !!user,
+      connected: user?.connected() ?? null,
+    };
+  }
+}
+
+class VolatileTestServer extends Server {
+  rooms = [VolatileTestRoom];
 }
 
 class FakeWebSocket implements NodeWebSocketLike {
@@ -100,6 +118,52 @@ describe("Node room adapter sessions", () => {
 
     expect(secondSession?.publicId).toBe(firstSession?.publicId);
     expect(secondSession?.connected).toBe(true);
+  });
+
+  it("recreates volatile users for persisted sessions after room recreation", async () => {
+    const storage = createMemoryNodeRoomStorage();
+    const firstTransport = createNodeRoomTransport(VolatileTestServer, { storage });
+    const firstWs = new FakeWebSocket();
+    await firstTransport.acceptWebSocket(
+      firstWs,
+      new Request("http://localhost/parties/main/volatile?id=browser-session")
+    );
+
+    const firstRoomStorage = await firstTransport.getRoom("main", "volatile");
+    const firstSession = await firstRoomStorage.storage.get<{ publicId: string }>(
+      "session:browser-session"
+    );
+    const publicId = firstSession!.publicId;
+    const firstUserResponse = await firstTransport.fetch(`/parties/main/volatile/users/${publicId}`);
+    await expect(firstUserResponse.json()).resolves.toEqual({
+      exists: true,
+      connected: true,
+    });
+    await expect(firstRoomStorage.storage.get(`state:users.${publicId}`)).resolves.toBeUndefined();
+
+    firstWs.close();
+    await nextTick();
+
+    const secondTransport = createNodeRoomTransport(VolatileTestServer, { storage });
+    const secondWs = new FakeWebSocket();
+    await secondTransport.acceptWebSocket(
+      secondWs,
+      new Request("http://localhost/parties/main/volatile?id=browser-session")
+    );
+
+    const secondRoomStorage = await secondTransport.getRoom("main", "volatile");
+    const secondSession = await secondRoomStorage.storage.get<{ publicId: string; connected: boolean }>(
+      "session:browser-session"
+    );
+
+    expect(secondSession?.publicId).toBe(publicId);
+    expect(secondSession?.connected).toBe(true);
+    const secondUserResponse = await secondTransport.fetch(`/parties/main/volatile/users/${publicId}`);
+    await expect(secondUserResponse.json()).resolves.toEqual({
+      exists: true,
+      connected: true,
+    });
+    await expect(secondRoomStorage.storage.get(`state:users.${publicId}`)).resolves.toBeUndefined();
   });
 
   it("keeps multiple active websockets for the same session id", async () => {

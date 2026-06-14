@@ -63,6 +63,7 @@ type TransferData = {
   publicId: string;
   restored: boolean;
   created: number;
+  userSnapshot?: any;
 };
 
 type StorageMetrics = {
@@ -771,6 +772,7 @@ export class Server implements Party.Server {
 
     instance.$memoryAll = {}
     instance.$storageMetrics = this.createStorageMetrics();
+    const shouldPersistState = instance["persistState"] !== false;
     instance.$autoSync = instance["autoSync"] !== false; // Default to true
     instance.$pendingSync = new Map<string, any>();
     instance.$pendingInitialSync = new Map<Party.Connection, string>(); // Store connections waiting for initial sync with their publicId
@@ -1043,13 +1045,21 @@ export class Server implements Party.Server {
       };
     };
 
+    const disabledPersist = (values: Map<string, any>) => {
+      values.clear();
+    };
+
     // Set up syncing and persistence with throttling to optimize performance
     syncClass(instance, {
       onSync: instance["throttleSync"] ? throttle(syncCb, instance["throttleSync"]) : syncCb,
-      onPersist: instance["throttleStorage"] ? debouncePersist(instance["throttleStorage"]) : persistCb,
+      onPersist: shouldPersistState
+        ? instance["throttleStorage"] ? debouncePersist(instance["throttleStorage"]) : persistCb
+        : disabledPersist,
     });
 
-    await loadMemory();
+    if (shouldPersistState) {
+      await loadMemory();
+    }
 
     initPersist = false
     init = false; // Allow syncs after initialization is complete
@@ -1350,24 +1360,42 @@ export class Server implements Party.Server {
     let user = null;
     const signal = this.getUsersProperty(subRoom);
     const usersPropName = this.getUsersPropName(subRoom);
+    const shouldPersistState = subRoom["persistState"] !== false;
 
     if (signal) {
       const { classType } = signal.options;
+      const createUser = async (id: string, snapshot?: any) => {
+        const nextUser = this.createUserFromClassType(classType, conn, ctx);
+        signal()[id] = nextUser;
+        if (snapshot !== undefined) {
+          load(nextUser, snapshot, true);
+        }
+        if (shouldPersistState) {
+          const persistedSnapshot = createStatesSnapshotDeep(nextUser);
+          await this.saveStatePath(`${usersPropName}.${id}`, persistedSnapshot);
+        }
+        return nextUser;
+      };
 
       // Restore state if exists
       if (!existingSession?.publicId) {
         // Check if we have a transferred user already restored
         if (transferData?.restored && signal()[publicId]) {
           user = signal()[publicId];
+        } else if (transferData?.restored && transferData.userSnapshot !== undefined) {
+          user = await createUser(publicId, transferData.userSnapshot);
         } else {
-          user = this.createUserFromClassType(classType, conn, ctx);
-          signal()[publicId] = user;
-          const snapshot = createStatesSnapshotDeep(user);
-          await this.saveStatePath(`${usersPropName}.${publicId}`, snapshot);
+          user = await createUser(publicId);
         }
       }
       else {
         user = signal()[existingSession.publicId];
+        if (!user) {
+          const snapshot = transferData?.publicId === existingSession.publicId
+            ? transferData.userSnapshot
+            : undefined;
+          user = await createUser(existingSession.publicId, snapshot);
+        }
       }
 
       // Only store new session if it doesn't exist
@@ -1897,6 +1925,8 @@ export class Server implements Party.Server {
       if (!subRoom) {
         return res.serverError('Room not available');
       }
+      const shouldPersistState = subRoom["persistState"] !== false;
+      let restoredUserSnapshot: any;
 
       // Create session from privateId
       await this.saveSession(privateId, {
@@ -1934,9 +1964,12 @@ export class Server implements Party.Server {
 
           // Load user data from snapshot
           load(user, hydratedSnapshot, true);
+          restoredUserSnapshot = createStatesSnapshotDeep(user);
           
           // Save user snapshot to storage
-          await this.saveStatePath(`${usersPropName}.${publicId}`, userSnapshot);
+          if (shouldPersistState) {
+            await this.saveStatePath(`${usersPropName}.${publicId}`, restoredUserSnapshot);
+          }
         }
       }
 
@@ -1946,6 +1979,9 @@ export class Server implements Party.Server {
         privateId,
         publicId,
         restored: true,
+        ...(shouldPersistState || restoredUserSnapshot === undefined
+          ? {}
+          : { userSnapshot: restoredUserSnapshot }),
         created: Date.now(),
       });
 
