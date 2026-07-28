@@ -1,5 +1,11 @@
 # @signe/sync
 
+## 3.1.1
+
+### Patch Changes
+
+- 50a6459: Use signal mutations when loading or deleting nested object and array values.
+
 ## 3.0.0
 
 ### Major Changes
