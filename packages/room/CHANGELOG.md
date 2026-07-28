@@ -1,5 +1,12 @@
 # @signe/room
 
+## 3.1.2
+
+### Patch Changes
+
+- Updated dependencies [50a6459]
+  - @signe/sync@3.1.2
+
 ## 3.0.0
 
 ### Major Changes
