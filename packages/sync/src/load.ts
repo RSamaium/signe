@@ -92,6 +92,11 @@ function loadValue(rootInstance: any, parts: string[], value: any) {
     if (i === parts.length - 1) {
       if (value == DELETE_TOKEN) {
         if (isSignal(current)) {
+          if (mutateSignalContainer(current, target => {
+            Reflect.deleteProperty(target, part);
+          })) {
+            continue;
+          }
           current = current();
         }
         Reflect.deleteProperty(current, part);
@@ -99,8 +104,13 @@ function loadValue(rootInstance: any, parts: string[], value: any) {
       else if (current[part]?._subject) {
         current[part].set(value);
       }
-      else if (isSignal(current) && Array.isArray(current()) && !isNaN(Number(part))) {
-        current()[Number(part)] = value;
+      else if (isSignal(current) && mutateSignalContainer(current, target => {
+        const key = Array.isArray(target) && !isNaN(Number(part))
+          ? Number(part)
+          : part;
+        target[key] = value;
+      })) {
+        continue;
       }
       else {
         current[part] = value;
@@ -126,6 +136,24 @@ function loadValue(rootInstance: any, parts: string[], value: any) {
       current = current[part];
     }
   }
+}
+
+function mutateSignalContainer(
+  signal: any,
+  mutation: (target: any) => void
+): boolean {
+  const container = signal();
+  if (container === null || typeof container !== "object") {
+    return false;
+  }
+
+  if (typeof signal.mutate === "function") {
+    signal.mutate(mutation);
+  } else {
+    mutation(container);
+  }
+
+  return true;
 }
 
 /**

@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { signal, computed } from "../../packages/reactive/src";
-import { load, sync } from "../../packages/sync/src";
+import { DELETE_TOKEN, load, sync } from "../../packages/sync/src";
 
 describe("load function", () => {
   let testInstance: any;
@@ -72,6 +72,73 @@ describe("load function", () => {
   it("should delete a property if value is $delete", () => {
     load(testInstance, { "nested.id": "$delete" });
     expect(testInstance.nested()["id"]).toBeUndefined();
+  });
+
+  it("should mutate an object-valued signal when loading a nested property", () => {
+    const profile = signal({ name: "before" });
+    const observer = vi.fn();
+    profile.observable.subscribe(observer);
+    observer.mockClear();
+
+    load({ profile }, { "profile.name": "after" });
+
+    expect(profile()).toEqual({ name: "after" });
+    expect(observer).toHaveBeenCalledOnce();
+    expect(observer).toHaveBeenCalledWith({
+      type: "update",
+      key: "name",
+      value: "after",
+    });
+  });
+
+  it("should mutate an array-valued signal when loading a numeric path", () => {
+    const items = signal(["before"]);
+    const observer = vi.fn();
+    items.observable.subscribe(observer);
+    observer.mockClear();
+
+    load({ items }, { "items.0": "after" });
+
+    expect(items()).toEqual(["after"]);
+    expect(observer).toHaveBeenCalledOnce();
+    expect(observer).toHaveBeenCalledWith({
+      type: "update",
+      index: 0,
+      items: ["after"],
+    });
+  });
+
+  it("should mutate an object-valued signal when deleting a nested property", () => {
+    const profile = signal({ name: "before", obsolete: true });
+    const observer = vi.fn();
+    profile.observable.subscribe(observer);
+    observer.mockClear();
+
+    load({ profile }, { "profile.obsolete": DELETE_TOKEN });
+
+    expect(profile()).toEqual({ name: "before" });
+    expect(observer).toHaveBeenCalledOnce();
+    expect(observer).toHaveBeenCalledWith({
+      type: "remove",
+      key: "obsolete",
+      value: true,
+    });
+  });
+
+  it("should support signal-like containers without mutate", () => {
+    const profileValue: Record<string, any> = {
+      name: "before",
+      obsolete: true,
+    };
+    const profile: any = () => profileValue;
+    profile.observable = {};
+
+    load({ profile }, {
+      "profile.name": "after",
+      "profile.obsolete": DELETE_TOKEN,
+    });
+
+    expect(profileValue).toEqual({ name: "after" });
   });
 
   it("should load nested GameObject in Scene", () => {
