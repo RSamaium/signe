@@ -4,6 +4,8 @@ import { z } from "zod";
 import { signal } from "../../packages/reactive/src";
 import { Request as RequestDecorator, Room, Server } from "../../packages/room/src";
 import {
+  CloudflareConnection,
+  CloudflareRoom,
   createCloudflareRoomWorker,
   SigneRoomDurableObject,
 } from "../../packages/room/src/cloudflare";
@@ -35,11 +37,16 @@ class DemoRoom {
 
 class DemoServer extends Server {
   static startCount = 0;
+  static alarmCount = 0;
   rooms = [DemoRoom];
 
   async onStart() {
     DemoServer.startCount++;
     await super.onStart();
+  }
+
+  async onAlarm() {
+    DemoServer.alarmCount++;
   }
 }
 
@@ -101,10 +108,34 @@ class FakeStorage {
 }
 
 function createState() {
-  return {
+  const webSockets: FakeWebSocket[] = [];
+  const state = {
     storage: new FakeStorage(),
     blockConcurrencyWhile: <T>(callback: () => Promise<T>) => callback(),
+    acceptWebSocket: (webSocket: FakeWebSocket) => webSockets.push(webSocket),
+    getWebSockets: () => webSockets,
   } as unknown as DurableObjectState;
+  return state;
+}
+
+class FakeWebSocket {
+  readyState = 1;
+  sent: unknown[] = [];
+  attachment: unknown;
+
+  send(value: unknown) {
+    this.sent.push(value);
+  }
+
+  close() {}
+
+  serializeAttachment(value: unknown) {
+    this.attachment = structuredClone(value);
+  }
+
+  deserializeAttachment() {
+    return structuredClone(this.attachment);
+  }
 }
 
 describe("@signe/room/cloudflare", () => {
@@ -123,7 +154,7 @@ describe("@signe/room/cloudflare", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
-      name: "demo",
+      name: "main:demo",
       url: "https://example.com/parties/main/demo/count",
     });
   });
@@ -189,8 +220,63 @@ describe("@signe/room/cloudflare", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
-      name: "other",
+      name: "main:other",
       path: "/parties/main/other/count",
     });
+  });
+
+  it("restores the room before running an alarm after eviction", async () => {
+    DemoServer.alarmCount = 0;
+    createCloudflareRoomWorker(DemoServer, { binding: "ROOMS" });
+    const state = createState();
+    const namespace = new FakeDurableObjectNamespace(() => () => new Response("peer"));
+    const env = { ROOMS: namespace as unknown as DurableObjectNamespace };
+
+    const firstInstance = new SigneRoomDurableObject(state, env);
+    await firstInstance.fetch(
+      new Request("https://example.com/parties/main/demo/count")
+    );
+
+    const restoredInstance = new SigneRoomDurableObject(state, env);
+    await restoredInstance.alarm();
+
+    expect(DemoServer.alarmCount).toBe(1);
+  });
+
+  it("restores hibernated connections from WebSocket attachments", () => {
+    createCloudflareRoomWorker(DemoServer, {
+      binding: "ROOMS",
+      webSocketMode: "hibernate",
+    });
+    const state = createState();
+    const webSocket = new FakeWebSocket();
+    const connection = new CloudflareConnection(webSocket as any, {
+      id: "connection-1",
+      sessionId: "session-1",
+      uri: "https://example.com/parties/main/demo?id=session-1",
+      state: { publicId: "user-1" },
+    });
+    connection.persistAttachment();
+    (state as any).acceptWebSocket(webSocket);
+
+    const room = new CloudflareRoom({
+      id: "demo",
+      name: "main",
+      env: {},
+      state,
+      binding: "ROOMS",
+      partiesPath: "/parties/main",
+    });
+    const restored = [...room.getConnections()] as any[];
+
+    expect(restored).toHaveLength(1);
+    expect(restored[0]).toMatchObject({
+      id: "connection-1",
+      sessionId: "session-1",
+      state: { publicId: "user-1" },
+    });
+
+    room.broadcast("hello");
+    expect(webSocket.sent).toEqual(["hello"]);
   });
 });
