@@ -1,5 +1,12 @@
 # @signe/room
 
+## 3.2.0
+
+### Minor Changes
+
+- 78dad08: Add Cloudflare Durable Object WebSocket hibernation, namespace-isolated room
+  identities, and alarm restoration after isolate eviction.
+
 ## 3.0.0
 
 ### Major Changes
