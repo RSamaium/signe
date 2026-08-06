@@ -33,8 +33,12 @@ export { SigneRoomDurableObject };
 export default createCloudflareRoomWorker(CounterServer, {
   binding: "ROOMS",
   partiesPath: "/parties/main",
+  webSocketMode: "hibernate",
 });
 ```
+
+`webSocketMode: "hibernate"` lets Cloudflare evict idle Worker isolates while
+Signe restores connection state from Durable Object WebSocket attachments.
 
 This example wraps that worker so non-room requests are served by the `ASSETS`
 binding from `public/`.

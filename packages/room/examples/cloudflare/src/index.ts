@@ -13,6 +13,7 @@ interface Env extends Record<string, unknown> {
 const roomWorker = createCloudflareRoomWorker(CounterServer, {
   binding: "ROOMS",
   partiesPath: "/parties/main",
+  webSocketMode: "hibernate",
 });
 
 export default {
