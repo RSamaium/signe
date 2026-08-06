@@ -14,6 +14,7 @@ export type CloudflareRoomWorkerOptions = {
   partiesPath?: string;
   env?: Record<string, unknown>;
   rooms?: Record<string, CloudflareRoomServerConstructor>;
+  webSocketMode?: "standard" | "hibernate";
 };
 
 export type CloudflareRoomEnv = Record<string, unknown>;
@@ -33,10 +34,20 @@ type CloudflareRuntimeConfig = Required<Pick<CloudflareRoomWorkerOptions, "bindi
   ServerClass: CloudflareRoomServerConstructor;
   env: Record<string, unknown>;
   rooms: Record<string, CloudflareRoomServerConstructor>;
+  webSocketMode: "standard" | "hibernate";
 };
 
 const DEFAULT_PARTIES_PATH = "/parties/main";
 const WEBSOCKET_OPEN = 1;
+const ROUTE_STORAGE_KEY = "$signe:cloudflare-route";
+
+type CloudflareConnectionAttachment = {
+  id: string;
+  sessionId: string;
+  uri: string;
+  state: unknown;
+  customAttachment: unknown;
+};
 
 let runtimeConfig: CloudflareRuntimeConfig | undefined;
 
@@ -70,7 +81,7 @@ export async function dispatchCloudflareRoomRequest(
   }
 
   const namespace = getNamespace(env, config.binding);
-  const stub = namespace.get(namespace.idFromName(parsed.roomId));
+  const stub = namespace.get(namespace.idFromName(getDurableObjectName(parsed)));
   return fetchDurableObjectStub(stub, request);
 }
 
@@ -100,8 +111,49 @@ export class SigneRoomDurableObject {
   }
 
   async alarm(): Promise<void> {
-    const record = await this.recordPromise;
+    const record = await this.getStoredRecord();
     await record?.server.onAlarm?.();
+  }
+
+  async webSocketMessage(
+    webSocket: CloudflareWebSocket,
+    message: string | ArrayBuffer
+  ): Promise<void> {
+    const record = await this.getStoredRecord();
+    if (!record) return;
+    const connection = record.room.connectionForWebSocket(webSocket);
+    await record.server.onMessage?.(
+      normalizeWebSocketMessage(message),
+      connection as unknown as Party.Connection
+    );
+  }
+
+  async webSocketClose(
+    webSocket: CloudflareWebSocket,
+    _code: number,
+    _reason: string,
+    _wasClean: boolean
+  ): Promise<void> {
+    const record = await this.getStoredRecord();
+    if (!record) return;
+    const connection = record.room.connectionForWebSocket(webSocket);
+    await record.server.onClose?.(connection as unknown as Party.Connection);
+  }
+
+  async webSocketError(
+    webSocket: CloudflareWebSocket,
+    error: unknown
+  ): Promise<void> {
+    const record = await this.getStoredRecord();
+    if (!record) return;
+    const connection = record.room.connectionForWebSocket(webSocket);
+    const normalizedError = error instanceof Error
+      ? error
+      : new Error(String(error));
+    await record.server.onError?.(
+      connection as unknown as Party.Connection,
+      normalizedError
+    );
   }
 
   private async acceptWebSocket(
@@ -114,35 +166,42 @@ export class SigneRoomDurableObject {
       CloudflareWebSocket,
     ];
     const record = await this.getRecord(parsed);
-    const connection = new CloudflareConnection(
-      server,
-      request.url,
-      getConnectionIdFromUrl(request.url)
-    );
+    const hibernating = getRuntimeConfig().webSocketMode === "hibernate";
+    const connection = new CloudflareConnection(server, {
+      uri: request.url,
+      sessionId: getConnectionIdFromUrl(request.url),
+    });
 
-    server.accept();
+    if (hibernating) {
+      this.ctx.acceptWebSocket(server);
+      connection.persistAttachment();
+    } else {
+      server.accept();
+    }
 
     await record.server.onConnect?.(connection as unknown as Party.Connection, {
       request: request as unknown as Party.Request,
     });
 
-    server.addEventListener("message", (event) => {
-      void record.server.onMessage?.(
-        normalizeWebSocketMessage(event.data),
-        connection as unknown as Party.Connection
-      );
-    });
-    server.addEventListener("close", () => {
-      record.room.deleteConnection(connection.id, connection);
-      void record.server.onClose?.(connection as unknown as Party.Connection);
-    });
-    server.addEventListener("error", (event) => {
-      const errorData = (event as { error?: unknown; message?: string }).error;
-      const error = errorData instanceof Error
-        ? errorData
-        : new Error((event as { message?: string }).message ?? "Cloudflare WebSocket error");
-      void record.server.onError?.(connection as unknown as Party.Connection, error);
-    });
+    if (!hibernating) {
+      server.addEventListener("message", (event) => {
+        void record.server.onMessage?.(
+          normalizeWebSocketMessage(event.data),
+          connection as unknown as Party.Connection
+        );
+      });
+      server.addEventListener("close", () => {
+        record.room.deleteConnection(connection.id, connection);
+        void record.server.onClose?.(connection as unknown as Party.Connection);
+      });
+      server.addEventListener("error", (event) => {
+        const errorData = (event as { error?: unknown; message?: string }).error;
+        const error = errorData instanceof Error
+          ? errorData
+          : new Error((event as { message?: string }).message ?? "Cloudflare WebSocket error");
+        void record.server.onError?.(connection as unknown as Party.Connection, error);
+      });
+    }
     record.room.addConnection(connection);
 
     return new Response(null, {
@@ -153,9 +212,18 @@ export class SigneRoomDurableObject {
 
   private async getRecord(parsed: ParsedPartyPath): Promise<CloudflareRoomRecord> {
     if (!this.recordPromise) {
+      await this.ctx.storage.put(ROUTE_STORAGE_KEY, parsed);
       this.recordPromise = this.createRecord(parsed);
     }
 
+    return this.recordPromise;
+  }
+
+  private async getStoredRecord(): Promise<CloudflareRoomRecord | undefined> {
+    if (this.recordPromise) return this.recordPromise;
+    const parsed = await this.ctx.storage.get<ParsedPartyPath>(ROUTE_STORAGE_KEY);
+    if (!parsed) return undefined;
+    this.recordPromise = this.createRecord(parsed);
     return this.recordPromise;
   }
 
@@ -195,6 +263,8 @@ export class CloudflareRoom implements Party.Room {
   readonly connections = new Map<string, Party.Connection>();
   readonly parties: Party.Context["parties"];
   readonly analytics = {} as Party.Room["analytics"];
+  private readonly hibernating: boolean;
+  private readonly state: DurableObjectState;
 
   constructor(options: {
     id: string;
@@ -224,12 +294,14 @@ export class CloudflareRoom implements Party.Room {
       },
     } as Party.Context;
     this.blockConcurrencyWhile = options.state.blockConcurrencyWhile.bind(options.state);
+    this.state = options.state;
+    this.hibernating = getRuntimeConfig().webSocketMode === "hibernate";
   }
 
   blockConcurrencyWhile: Party.Room["blockConcurrencyWhile"];
 
   broadcast(msg: string | ArrayBuffer | ArrayBufferView, without: string[] = []) {
-    for (const connection of this.connections.values()) {
+    for (const connection of this.getConnections()) {
       if (!without.includes(connection.id)) {
         connection.send(msg);
       }
@@ -238,7 +310,7 @@ export class CloudflareRoom implements Party.Room {
 
   getConnection<TState = unknown>(id: string): Party.Connection<TState> | undefined {
     let connection: Party.Connection | undefined;
-    for (const current of this.connections.values()) {
+    for (const current of this.getConnections()) {
       if (current.id === id || current.sessionId === id) {
         connection = current;
       }
@@ -247,14 +319,21 @@ export class CloudflareRoom implements Party.Room {
   }
 
   getConnections<TState = unknown>(): Iterable<Party.Connection<TState>> {
+    if (this.hibernating) {
+      return this.state.getWebSockets().map((webSocket) =>
+        this.connectionForWebSocket(webSocket as CloudflareWebSocket)
+      ) as unknown as Party.Connection<TState>[];
+    }
     return Array.from(this.connections.values()) as Party.Connection<TState>[];
   }
 
   addConnection(connection: CloudflareConnection) {
+    if (this.hibernating) return;
     this.connections.set(connection.id, connection as unknown as Party.Connection);
   }
 
   deleteConnection(id: string, connection?: CloudflareConnection) {
+    if (this.hibernating) return;
     if (connection) {
       this.connections.delete(connection.id);
       return;
@@ -266,23 +345,52 @@ export class CloudflareRoom implements Party.Room {
       }
     }
   }
+
+
+  connectionForWebSocket(webSocket: CloudflareWebSocket): CloudflareConnection {
+    return CloudflareConnection.restore(webSocket);
+  }
 }
 
 export class CloudflareConnection<TState = unknown> {
-  readonly id = createConnectionId();
+  readonly id: string;
   readonly sessionId: string;
   readonly socket: this = this;
   readonly uri: string;
-  state: Party.ConnectionState<TState> | TState | null = null;
-  private attachment: unknown = null;
+  state: Party.ConnectionState<TState> | TState | null;
+  private attachment: unknown;
 
   constructor(
     private readonly webSocket: CloudflareWebSocket,
-    uri: string,
-    sessionId?: string
+    options: {
+      id?: string;
+      uri: string;
+      sessionId?: string;
+      state?: Party.ConnectionState<TState> | TState | null;
+      attachment?: unknown;
+    }
   ) {
-    this.sessionId = sessionId || this.id;
-    this.uri = uri;
+    this.id = options.id ?? createConnectionId();
+    this.sessionId = options.sessionId || this.id;
+    this.uri = options.uri;
+    this.state = options.state ?? null;
+    this.attachment = options.attachment ?? null;
+  }
+
+  static restore(webSocket: CloudflareWebSocket): CloudflareConnection {
+    const attachment = webSocket.deserializeAttachment?.() as
+      | CloudflareConnectionAttachment
+      | undefined;
+    if (!attachment) {
+      throw new Error("Missing Signe WebSocket attachment");
+    }
+    return new CloudflareConnection(webSocket, {
+      id: attachment.id,
+      sessionId: attachment.sessionId,
+      uri: attachment.uri,
+      state: attachment.state,
+      attachment: attachment.customAttachment,
+    });
   }
 
   send(data: string | ArrayBuffer | ArrayBufferView) {
@@ -302,15 +410,27 @@ export class CloudflareConnection<TState = unknown> {
     this.state = typeof state === "function"
       ? (state as Party.ConnectionSetStateFn<TState>)(this.state as Party.ConnectionState<TState>)
       : state;
+    this.persistAttachment();
     return this.state as Party.ConnectionState<TState>;
   }
 
   serializeAttachment<T = unknown>(attachment: T): void {
     this.attachment = attachment;
+    this.persistAttachment();
   }
 
   deserializeAttachment<T = unknown>(): T | null {
     return this.attachment as T | null;
+  }
+
+  persistAttachment(): void {
+    this.webSocket.serializeAttachment?.({
+      id: this.id,
+      sessionId: this.sessionId,
+      uri: this.uri,
+      state: this.state,
+      customAttachment: this.attachment,
+    } satisfies CloudflareConnectionAttachment);
   }
 }
 
@@ -327,6 +447,7 @@ function createRuntimeConfig<TServer extends Party.Server>(
       main: ServerClass as CloudflareRoomServerConstructor,
       ...(options.rooms ?? {}),
     },
+    webSocketMode: options.webSocketMode ?? "standard",
   };
 }
 
@@ -358,7 +479,10 @@ function createPartiesContext(
             },
             fetch(pathOrInit?: string | RequestInit | Request, init?: RequestInit) {
               const namespaceBinding = getNamespace(env, binding);
-              const stub = namespaceBinding.get(namespaceBinding.idFromName(roomId));
+              const parsed = { namespace, roomId };
+              const stub = namespaceBinding.get(
+                namespaceBinding.idFromName(getDurableObjectName(parsed))
+              );
               if (pathOrInit instanceof Request) {
                 return fetchDurableObjectStub(stub, pathOrInit);
               }
@@ -375,6 +499,10 @@ function createPartiesContext(
       };
     },
   }) as Party.Context["parties"];
+}
+
+function getDurableObjectName(parsed: ParsedPartyPath): string {
+  return `${parsed.namespace}:${parsed.roomId}`;
 }
 
 function getNamespace(env: Record<string, unknown>, binding: string) {
