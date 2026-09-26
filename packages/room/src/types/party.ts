@@ -147,7 +147,7 @@ import type {
   export type ConnectionSetStateFn<T> = (prevState: ConnectionState<T>) => T;
   
   /** A WebSocket connected to the Room */
-  export type Connection<TState = unknown> = WebSocket & {
+  export interface Connection<TState = unknown> extends WebSocket {
     /** Connection identifier */
     id: string;
 
@@ -178,7 +178,7 @@ import type {
   
     /** @deprecated use Connection.state instead */
     deserializeAttachment<T = unknown>(): T | null;
-  };
+  }
   
   type CustomBindings = {
     r2: Record<string, R2Bucket>;

@@ -744,7 +744,11 @@ export class NodeConnection<TState = unknown> {
   readonly sessionId: string;
   readonly socket: this = this;
   readonly uri: string;
-  state: Party.ConnectionState<TState> | TState | null = null;
+  /**
+   * Application-owned state associated with this connection.
+   * Read it as immutable data and use `setState()` to replace it.
+   */
+  state: Party.ConnectionState<TState> = null;
   private attachment: unknown = null;
 
   constructor(
@@ -766,11 +770,12 @@ export class NodeConnection<TState = unknown> {
     this.webSocket.close(code, reason);
   }
 
-  setState(state: TState | Party.ConnectionSetStateFn<TState> | null) {
-    this.state = typeof state === "function"
-      ? (state as Party.ConnectionSetStateFn<TState>)(this.state as Party.ConnectionState<TState>)
+  setState(state: TState | Party.ConnectionSetStateFn<TState> | null): Party.ConnectionState<TState> {
+    const next = typeof state === "function"
+      ? (state as Party.ConnectionSetStateFn<TState>)(this.state)
       : state;
-    return this.state as Party.ConnectionState<TState>;
+    this.state = next as Party.ConnectionState<TState>;
+    return this.state;
   }
 
   serializeAttachment<T = unknown>(attachment: T): void {
