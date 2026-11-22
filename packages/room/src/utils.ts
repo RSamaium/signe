@@ -265,15 +265,33 @@ export function dremove(
  * // result is { a: { b: { c: 1 } }, x: { y: { z: '$delete' } } }
  * // allMemory is { a: { b: { c: 1 } }, x: { y: {} } }
  */
+// Sync paths repeat on every tick (e.g. "players.p1.x"): keep their split form.
+// Bounded so that a state with ever-changing ids cannot grow it forever.
+const PATH_KEYS_CACHE_LIMIT = 10_000;
+const pathKeysCache = new Map<string, string[]>();
+
+function splitPath(path: string): string[] {
+  let keys = pathKeysCache.get(path);
+  if (!keys) {
+    if (pathKeysCache.size >= PATH_KEYS_CACHE_LIMIT) {
+      pathKeysCache.clear();
+    }
+    keys = path.split(".");
+    pathKeysCache.set(path, keys);
+  }
+  return keys;
+}
+
 export function buildObject(valuesMap: Map<string, any>, allMemory: Record<string, any>): Record<string, any> {
-  let memoryObj = {};
-  for (let path of valuesMap.keys()) {
-    const value = valuesMap.get(path);
-    dset(memoryObj, path, value);
+  const memoryObj = {};
+  for (const [path, value] of valuesMap) {
+    // Split once (and cached) for both the packet and $memoryAll
+    const keys = splitPath(path);
+    dset(memoryObj, keys, value);
     if (value === "$delete") {
-      dremove(allMemory, path);
+      dremove(allMemory, keys);
     } else {
-      dset(allMemory, path, value);
+      dset(allMemory, keys, value);
     }
   }
   return memoryObj;

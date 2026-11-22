@@ -359,3 +359,37 @@ describe("debounce", () => {
     }
   });
 });
+
+describe("buildObject with cached path keys", () => {
+  it("builds a new packet each call while reusing split paths", () => {
+    const memory: any = {};
+    const values = new Map<string, any>([["players.p1.x", 1], ["players.p1.y", 2]]);
+    const first = buildObject(values, memory);
+    values.set("players.p1.x", 3);
+    const second = buildObject(values, memory);
+
+    expect(first).toEqual({ players: { p1: { x: 1, y: 2 } } });
+    expect(second).toEqual({ players: { p1: { x: 3, y: 2 } } });
+    expect(first).not.toBe(second);
+    expect(memory).toEqual({ players: { p1: { x: 3, y: 2 } } });
+  });
+
+  it("keeps creating arrays for numeric keys and handles deletes", () => {
+    const memory: any = {};
+    buildObject(new Map([["items.0", "a"], ["items.1", "b"]]), memory);
+    expect(Array.isArray(memory.items)).toBe(true);
+
+    const packet = buildObject(new Map([["items.0", "$delete"]]), memory);
+    expect(packet).toEqual({ items: ["$delete"] });
+    expect(memory.items[0]).toBeUndefined();
+  });
+
+  it("stays correct past the cache limit", () => {
+    const memory: any = {};
+    const values = new Map<string, any>();
+    for (let i = 0; i < 10_050; i++) values.set(`p${i}.v`, i);
+    buildObject(values, memory);
+    expect(memory.p0.v).toBe(0);
+    expect(memory.p10049.v).toBe(10049);
+  });
+});

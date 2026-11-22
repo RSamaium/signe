@@ -86,6 +86,8 @@ export const syncClass = (instance: any, options: SyncOptions = {}) => {
       options.onSync?.(cacheSync);
     },
     setPersist: (path: string, value: any) => {
+      // Nobody reads persisted changes: do not collect them
+      if (!options.onPersist) return;
       if (path == "") path = ".";
       cachePersist.set(path, value);
       options.onPersist?.(cachePersist);
@@ -431,23 +433,36 @@ export const type = <T>(
 
     signal.options = options;
 
+    // The kind of signal never changes: resolve it once instead of on every change
+    const kind = isComputed(signal)
+      ? "value"
+      : isObjectSubject(signal._subject)
+        ? "object"
+        : isArraySubject(signal._subject)
+          ? "array"
+          : "value";
+
+    // Reuse the same path string while the instance path does not change: building a new
+    // string on every change also forces the change maps to hash it again.
+    let cachedBasePath: string | undefined;
+    let cachedFullPath = "";
+
     signal.observable.subscribe((value: any) => {
       if (init) return; // Skip initial value
 
-      if (currentInstance.$path !== undefined) {
-        const fullPath = `${
-          currentInstance.$path ? currentInstance.$path + "." : ""
-        }${signalPath}`;
+      const basePath = currentInstance.$path;
+      if (basePath === undefined) return;
+      if (basePath !== cachedBasePath) {
+        cachedBasePath = basePath;
+        cachedFullPath = `${basePath ? basePath + "." : ""}${signalPath}`;
+      }
 
-        if (isComputed(signal)) {
-          savePath(fullPath, value);
-        } else if (isObjectSubject(signal._subject)) {
-          handleObjectSubject(value, fullPath);
-        } else if (isArraySubject(signal._subject)) {
-          handleArraySubject(value, fullPath);
-        } else {
-          savePath(fullPath, value);
-        }
+      if (kind === "object") {
+        handleObjectSubject(value, cachedFullPath);
+      } else if (kind === "array") {
+        handleArraySubject(value, cachedFullPath);
+      } else {
+        savePath(cachedFullPath, value);
       }
     });
 
