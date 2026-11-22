@@ -101,6 +101,12 @@ export interface RoomOptions {
    * A broadcast is compressed once for all clients. Default: disabled.
    */
   compression?: boolean | RoomCompressionOptions;
+  /**
+   * Number of paths after which the path table (sync packets of clients that asked for
+   * `pathFormat`) starts over. Paths of deleted entities stay in the table until then.
+   * Default: 65536.
+   */
+  pathTableLimit?: number;
   hibernate?: boolean;
   guards?: RoomGuardFn[];
   sessionExpiryTime?: number;
@@ -118,6 +124,9 @@ export function Room(options: RoomOptions) {
       target.prototype.copyPacketForInterceptor = options.copyPacketForInterceptor;
     }
     target.prototype.compression = options.compression;
+    if (options.pathTableLimit !== undefined) {
+      target.prototype.pathTableLimit = options.pathTableLimit;
+    }
     target.prototype.sessionExpiryTime = options.sessionExpiryTime ?? 5 * 60 * 1000;
     if (options.guards) {
       target['_roomGuards'] = options.guards;

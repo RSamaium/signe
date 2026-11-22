@@ -11,7 +11,11 @@ import {
   compressMessage,
   COMPRESSION_QUERY_PARAM,
   COMPRESSION_QUERY_VALUE,
+  PathTable,
+  PATH_FORMAT_QUERY_PARAM,
+  PATH_FORMAT_QUERY_VALUE,
 } from "@signe/sync";
+import type { PathTableCursor } from "@signe/sync";
 import type * as Party from "./types/party";
 import {
   awaitReturn,
@@ -100,8 +104,21 @@ const DEFAULT_TRANSFER_EXPIRY_MS = 5 * 60 * 1000;
 
 /**
  * Serialized pieces of a sync packet, shared by all the clients of one broadcast.
+ * `SyncFragments` writes JSON objects, `PathSyncFragments` the path table format.
  */
-class SyncFragments {
+interface SyncPacketWriter {
+  field(key: string, value: any): string;
+  entity(collection: string, id: string, value: any, kind: "patch" | "full"): string;
+  deleted(collection: string, id: string): string;
+  /** A collection with its entity fragments. */
+  collection(key: string, entries: string[]): string;
+  /** Fields added for one client (`syncPacketHeader`). */
+  header(header: Record<string, any>): string[];
+  /** The whole packet of one client. */
+  packet(conn: Party.Connection, parts: string[], obj: any): string;
+}
+
+class SyncFragments implements SyncPacketWriter {
   private fields = new Map<string, string>();
   private patches = new Map<string, string>();
   private fulls = new Map<string, string>();
@@ -126,9 +143,96 @@ class SyncFragments {
     return fragment;
   }
 
-  deleted(id: string): string {
+  deleted(_collection: string, id: string): string {
     return `${JSON.stringify(id)}:${JSON.stringify(DELETE_TOKEN)}`;
   }
+
+  collection(key: string, entries: string[]): string {
+    return `${JSON.stringify(key)}:{${entries.join(",")}}`;
+  }
+
+  header(header: Record<string, any>): string[] {
+    const parts: string[] = [];
+    for (const key in header) {
+      parts.push(`${JSON.stringify(key)}:${JSON.stringify(header[key])}`);
+    }
+    return parts;
+  }
+
+  packet(_conn: Party.Connection, parts: string[], obj: any): string {
+    return `{"type":"sync","value":{${parts.join(",")}}` + otherPacketKeys(obj) + "}";
+  }
+}
+
+/** Keys of a packet other than `type` and `value` (for example `events`), as JSON fields. */
+function otherPacketKeys(obj: any): string {
+  let data = "";
+  for (const key in obj) {
+    if (key === "type" || key === "value") continue;
+    data += `,${JSON.stringify(key)}:${JSON.stringify(obj[key])}`;
+  }
+  return data;
+}
+
+/** Path table pieces of a sync packet (see `PathTable` in `@signe/sync`). */
+class PathSyncFragments implements SyncPacketWriter {
+  private fields = new Map<string, string>();
+  private patches = new Map<string, string>();
+  private fulls = new Map<string, string>();
+
+  constructor(private table: PathTable, private cursor: (conn: Party.Connection) => PathTableCursor) {
+    table.startPacket();
+  }
+
+  field(key: string, value: any): string {
+    let fragment = this.fields.get(key);
+    if (fragment === undefined) {
+      fragment = this.table.encode({ [key]: value });
+      this.fields.set(key, fragment);
+    }
+    return fragment;
+  }
+
+  entity(collection: string, id: string, value: any, kind: "patch" | "full"): string {
+    const cache = kind === "patch" ? this.patches : this.fulls;
+    const cacheKey = collection + "\u0000" + id;
+    let fragment = cache.get(cacheKey);
+    if (fragment === undefined) {
+      fragment = value !== null && typeof value === "object" && !Array.isArray(value)
+        ? this.table.encode(value, collection + "." + id)
+        : this.table.encodeLeaf(collection + "." + id, value);
+      cache.set(cacheKey, fragment);
+    }
+    return fragment;
+  }
+
+  deleted(collection: string, id: string): string {
+    return this.table.encodeLeaf(collection + "." + id, DELETE_TOKEN);
+  }
+
+  collection(_key: string, entries: string[]): string {
+    return joinPairs(entries);
+  }
+
+  header(header: Record<string, any>): string[] {
+    return [this.table.encode(header)];
+  }
+
+  packet(conn: Party.Connection, parts: string[], obj: any): string {
+    // The header comes last: the definitions must include the paths of this packet
+    const pairs = joinPairs(parts);
+    return `{"type":"sync",${this.table.header(this.cursor(conn))}"p":[${pairs}]` + otherPacketKeys(obj) + "}";
+  }
+}
+
+/** Joins lists of pairs, skipping empty ones. */
+function joinPairs(parts: string[]): string {
+  let out = "";
+  for (const part of parts) {
+    if (part === "") continue;
+    out += out === "" ? part : "," + part;
+  }
+  return out;
 }
 
 /**
@@ -440,7 +544,7 @@ export class Server implements Party.Server {
 
   async send(conn: Party.Connection, obj: any, subRoom: any) {
     if (this.usesSyncVisibility(obj, subRoom)) {
-      this.sendPerClient(conn, this.buildVisibleSyncPacket(conn, obj, subRoom, new SyncFragments()), subRoom);
+      this.sendPerClient(conn, this.buildVisibleSyncPacket(conn, obj, subRoom, this.syncWriter(conn, subRoom, {})), subRoom);
       return;
     }
     const intercepted = !!subRoom?.interceptorPacket;
@@ -455,7 +559,15 @@ export class Server implements Party.Server {
       obj = await awaitReturn(subRoom["interceptorPacket"]?.(user, obj, conn));
       if (obj === null) return;
     }
-    const data = JSON.stringify(obj);
+    let data: string;
+    if (this.usesPathFormat(conn, obj)) {
+      const table = this.pathTable(subRoom);
+      table.startPacket();
+      const body = this.pathPacketBody(obj, table.encode(obj.value));
+      data = this.pathPacket(conn, table, body);
+    } else {
+      data = JSON.stringify(obj);
+    }
     conn.send(
       this.shouldCompress(conn, subRoom, data, intercepted)
         ? compressMessage(data, subRoom.$compression.level)
@@ -469,11 +581,11 @@ export class Server implements Party.Server {
    */
   broadcast(obj: any, subRoom: any, exclude?: Set<Party.Connection>) {
     if (this.usesSyncVisibility(obj, subRoom)) {
-      // Each entity is serialized once per broadcast, then assembled per client
-      const fragments = new SyncFragments();
+      // Each entity is serialized once per broadcast (per format), then assembled per client
+      const writers = {};
       for (let conn of this.room.getConnections()) {
         if (exclude?.has(conn)) continue;
-        this.sendPerClient(conn, this.buildVisibleSyncPacket(conn, obj, subRoom, fragments), subRoom);
+        this.sendPerClient(conn, this.buildVisibleSyncPacket(conn, obj, subRoom, this.syncWriter(conn, subRoom, writers)), subRoom);
       }
       return;
     }
@@ -486,8 +598,33 @@ export class Server implements Party.Server {
     }
     let data: string | undefined;
     let compressed: Uint8Array | undefined;
+    // Path table format: the pairs are encoded once; only the definitions a client misses differ
+    let pathBody: string | undefined;
+    let pathCompressed: Map<string, Uint8Array> | undefined;
     for (let conn of this.room.getConnections()) {
       if (exclude?.has(conn)) continue;
+      if (this.usesPathFormat(conn, obj)) {
+        const table = this.pathTable(subRoom);
+        if (pathBody === undefined) {
+          table.startPacket();
+          pathBody = this.pathPacketBody(obj, table.encode(obj.value));
+        }
+        const header = table.header(this.pathCursor(conn));
+        const pathData = `{"type":"sync",${header}${pathBody}`;
+        if (this.shouldCompress(conn, subRoom, pathData, false)) {
+          // Clients with the same missing definitions share the same bytes
+          pathCompressed ??= new Map();
+          let bytes = pathCompressed.get(header);
+          if (!bytes) {
+            bytes = compressMessage(pathData, subRoom.$compression.level);
+            pathCompressed.set(header, bytes);
+          }
+          conn.send(bytes);
+        } else {
+          conn.send(pathData);
+        }
+        continue;
+      }
       data ??= JSON.stringify(obj);
       if (this.shouldCompress(conn, subRoom, data, false)) {
         // Compressed once, then the same bytes are sent to every client that asked for it
@@ -511,6 +648,47 @@ export class Server implements Party.Server {
     );
   }
 
+  /** Path cursor of each connection: the path definitions it already received. */
+  private pathCursors = new WeakMap<Party.Connection, PathTableCursor>();
+
+  /** Whether this sync packet is sent to `conn` in the path table format (asked by the client). */
+  private usesPathFormat(conn: Party.Connection, obj: any): boolean {
+    return obj?.type === "sync"
+      && !!(conn.state as any)?.pathFormat
+      && obj.value !== null
+      && typeof obj.value === "object";
+  }
+
+  private pathTable(subRoom: any): PathTable {
+    return (subRoom.$pathTable ??= new PathTable(subRoom.pathTableLimit));
+  }
+
+  private pathCursor = (conn: Party.Connection): PathTableCursor => {
+    let cursor = this.pathCursors.get(conn);
+    if (!cursor) {
+      cursor = { epoch: -1, known: 0 };
+      this.pathCursors.set(conn, cursor);
+    }
+    return cursor;
+  };
+
+  /** End of a path table packet: pairs and the other keys of the packet. */
+  private pathPacketBody(obj: any, pairs: string): string {
+    return `"p":[${pairs}]` + otherPacketKeys(obj) + "}";
+  }
+
+  private pathPacket(conn: Party.Connection, table: PathTable, body: string): string {
+    return `{"type":"sync",${table.header(this.pathCursor(conn))}${body}`;
+  }
+
+  /** Writer of `conn`'s format, shared through `writers` by the clients of one broadcast. */
+  private syncWriter(conn: Party.Connection, subRoom: any, writers: { json?: SyncFragments; paths?: PathSyncFragments }): SyncPacketWriter {
+    if ((conn.state as any)?.pathFormat) {
+      return (writers.paths ??= new PathSyncFragments(this.pathTable(subRoom), this.pathCursor));
+    }
+    return (writers.json ??= new SyncFragments());
+  }
+
   /** Sync packets of a room that defines `syncVisibility` are filtered per client. */
   private usesSyncVisibility(obj: any, subRoom: any): boolean {
     return obj?.type === "sync" && typeof subRoom?.syncVisibility === "function";
@@ -526,7 +704,7 @@ export class Server implements Party.Server {
    * Other keys of the packet are sent to everyone. `syncPacketHeader(user, conn, patch)` adds
    * per-client fields. Fragments are serialized once per broadcast and shared between clients.
    */
-  private buildVisibleSyncPacket(conn: Party.Connection, obj: any, subRoom: any, fragments: SyncFragments): string {
+  private buildVisibleSyncPacket(conn: Party.Connection, obj: any, subRoom: any, fragments: SyncPacketWriter): string {
     const user = this.getUsersProperty(subRoom)?.()[(conn.state as any)?.publicId];
     const value = obj.value && typeof obj.value === "object" ? obj.value : {};
     const visibility: Record<string, Iterable<string> | null | undefined> =
@@ -574,11 +752,11 @@ export class Server implements Party.Server {
       }
       if (previous) {
         for (const id of previous) {
-          if (!visible.has(id)) entries.push(fragments.deleted(id));
+          if (!visible.has(id)) entries.push(fragments.deleted(key, id));
         }
       }
       if (entries.length > 0) {
-        parts.push(`${JSON.stringify(key)}:{${entries.join(",")}}`);
+        parts.push(fragments.collection(key, entries));
       }
       state.set(key, visible);
     }
@@ -586,17 +764,10 @@ export class Server implements Party.Server {
     const header = subRoom.syncPacketHeader?.(user, conn, value);
     if (header) {
       // Added last: like `{ ...value, ...header }`, a header field wins over a packet field
-      for (const key in header) {
-        parts.push(`${JSON.stringify(key)}:${JSON.stringify(header[key])}`);
-      }
+      parts.push(...fragments.header(header));
     }
 
-    let data = `{"type":"sync","value":{${parts.join(",")}}`;
-    for (const key in obj) {
-      if (key === "type" || key === "value") continue;
-      data += `,${JSON.stringify(key)}:${JSON.stringify(obj[key])}`;
-    }
-    return data + "}";
+    return fragments.packet(conn, parts, obj);
   }
 
   /**
@@ -1556,10 +1727,12 @@ export class Server implements Party.Server {
     // Handle session transfer
     let transferToken = null;
     let wantsCompression = false;
+    let wantsPathFormat = false;
     if (ctx.request?.url) {
       const url = new URL(ctx.request.url);
       transferToken = url.searchParams.get('transferToken');
       wantsCompression = url.searchParams.get(COMPRESSION_QUERY_PARAM) === COMPRESSION_QUERY_VALUE;
+      wantsPathFormat = url.searchParams.get(PATH_FORMAT_QUERY_PARAM) === PATH_FORMAT_QUERY_VALUE;
     }
     let transferData: any = null;
     if (transferToken) {
@@ -1643,6 +1816,8 @@ export class Server implements Party.Server {
       privateId,
       // The client accepts compressed messages (only used if the room enables compression)
       ...(wantsCompression ? { compression: true } : {}),
+      // The client reads sync packets in the path table format
+      ...(wantsPathFormat ? { pathFormat: true } : {}),
     });
 
     // Call the room's onJoin method if it exists

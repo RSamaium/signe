@@ -135,6 +135,34 @@ function loadValue(rootInstance: any, parts: string[], value: any) {
 }
 
 /**
+ * Applies one value at a path, with the same rules as `load()` with paths.
+ *
+ * @internal Used by the path table decoder for values it cannot apply from its cache.
+ */
+export function loadPathParts(rootInstance: any, parts: string[], value: any): void {
+  loadValue(rootInstance, parts, value);
+}
+
+/**
+ * Counts the changes that may move or replace nodes of a loaded state: a node created, a
+ * value deleted, or an object or array written where something else was. Changing a
+ * primitive value does not count.
+ *
+ * Code that keeps references to nodes of the state (like the path table decoder, which keeps
+ * the signal of each path) uses it to know when those references must be looked up again.
+ */
+let structureVersion = 0;
+
+/** @internal See {@link structureVersion}. */
+export function getStructureVersion(): number {
+  return structureVersion;
+}
+
+function isObjectLike(value: any): boolean {
+  return value !== null && (typeof value === "object" || typeof value === "function");
+}
+
+/**
  * Moves one level down from `current` (unwrapping a signal), creating the child when it is
  * missing: an instance of the parent's `classType` if any, otherwise a plain object.
  */
@@ -143,6 +171,7 @@ function stepInto(current: any, part: string, parentInstance: any) {
     current = current();
   }
   if (current[part] === undefined) {
+    structureVersion++;
     const classType = parentInstance?.options?.classType;
     if (classType) {
       current[part] = !isClass(classType) ? classType(part) : new classType();
@@ -156,7 +185,11 @@ function stepInto(current: any, part: string, parentInstance: any) {
 
 /** Applies a value (or a delete) at `part` of `current`. */
 function applyLeaf(current: any, part: string, value: any) {
+  if (typeof value === "object" && value !== null) {
+    structureVersion++;
+  }
   if (value == DELETE_TOKEN) {
+    structureVersion++;
     if (isSignal(current)) {
       if (mutateSignalContainer(current, target => {
         Reflect.deleteProperty(target, part);
@@ -168,17 +201,21 @@ function applyLeaf(current: any, part: string, value: any) {
     Reflect.deleteProperty(current, part);
   }
   else if (current[part]?._subject) {
+    // A primitive written over an object or array needs no count: its old children can only
+    // come back with an object written there, which counts
     current[part].set(value);
   }
   else if (isSignal(current) && mutateSignalContainer(current, target => {
     const key = Array.isArray(target) && !isNaN(Number(part))
       ? Number(part)
       : part;
+    if (isObjectLike(target[key])) structureVersion++;
     target[key] = value;
   })) {
     return;
   }
   else {
+    if (isObjectLike(current[part])) structureVersion++;
     current[part] = value;
   }
 }

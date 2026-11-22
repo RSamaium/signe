@@ -4,3 +4,4 @@ export * from './decorators';
 export * from './event';
 export * from './load';
 export * from './utils';
+export * from './paths';

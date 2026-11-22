@@ -1,4 +1,13 @@
-import { load, loadEvents, decodeMessage, COMPRESSION_QUERY_PARAM, COMPRESSION_QUERY_VALUE } from "@signe/sync";
+import {
+  load,
+  loadEvents,
+  decodeMessage,
+  COMPRESSION_QUERY_PARAM,
+  COMPRESSION_QUERY_VALUE,
+  PATH_FORMAT_QUERY_PARAM,
+  PATH_FORMAT_QUERY_VALUE,
+  PathTableDecoder,
+} from "@signe/sync";
 import PartySocket, { PartySocketOptions } from "partysocket";
 
 export interface CompressionOptions {
@@ -7,6 +16,12 @@ export interface CompressionOptions {
    * Only used when the room enables `compression`; otherwise messages stay JSON text.
    */
   compression?: boolean;
+  /**
+   * Receive sync packets in the path table format: a flat list of path ids and values
+   * instead of nested objects. Smaller packets, faster to parse and to apply.
+   * `on("sync", cb)` then receives no `value`: read the state instead.
+   */
+  pathFormat?: boolean;
 }
 
 export type RoomConnectionOptions = PartySocketOptions & CompressionOptions;
@@ -50,10 +65,12 @@ interface WorldConnectionResult extends ConnectionResult {
 }
 
 function withCompressionQuery(options: RoomConnectionOptions): PartySocketOptions {
-  const { compression, ...socketOptions } = options;
-  if (!compression) return socketOptions;
+  const { compression, pathFormat, ...socketOptions } = options;
+  if (!compression && !pathFormat) return socketOptions;
   const query = socketOptions.query;
-  const flag = { [COMPRESSION_QUERY_PARAM]: COMPRESSION_QUERY_VALUE };
+  const flag: Record<string, string> = {};
+  if (compression) flag[COMPRESSION_QUERY_PARAM] = COMPRESSION_QUERY_VALUE;
+  if (pathFormat) flag[PATH_FORMAT_QUERY_PARAM] = PATH_FORMAT_QUERY_VALUE;
   return {
     ...socketOptions,
     query: typeof query === "function"
@@ -78,13 +95,19 @@ function createConnection(options: RoomConnectionOptions, roomInstance: RoomInst
     return object;
   };
   const handlers = new Map<string, Map<(value: any) => void, (event: MessageEvent) => void>>();
+  // The path table belongs to the connection (the server sends "r" to reset it on reconnection)
+  const pathDecoder = new PathTableDecoder();
   
   // Set up message handling
   conn.addEventListener("message", (event) => {
     const object = decodeEvent(event);
     switch (object.type) {
       case "sync":
-        load(roomInstance, object.value, true);
+        if (PathTableDecoder.isPathPacket(object)) {
+          pathDecoder.apply(roomInstance, object);
+        } else {
+          load(roomInstance, object.value, true);
+        }
         // Volatile events run after the state of the same packet is applied
         loadEvents(roomInstance, object.events);
         break;

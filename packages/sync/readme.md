@@ -376,6 +376,36 @@ socket.addEventListener('message', (event) => {
 
 Compression uses native zlib when the runtime exposes it synchronously through `process.getBuiltinModule` (Node.js 20.16+ / 22.3+, Cloudflare Workers with the `nodejs_compat` flag), and [fflate](https://github.com/101arrowz/fflate) otherwise (browsers, Workers without `nodejs_compat`). Both produce the same format.
 
+#### Path table format
+
+A client can ask for sync packets as a flat list of path ids and values (see `@signe/room`):
+
+```typescript
+const conn = await connectionRoom({
+  host: 'your-server-url',
+  room: 'room-id',
+  pathFormat: true, // adds ?format=paths
+}, room)
+```
+
+`connectionRoom` applies these packets with a `PathTableDecoder`, one per connection. It keeps the signal of each path and writes new values to it directly, without walking the state again. The kept signals are looked up again after any change that may move nodes of the state: an entity created or deleted, an object or array written (by a packet or by `load()`). If you change the structure of the synced state yourself, without `load()`, call `load()` for it or create a new decoder.
+
+If you read the socket yourself:
+
+```typescript
+import { decodeMessage, load, PathTableDecoder } from '@signe/sync'
+
+const decoder = new PathTableDecoder()
+socket.addEventListener('message', (event) => {
+  const packet = decodeMessage(event.data)
+  if (packet.type !== 'sync') return
+  if (PathTableDecoder.isPathPacket(packet)) decoder.apply(room, packet)
+  else load(room, packet.value, true)
+})
+```
+
+Values are applied with the same rules as `load()`, in one `batch()`.
+
 ### Loading State
 
 `load()` applies all values of a call in one `batch()` (see `@signe/reactive`): a computed signal or an effect that reads several loaded values (for example a sprite reading `x` and `y`) runs once per call, after every value is applied, instead of once per value.

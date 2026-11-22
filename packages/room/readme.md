@@ -377,6 +377,18 @@ The `@Room` decorator accepts various configuration options:
 
 With 100 moving players, a tick goes from about 3 KB of JSON to about 1.1 KB, for about 50 µs of server CPU per tick (native zlib) and about 60 µs on the client to decompress and parse (fflate in browsers is slower to decompress: about 90 µs).
 
+**Path table format.** Clients that ask for it (`connectionRoom(..., { pathFormat: true })`) receive sync packets as a flat list of path ids and values instead of nested objects. Each path gets a number the first time it is sent, and its name is sent once to each client:
+
+```json
+{"type":"sync","d":[12,"players.p1.x","players.p1.y"],"p":[12,10.5,13,20]}
+```
+
+- The client parses one array instead of one object per entity, and writes each value straight to the signal it found for this path the last time. With 100 moving players and an effect per player, parsing and applying a tick is about 2 times faster (about 155 µs → 75 µs in our benchmark).
+- Packets are about 30 % smaller without compression (about 8 % with it, since DEFLATE already removes most repeated keys). It works with `compression`, `interceptorPacket` (the returned packet is encoded) and `syncVisibility` (fragments are encoded once per broadcast).
+- The pairs of a broadcast are encoded once for all clients (about 30 µs for 100 moving players, against about 12 µs for `JSON.stringify`); only the definitions a client misses are added for it (the same ones for clients that joined at the same time).
+- The table is shared by the room. Paths of deleted entities stay in it until it holds `pathTableLimit` paths (default 65536); then it starts over and clients are told to forget theirs.
+- Other clients keep receiving JSON packets. `on("sync", cb)` receives no `value` with this format.
+
 **Storage batching.** Without `throttleStorage`, all changes of the same task are written to storage together. With `throttleStorage`, writes wait until no change happened for that long, but never more than `throttleStorageMaxWait`, so a state that changes continuously is still persisted.
 
 ### Authentication & Authorization
