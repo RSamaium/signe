@@ -59,6 +59,18 @@ export function Request(options: RequestOptions, bodyValidation?: z.ZodSchema) {
   };
 }
 
+export interface RoomCompressionOptions {
+  /** Minimum size (characters of JSON) of a message to compress. Default: 512. */
+  threshold?: number;
+  /** DEFLATE level, 1 (fastest) to 9. Default: 1, which keeps most of the gain for half the CPU. */
+  level?: number;
+  /**
+   * Also compress messages returned by `interceptorPacket`. Each client then has its own
+   * packet, so this costs one compression per client and per message. Default: false.
+   */
+  intercepted?: boolean;
+}
+
 export interface RoomOptions {
   path: string;
   maxUsers?: number;
@@ -77,6 +89,12 @@ export interface RoomOptions {
    * grouped into one packet, even without this option.
    */
   throttleSync?: number;
+  /**
+   * Send compressed messages (binary frames, DEFLATE) to clients that ask for them
+   * (`connectionRoom(..., { compression: true })`). Other clients keep receiving JSON text.
+   * A broadcast is compressed once for all clients. Default: disabled.
+   */
+  compression?: boolean | RoomCompressionOptions;
   hibernate?: boolean;
   guards?: RoomGuardFn[];
   sessionExpiryTime?: number;
@@ -90,6 +108,7 @@ export function Room(options: RoomOptions) {
     target.prototype.throttleStorage = options.throttleStorage;
     target.prototype.throttleStorageMaxWait = options.throttleStorageMaxWait;
     target.prototype.throttleSync = options.throttleSync;
+    target.prototype.compression = options.compression;
     target.prototype.sessionExpiryTime = options.sessionExpiryTime ?? 5 * 60 * 1000;
     if (options.guards) {
       target['_roomGuards'] = options.guards;

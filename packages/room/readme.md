@@ -358,6 +358,24 @@ The `@Room` decorator accepts various configuration options:
 
 **Sync batching.** All state changes made in the same task (for example one action, or one game tick) are sent as a single `sync` packet at the end of that task, even without `throttleSync`. With `throttleSync`, packets are also sent at most once per window, and changes in between are grouped into the next packet. Without `interceptorPacket`, a packet is serialized once and the same string is sent to every client.
 
+**Compression.** With `compression: true`, clients that ask for it (`connectionRoom(..., { compression: true })`) receive large messages compressed (binary frames, DEFLATE); other clients keep receiving JSON text.
+
+```ts
+@Room({
+  path: "game",
+  compression: true,
+  // or: compression: { threshold: 512, level: 1, intercepted: false }
+})
+```
+
+- A broadcast is compressed **once** and the same bytes are sent to every client that asked for it, so the cost does not grow with the number of clients.
+- `threshold` (default 512 characters of JSON): smaller messages stay as text, where compression would not help.
+- `level` (default 1): DEFLATE level. Level 1 keeps most of the size gain for about half the CPU of level 6.
+- `intercepted` (default `false`): with `interceptorPacket`, each client gets its own packet, so compressing costs one compression per client and per message. Enable it only if bandwidth matters more than CPU.
+- Not applied through shards (`connectionWorld`): the shard connection does not ask for compression.
+
+With 100 moving players, a tick goes from about 3 KB of JSON to about 1.1 KB, for about 50 µs of server CPU per tick (native zlib) and about 60 µs on the client to decompress and parse (fflate in browsers is slower to decompress: about 90 µs).
+
 **Storage batching.** Without `throttleStorage`, all changes of the same task are written to storage together. With `throttleStorage`, writes wait until no change happened for that long, but never more than `throttleStorageMaxWait`, so a state that changes continuously is still persisted.
 
 ### Authentication & Authorization

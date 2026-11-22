@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { connectionRoom, connectionWorld, WorldConnectionOptions } from "../src/client";
-import { load } from "@signe/sync";
+import { load, compressMessage } from "@signe/sync";
 import PartySocket from "partysocket";
 import { TokenStorage } from "../src/client/storage";
 
@@ -13,7 +13,8 @@ vi.mock("../src/client/storage", () => ({
   }
 }));
 
-vi.mock("@signe/sync", () => ({
+vi.mock("@signe/sync", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@signe/sync")>()),
   load: vi.fn(),
 }));
 
@@ -231,6 +232,53 @@ describe("Sync Client", () => {
       
       // Verify removeEventListener was called
       expect(mockSocket.removeEventListener).toHaveBeenCalled();
+    });
+
+    it("should ask for compression through the query and read binary frames as ArrayBuffer", async () => {
+      await connectionRoom({ ...defaultOptions, query: { token: "t" }, compression: true } as any, {});
+      const options = vi.mocked(PartySocket).mock.calls.at(-1)![0] as any;
+      expect(options.query).toEqual({ token: "t", compression: "deflate" });
+      expect(options.compression).toBeUndefined();
+      expect((mockSocket as any).binaryType).toBe("arraybuffer");
+    });
+
+    it("should keep an async query function and add the compression flag", async () => {
+      await connectionRoom({ ...defaultOptions, query: async () => ({ token: "t" }), compression: true } as any, {});
+      const options = vi.mocked(PartySocket).mock.calls.at(-1)![0] as any;
+      await expect(options.query()).resolves.toEqual({ token: "t", compression: "deflate" });
+    });
+
+    it("should not change the query without compression", async () => {
+      await connectionRoom({ ...defaultOptions, query: { token: "t" } } as any, {});
+      const options = vi.mocked(PartySocket).mock.calls.at(-1)![0] as any;
+      expect(options.query).toEqual({ token: "t" });
+    });
+
+    it("should decode compressed sync messages and pass them to load and listeners", async () => {
+      const roomInstance = {};
+      const conn = await connectionRoom({ ...defaultOptions, compression: true } as any, roomInstance);
+      const callback = vi.fn();
+      conn.on("sync", callback);
+
+      const packet = { type: "sync", value: { count: 3 } };
+      const frame = compressMessage(JSON.stringify(packet));
+      const event = new MessageEvent("message", { data: frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength) });
+      eventListeners.get("message").forEach((listener) => listener(event));
+
+      expect(load).toHaveBeenCalledWith(roomInstance, packet.value, true);
+      expect(callback).toHaveBeenCalledWith(packet.value);
+    });
+
+    it("off() removes the listener registered by on()", async () => {
+      const conn = await connectionRoom(defaultOptions, {});
+      const callback = vi.fn();
+      conn.on("custom-event", callback);
+      conn.off("custom-event", callback);
+
+      const event = new MessageEvent("message", { data: JSON.stringify({ type: "custom-event", value: 1 }) });
+      eventListeners.get("message").forEach((listener) => listener(event));
+      expect(callback).not.toHaveBeenCalled();
+      expect(eventListeners.get("message")).toHaveLength(1);
     });
 
     it("should close the connection", async () => {

@@ -311,6 +311,33 @@ conn.on('event-name', (data) => {
 })
 ```
 
+#### Compressed messages
+
+When the room enables `compression` (see `@signe/room`), a client can ask for compressed messages:
+
+```typescript
+const conn = await connectionRoom({
+  host: 'your-server-url',
+  room: 'room-id',
+  compression: true, // adds ?compression=deflate and reads binary frames as ArrayBuffer
+}, room)
+```
+
+Large messages then arrive as binary frames (DEFLATE). `connectionRoom` decodes them before `load()` and before calling `on()` listeners. Each message is decoded once, however many listeners there are. Clients that do not ask keep receiving JSON text.
+
+If you read the socket yourself, use `decodeMessage()`: it accepts JSON text frames and compressed binary frames.
+
+```typescript
+import { decodeMessage } from '@signe/sync'
+
+socket.binaryType = 'arraybuffer'
+socket.addEventListener('message', (event) => {
+  const packet = decodeMessage(event.data)
+})
+```
+
+Compression uses native zlib when the runtime exposes it synchronously (Node.js 20.16+ / 22.3+), and [fflate](https://github.com/101arrowz/fflate) otherwise (browsers).
+
 ### Loading State
 
 Load state from paths or objects:

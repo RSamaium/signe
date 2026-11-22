@@ -7,7 +7,10 @@ import {
   syncClass,
   DELETE_TOKEN,
   generateShortUUID,
-  createStatesSnapshotDeep
+  createStatesSnapshotDeep,
+  compressMessage,
+  COMPRESSION_QUERY_PARAM,
+  COMPRESSION_QUERY_VALUE,
 } from "@signe/sync";
 import type * as Party from "./types/party";
 import {
@@ -379,8 +382,21 @@ export class Server implements Party.Server {
       .some((conn) => this.getPrivateId(conn) === privateId);
   }
 
+  /**
+   * Whether `data` should be sent compressed to `conn`: the room enables compression,
+   * the client asked for it, the message is large enough, and (for packets returned by
+   * `interceptorPacket`) per-client compression is enabled.
+   */
+  private shouldCompress(conn: Party.Connection, subRoom: any, data: string, intercepted: boolean): boolean {
+    const compression = subRoom?.$compression;
+    if (!compression || !(conn.state as any)?.compression) return false;
+    if (intercepted && !compression.intercepted) return false;
+    return data.length >= compression.threshold;
+  }
+
   async send(conn: Party.Connection, obj: any, subRoom: any) {
-    if (subRoom.interceptorPacket) {
+    const intercepted = !!subRoom?.interceptorPacket;
+    if (subRoom?.interceptorPacket) {
       // The interceptor may modify the packet: give it its own copy
       obj = structuredClone(obj);
       const signal = this.getUsersProperty(subRoom);
@@ -389,7 +405,12 @@ export class Server implements Party.Server {
       obj = await awaitReturn(subRoom["interceptorPacket"]?.(user, obj, conn));
       if (obj === null) return;
     }
-    conn.send(JSON.stringify(obj));
+    const data = JSON.stringify(obj);
+    conn.send(
+      this.shouldCompress(conn, subRoom, data, intercepted)
+        ? compressMessage(data, subRoom.$compression.level)
+        : data
+    );
   }
 
   /**
@@ -405,10 +426,17 @@ export class Server implements Party.Server {
       return;
     }
     let data: string | undefined;
+    let compressed: Uint8Array | undefined;
     for (let conn of this.room.getConnections()) {
       if (exclude?.has(conn)) continue;
       data ??= JSON.stringify(obj);
-      conn.send(data);
+      if (this.shouldCompress(conn, subRoom, data, false)) {
+        // Compressed once, then the same bytes are sent to every client that asked for it
+        compressed ??= compressMessage(data, subRoom.$compression.level);
+        conn.send(compressed);
+      } else {
+        conn.send(data);
+      }
     }
   }
 
@@ -787,6 +815,15 @@ export class Server implements Party.Server {
     };
 
     instance.$memoryAll = {}
+    const compressionOption = instance["compression"];
+    instance.$compression = compressionOption
+      ? {
+          threshold: 512,
+          level: 1,
+          intercepted: false,
+          ...(typeof compressionOption === "object" ? compressionOption : {}),
+        }
+      : null;
     instance.$storageMetrics = this.createStorageMetrics();
     const shouldPersistState = instance["persistState"] !== false;
     instance.$autoSync = instance["autoSync"] !== false; // Default to true
@@ -1329,9 +1366,11 @@ export class Server implements Party.Server {
 
     // Handle session transfer
     let transferToken = null;
+    let wantsCompression = false;
     if (ctx.request?.url) {
       const url = new URL(ctx.request.url);
       transferToken = url.searchParams.get('transferToken');
+      wantsCompression = url.searchParams.get(COMPRESSION_QUERY_PARAM) === COMPRESSION_QUERY_VALUE;
     }
     let transferData: any = null;
     if (transferToken) {
@@ -1412,7 +1451,9 @@ export class Server implements Party.Server {
      conn.setState({
       ...conn.state,
       publicId,
-      privateId
+      privateId,
+      // The client accepts compressed messages (only used if the room enables compression)
+      ...(wantsCompression ? { compression: true } : {}),
     });
 
     // Call the room's onJoin method if it exists
