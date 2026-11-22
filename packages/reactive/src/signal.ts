@@ -1,4 +1,4 @@
-import { BehaviorSubject, combineLatest, filter, finalize, map, Observable } from "rxjs";
+import { BehaviorSubject, filter, Subscription } from "rxjs";
 import { ArraySubject } from "./ArraySubject";
 import { ObjectSubject } from "./ObjectSubject";
 import type { ComputedSignal, Signal, WritableArraySignal, WritableObjectSignal, WritableSignal } from "./types";
@@ -221,6 +221,85 @@ export function isComputed(value: any): boolean {
 }
 
 /**
+ * Collects the signals read by a function on every run and keeps one subscription per
+ * dependency: new reads are subscribed to, signals no longer read are unsubscribed from.
+ * `onChange` runs when a tracked signal emits. A change emitted while the function is
+ * running (e.g. it writes a signal it reads) triggers one more `onChange` afterwards.
+ */
+function createDependencyTracker(owner: any, onChange: () => void) {
+    // Same Set instance for the whole lifetime: it is exposed as `fn.dependencies`.
+    const dependencies: Set<WritableSignal<any>> = new Set();
+    const subscriptions = new Map<WritableSignal<any>, Subscription>();
+    // Signal observables emit their current value on subscribe: ignore it.
+    let subscribing = false;
+    let running = false;
+    let rerunRequested = false;
+    let disposed = false;
+
+    const handleChange = () => {
+        if (subscribing || disposed) return;
+        if (running) {
+            rerunRequested = true;
+            return;
+        }
+        do {
+            rerunRequested = false;
+            onChange();
+        } while (rerunRequested && !disposed);
+    };
+
+    const run = <T>(compute: () => T): T => {
+        const nextDependencies: Set<WritableSignal<any>> = new Set();
+        const previousTracker = reactiveStore.currentDependencyTracker;
+        reactiveStore.currentDependencyTracker = (signal) => {
+            if (signal !== owner) nextDependencies.add(signal);
+        };
+        running = true;
+        let value: T;
+        try {
+            value = compute();
+        } finally {
+            running = false;
+            reactiveStore.currentDependencyTracker = previousTracker;
+        }
+        if (disposed) return value;
+
+        for (const [dependency, subscription] of subscriptions) {
+            if (!nextDependencies.has(dependency)) {
+                subscription.unsubscribe();
+                subscriptions.delete(dependency);
+            }
+        }
+        subscribing = true;
+        try {
+            for (const dependency of nextDependencies) {
+                if (!subscriptions.has(dependency)) {
+                    subscriptions.set(dependency, dependency.observable.subscribe(handleChange));
+                }
+            }
+        } finally {
+            subscribing = false;
+        }
+
+        dependencies.clear();
+        for (const dependency of nextDependencies) {
+            dependencies.add(dependency);
+        }
+        return value;
+    };
+
+    const dispose = () => {
+        disposed = true;
+        for (const subscription of subscriptions.values()) {
+            subscription.unsubscribe();
+        }
+        subscriptions.clear();
+    };
+
+    return { dependencies, run, dispose };
+}
+
+/**
  * Creates a computed signal based on a compute function.
  * @template T The type of the computed value
  * @param {() => T} computeFunction The function to compute the value
@@ -228,64 +307,34 @@ export function isComputed(value: any): boolean {
  * @returns {ComputedSignal<T>} A computed signal
  */
 export function computed<T = any>(computeFunction: () => T, disposableFn?: () => void): ComputedSignal<T> {
-    const dependencies: Set<WritableSignal<any>> = new Set();
-    let init = true;
-    let lastComputedValue;
-    
-    // Sauvegarder l'état précédent
-    const previousTracker = reactiveStore.currentDependencyTracker;
-    
-    // Définir notre tracker temporaire
-    reactiveStore.currentDependencyTracker = (signal) => {
-        dependencies.add(signal);
-    };
-    
-    lastComputedValue = computeFunction();
-    if (computeFunction['isEffect']) {
-        disposableFn = lastComputedValue as any;
-    }
-    
-    // Restaurer l'état précédent
-    reactiveStore.currentDependencyTracker = previousTracker;
-    
-    // For computed signals without dependencies (primitive values), create a BehaviorSubject
-    // that emits immediately, so combineLatest can work correctly
-    const observables = [...dependencies].map(dep => {
-        // Check if it's a computed signal without dependencies (primitive computed)
-        if (isComputed(dep) && 'dependencies' in dep) {
-            const computedDep = dep as unknown as ComputedSignal<any>;
-            if (computedDep.dependencies.size === 0) {
-                // Create a BehaviorSubject that emits the current value immediately
-                return new BehaviorSubject(computedDep()).asObservable();
-            }
-        }
-        // For regular signals or computed with dependencies, use their observable
-        return dep.observable;
-    });
-    
-    const computedObservable = combineLatest(observables)
-        .pipe(
-            filter(() => !init),
-            map(() => computeFunction()),
-            finalize(() => disposableFn?.())
-        )
+    let lastComputedValue: T;
 
-    const fn = function () {
+    const fn: any = function () {
         trackDependency(fn);
         return lastComputedValue;
     };
 
-    fn.observable = computedObservable;
-
-    fn.subscription = computedObservable.subscribe(value => {
-        lastComputedValue = value;
+    const subject = new BehaviorSubject<T>(undefined as T);
+    const tracker = createDependencyTracker(fn, () => {
+        lastComputedValue = tracker.run(computeFunction);
+        subject.next(lastComputedValue);
     });
 
-    fn.dependencies = dependencies;
+    lastComputedValue = tracker.run(computeFunction);
+    if (computeFunction['isEffect']) {
+        disposableFn = lastComputedValue as any;
+    }
+    subject.next(lastComputedValue);
+
+    fn.observable = subject.asObservable();
+    fn.dependencies = tracker.dependencies;
+    fn.subscription = new Subscription(() => {
+        tracker.dispose();
+        subject.complete();
+        disposableFn?.();
+    });
 
     reactiveStore.currentSubscriptionsTracker?.(fn.subscription);
-
-    init = false
 
     return fn
 }
@@ -426,8 +475,6 @@ export function linkedSignal<TSource, TValue>(
     computationOrOptions: (() => TValue) | LinkedSignalOptions<TSource, TValue>,
     simpleOptions?: LinkedSignalSimpleOptions<TValue>
 ): LinkedSignal<TValue> {
-    const dependencies: Set<WritableSignal<any>> = new Set();
-    let init = true;
     let lastComputedValue: TValue;
     let computeFunction: () => TValue;
     let sourceSignal: Signal<TSource> | (() => TSource) | undefined;
@@ -501,81 +548,6 @@ export function linkedSignal<TSource, TValue>(
         }
     }
 
-    // Save previous tracker state
-    const previousTracker = reactiveStore.currentDependencyTracker;
-    
-    // Set our temporary tracker
-    reactiveStore.currentDependencyTracker = (signal) => {
-        dependencies.add(signal);
-    };
-    
-    // Compute initial value
-    if (sourceSignal && typeof sourceSignal === 'function' && !isSignal(sourceSignal)) {
-        // Source is a function, track dependencies from the computation function
-        lastComputedValue = computeFunction();
-        lastComputedBeforeOverride = lastComputedValue;
-    } else if (sourceSignal && isSignal(sourceSignal)) {
-        // Source is a signal, track it
-        dependencies.add(sourceSignal as WritableSignal<TSource>);
-        lastComputedValue = computeFunction();
-        lastComputedBeforeOverride = lastComputedValue;
-    } else {
-        // Simple mode, track dependencies from computation function
-        lastComputedValue = computeFunction();
-        lastComputedBeforeOverride = lastComputedValue;
-    }
-    
-    // Restore previous tracker state
-    reactiveStore.currentDependencyTracker = previousTracker;
-    
-    // Create a BehaviorSubject to manage the linked signal's value and allow manual overrides
-    const subject = new BehaviorSubject<TValue>(lastComputedValue);
-    
-    // For linked signals without dependencies (primitive values), create a BehaviorSubject
-    // that emits immediately, so combineLatest can work correctly
-    const observables = [...dependencies].map(dep => {
-        // Check if it's a computed signal without dependencies (primitive computed)
-        if (isComputed(dep) && 'dependencies' in dep) {
-            const computedDep = dep as unknown as ComputedSignal<any>;
-            if (computedDep.dependencies.size === 0) {
-                // Create a BehaviorSubject that emits the current value immediately
-                return new BehaviorSubject(computedDep()).asObservable();
-            }
-        }
-        // For regular signals or computed with dependencies, use their observable
-        return dep.observable;
-    });
-    
-    // Create observable that recomputes when dependencies change
-    let linkedObservable: Observable<TValue>;
-    if (observables.length > 0) {
-        linkedObservable = combineLatest(observables)
-            .pipe(
-                filter(() => !init),
-                map(() => {
-                    const computed = computeFunction();
-                    // Use custom equality if provided
-                    if (equalFn) {
-                        if (!equalFn(lastComputedValue, computed)) {
-                            lastComputedValue = computed;
-                            isOverridden = false; // Reset override when source changes
-                        }
-                    } else {
-                        if (lastComputedValue !== computed) {
-                            lastComputedValue = computed;
-                            isOverridden = false; // Reset override when source changes
-                        }
-                    }
-                    return lastComputedValue;
-                })
-            );
-    } else {
-        // No dependencies, create an observable that emits when set() is called
-        linkedObservable = subject.asObservable().pipe(
-            filter(() => !init)
-        );
-    }
-
     const fn: any = function () {
         trackDependency(fn);
 
@@ -583,7 +555,7 @@ export function linkedSignal<TSource, TValue>(
         if (isOverridden && dependencies.size > 0) {
             if (overrideDepVersion !== depVersion) {
                 // Sources changed since the override -> recompute and drop override
-                const computed = computeFunction();
+                const computed = tracker.run(computeFunction);
                 isOverridden = false;
                 overriddenValue = undefined;
                 lastComputedValue = computed;
@@ -603,55 +575,39 @@ export function linkedSignal<TSource, TValue>(
         // If there are no dependencies, recompute the value on each read
         // This ensures that external values updated are reflected
         if (dependencies.size === 0) {
-            const computed = computeFunction();
+            const computed = tracker.run(computeFunction);
             lastComputedValue = computed;
             lastComputedBeforeOverride = computed;
         }
         return lastComputedValue;
     };
 
-    // Combine dependency changes with manual overrides
-    fn.observable = new Observable<TValue>(observer => {
-        // Subscribe to dependency changes
-        const depSubscription = linkedObservable.subscribe(value => {
-            if (dependencies.size > 0) {
-                // Real dependency change: reset override
-                depVersion++;
-                isOverridden = false;
-                overrideDepVersion = null;
-                lastComputedValue = value;
-                lastComputedBeforeOverride = value;
-            } else {
-                // No dependencies: this is likely a manual override flowing through
-                lastComputedValue = value;
-                lastComputedBeforeOverride = value;
-            }
-            observer.next(value);
-        });
-
-        // Subscribe to manual overrides via subject (only if no dependencies)
-        let subjectSubscription: any;
-        if (dependencies.size === 0) {
-            subjectSubscription = subject.pipe(
-                filter(() => !init)
-            ).subscribe(value => {
-                observer.next(value);
-            });
+    // A tracked signal changed: recompute (dependencies are collected again) and drop any override
+    const tracker = createDependencyTracker(fn, () => {
+        const computed = tracker.run(computeFunction);
+        const changed = equalFn ? !equalFn(lastComputedValue, computed) : lastComputedValue !== computed;
+        if (changed) {
+            lastComputedValue = computed;
         }
-
-        // Initial value
-        observer.next(lastComputedValue);
-
-        return () => {
-            depSubscription.unsubscribe();
-            if (subjectSubscription) {
-                subjectSubscription.unsubscribe();
-            }
-        };
+        depVersion++;
+        isOverridden = false;
+        overriddenValue = undefined;
+        overrideDepVersion = null;
+        lastComputedBeforeOverride = lastComputedValue;
+        subject.next(lastComputedValue);
     });
+    const dependencies = tracker.dependencies;
 
-    fn.subscription = fn.observable.subscribe(() => {
-        // Subscription is handled in the observable creation
+    lastComputedValue = tracker.run(computeFunction);
+    lastComputedBeforeOverride = lastComputedValue;
+
+    // Holds the current value (computed or overridden) and is shared by all subscribers
+    const subject = new BehaviorSubject<TValue>(lastComputedValue);
+
+    fn.observable = subject.asObservable();
+    fn.subscription = new Subscription(() => {
+        tracker.dispose();
+        subject.complete();
     });
 
     fn.dependencies = dependencies;
@@ -685,8 +641,6 @@ export function linkedSignal<TSource, TValue>(
     };
 
     reactiveStore.currentSubscriptionsTracker?.(fn.subscription);
-
-    init = false;
 
     return fn as LinkedSignal<TValue>;
 }

@@ -204,6 +204,20 @@ a.set(2);
 console.log(sum()); // Output: 4
 ```
 
+Dependencies are collected again on every run (this also applies to `effect` and `linkedSignal`), so signals read conditionally are tracked as soon as they are read, and signals no longer read stop triggering recomputation:
+
+```typescript
+const moving = signal(false);
+const running = signal(false);
+
+const clip = computed(() => (moving() ? (running() ? 'Running' : 'Walking') : 'Idle'));
+
+moving.set(true);  // clip() === 'Walking'
+running.set(true); // clip() === 'Running'
+```
+
+`computed.observable` emits the current value to each new subscriber and is shared: subscribing several times does not recompute more often. Unsubscribing `computed.subscription` disposes the computed, completes its observable and calls `disposableFn`.
+
 ### 3. `linkedSignal`
 
 Creates a linked signal that depends on other signals. A linked signal automatically updates when its source changes, and can be overridden using `set()`.
