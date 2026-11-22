@@ -550,6 +550,30 @@ describe("@signe/room/node", () => {
     expect(put).toHaveBeenCalledWith("state:count", 2);
   });
 
+  it("writes after throttleStorageMaxWait even if changes never stop", async () => {
+    vi.useFakeTimers();
+    const put = vi.fn(async () => undefined);
+    const storage = {
+      get: vi.fn(async () => undefined),
+      put,
+      delete: vi.fn(async () => undefined),
+      list: vi.fn(async () => new Map()),
+    };
+    const transport = createNodeRoomTransport(DebouncedStorageServer, {
+      storage: () => storage,
+    });
+
+    // A change every second never leaves the 2500 ms debounce window quiet
+    for (let count = 1; count <= 30; count++) {
+      await setDebouncedCount(transport, count);
+      await vi.advanceTimersByTimeAsync(1000);
+    }
+
+    // Default max wait is 10 × 2500 ms: the debounce cannot postpone the write forever
+    expect(put).toHaveBeenCalled();
+    expect(put.mock.calls[0][0]).toBe("state:count");
+  });
+
   it("batches multiple throttled storage writes in one put call", async () => {
     vi.useFakeTimers();
     const put = vi.fn(async () => undefined);

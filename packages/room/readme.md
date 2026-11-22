@@ -348,12 +348,17 @@ The `@Room` decorator accepts various configuration options:
 @Room({
   path: "game-{id}",     // Dynamic path with parameters
   maxUsers: 4,           // Limit number of users
-  throttleStorage: 1000, // Throttle storage updates (ms)
-  throttleSync: 100,     // Throttle sync updates (ms)
+  throttleStorage: 1000, // Debounce storage writes (ms)
+  throttleStorageMaxWait: 10000, // Max delay of a storage write while state keeps changing (default: 10 × throttleStorage)
+  throttleSync: 100,     // Minimum interval between sync packets (ms)
   hibernate: false,      // Enable/disable hibernation
   guards: [isAuthenticated], // Room-level guards
 })
 ```
+
+**Sync batching.** All state changes made in the same task (for example one action, or one game tick) are sent as a single `sync` packet at the end of that task, even without `throttleSync`. With `throttleSync`, packets are also sent at most once per window, and changes in between are grouped into the next packet. Without `interceptorPacket`, a packet is serialized once and the same string is sent to every client.
+
+**Storage batching.** Without `throttleStorage`, all changes of the same task are written to storage together. With `throttleStorage`, writes wait until no change happened for that long, but never more than `throttleStorageMaxWait`, so a state that changes continuously is still persisted.
 
 ### Authentication & Authorization
 

@@ -63,7 +63,19 @@ export interface RoomOptions {
   path: string;
   maxUsers?: number;
   persistState?: boolean;
+  /**
+   * Debounce window (ms) for storage writes: changes are written once no change happened for this long.
+   */
   throttleStorage?: number;
+  /**
+   * Upper bound (ms) on how long changes can wait for a storage write while the state keeps changing.
+   * Defaults to 10 × `throttleStorage`.
+   */
+  throttleStorageMaxWait?: number;
+  /**
+   * Minimum interval (ms) between two sync packets. Changes made in the same task are always
+   * grouped into one packet, even without this option.
+   */
   throttleSync?: number;
   hibernate?: boolean;
   guards?: RoomGuardFn[];
@@ -76,6 +88,7 @@ export function Room(options: RoomOptions) {
     target.prototype.maxUsers = options.maxUsers;
     target.prototype.persistState = options.persistState ?? true;
     target.prototype.throttleStorage = options.throttleStorage;
+    target.prototype.throttleStorageMaxWait = options.throttleStorageMaxWait;
     target.prototype.throttleSync = options.throttleSync;
     target.prototype.sessionExpiryTime = options.sessionExpiryTime ?? 5 * 60 * 1000;
     if (options.guards) {
