@@ -871,6 +871,9 @@ export class Server implements Party.Server {
      * ```
      */
     instance.$applySync = () => {
+      // Changes made in the current task are still waiting for the batched sync:
+      // take them now, so that `x.set(1); $applySync()` sends them.
+      flushBatchedSync();
       let packet: any;
       const events = takeEvents(instance.$pendingEvents);
       if (instance.$pendingSync.size > 0) {
@@ -885,11 +888,12 @@ export class Server implements Party.Server {
       // Send initial sync to connections that were waiting for it (with their pId)
       const pendingConnections = new Set<Party.Connection>(instance.$pendingInitialSync.keys());
       for (const [conn, publicId] of instance.$pendingInitialSync) {
+        // A client waiting for its initial sync needs the whole state, not only the changes
         this.send(conn, {
           type: "sync",
           value: {
             pId: publicId,
-            ...packet,
+            ...instance.$memoryAll,
           },
           ...(events ? { events } : {}),
         }, instance);
@@ -1110,9 +1114,10 @@ export class Server implements Party.Server {
     // share this flush, so an event and the state change emitted with it arrive together.
     let syncValuesRef: Map<string, any> = new Map();
     let syncEventsRef: Map<string, any[]> = new Map();
-    const scheduleSync = batch(() => {
+    const flushBatchedSync = () => {
       syncCb(syncValuesRef, syncEventsRef);
-    }, instance["throttleSync"] || 0);
+    };
+    const scheduleSync = batch(flushBatchedSync, instance["throttleSync"] || 0);
 
     syncClass(instance, {
       onSync: (values) => {
