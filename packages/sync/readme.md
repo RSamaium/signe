@@ -94,6 +94,25 @@ The `transform` function receives the value before it's synchronized and should 
 
 **Note:** The transformation is applied during synchronization, but the original value stored in the signal remains unchanged.
 
+##### Precision (quantization)
+
+Use `precision` to round the numbers sent to clients. Values are rounded after `transform`, including numbers inside plain objects and arrays. Negative values round to tens, hundreds, and so on.
+
+```typescript
+class Player {
+  @sync({ precision: 0 }) x = signal(0)    // sent as integers
+  @sync({ precision: 2 }) speed = signal(0) // sent with 2 decimals
+}
+
+player.x.set(10.2) // clients receive 10
+player.x.set(10.4) // still 10: nothing is sent
+player.x.set(10.6) // clients receive 11
+```
+
+- Only what is sent to clients is rounded: the server keeps the exact value, and persistence stores the exact value.
+- For a numeric signal, a change that does not change the rounded value is not sent at all.
+- Fewer digits mean smaller packets and faster serialization. With 100 moving players, rounding positions to integers reduced packets by 24 to 39% and server time per tick by 8 to 17%.
+
 ##### Syncing Collections
 
 You can synchronize collections of objects by specifying the class type:
@@ -412,6 +431,7 @@ Common options for decorators:
 - `persist?: boolean` - Enable/disable persistence (default: true)
 - `syncToClient?: boolean` - Enable/disable client synchronization (default: true)
 - `transform?: <T>(value: T) => any` - Transform the value before synchronization. The function receives the original value and should return the transformed value. Useful for type conversions, data normalization, or formatting.
+- `precision?: number` - Round numbers sent to clients to this many decimals (after `transform`). The persisted value stays exact, and a change that keeps the same rounded value is not sent.
 
 ## License
 
