@@ -77,6 +77,12 @@ export interface RoomOptions {
    * grouped into one packet, even without this option.
    */
   throttleSync?: number;
+  /**
+   * Give `interceptorPacket` its own copy of each packet (default: true). Set to false when
+   * the interceptor never modifies the packet it receives (it returns a new object instead):
+   * this removes a `structuredClone` per client and per packet.
+   */
+  copyPacketForInterceptor?: boolean;
   hibernate?: boolean;
   guards?: RoomGuardFn[];
   sessionExpiryTime?: number;
@@ -90,6 +96,9 @@ export function Room(options: RoomOptions) {
     target.prototype.throttleStorage = options.throttleStorage;
     target.prototype.throttleStorageMaxWait = options.throttleStorageMaxWait;
     target.prototype.throttleSync = options.throttleSync;
+    if (options.copyPacketForInterceptor !== undefined) {
+      target.prototype.copyPacketForInterceptor = options.copyPacketForInterceptor;
+    }
     target.prototype.sessionExpiryTime = options.sessionExpiryTime ?? 5 * 60 * 1000;
     if (options.guards) {
       target['_roomGuards'] = options.guards;

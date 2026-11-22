@@ -96,6 +96,39 @@ const TRANSFER_GC_LAST_RUN_KEY = `${INTERNAL_PREFIX}transfer-gc:last-run`;
 const DEFAULT_TRANSFER_EXPIRY_MS = 5 * 60 * 1000;
 
 /**
+ * Serialized pieces of a sync packet, shared by all the clients of one broadcast.
+ */
+class SyncFragments {
+  private fields = new Map<string, string>();
+  private patches = new Map<string, string>();
+  private fulls = new Map<string, string>();
+
+  field(key: string, value: any): string {
+    let fragment = this.fields.get(key);
+    if (fragment === undefined) {
+      fragment = `${JSON.stringify(key)}:${JSON.stringify(value)}`;
+      this.fields.set(key, fragment);
+    }
+    return fragment;
+  }
+
+  entity(collection: string, id: string, value: any, kind: "patch" | "full"): string {
+    const cache = kind === "patch" ? this.patches : this.fulls;
+    const cacheKey = collection + "\u0000" + id;
+    let fragment = cache.get(cacheKey);
+    if (fragment === undefined) {
+      fragment = `${JSON.stringify(id)}:${JSON.stringify(value)}`;
+      cache.set(cacheKey, fragment);
+    }
+    return fragment;
+  }
+
+  deleted(id: string): string {
+    return `${JSON.stringify(id)}:${JSON.stringify(DELETE_TOKEN)}`;
+  }
+}
+
+/**
  * @class Server
  * @implements {Party.Server}
  * @description Represents a server that manages rooms and connections for a multiplayer game or application.
@@ -380,9 +413,15 @@ export class Server implements Party.Server {
   }
 
   async send(conn: Party.Connection, obj: any, subRoom: any) {
+    if (this.usesSyncVisibility(obj, subRoom)) {
+      conn.send(this.buildVisibleSyncPacket(conn, obj, subRoom, new SyncFragments()));
+      return;
+    }
     if (subRoom.interceptorPacket) {
-      // The interceptor may modify the packet: give it its own copy
-      obj = structuredClone(obj);
+      // The interceptor may modify the packet: give it its own copy, unless the room says it does not
+      if (subRoom.copyPacketForInterceptor !== false) {
+        obj = structuredClone(obj);
+      }
       const signal = this.getUsersProperty(subRoom);
       const { publicId } = conn.state as any;
       const user = signal?.()[publicId];
@@ -397,6 +436,15 @@ export class Server implements Party.Server {
    * Without `interceptorPacket`, the packet is serialized once and the same string is sent to all.
    */
   broadcast(obj: any, subRoom: any, exclude?: Set<Party.Connection>) {
+    if (this.usesSyncVisibility(obj, subRoom)) {
+      // Each entity is serialized once per broadcast, then assembled per client
+      const fragments = new SyncFragments();
+      for (let conn of this.room.getConnections()) {
+        if (exclude?.has(conn)) continue;
+        conn.send(this.buildVisibleSyncPacket(conn, obj, subRoom, fragments));
+      }
+      return;
+    }
     if (subRoom?.interceptorPacket) {
       for (let conn of this.room.getConnections()) {
         if (exclude?.has(conn)) continue;
@@ -410,6 +458,94 @@ export class Server implements Party.Server {
       data ??= JSON.stringify(obj);
       conn.send(data);
     }
+  }
+
+  /** Sync packets of a room that defines `syncVisibility` are filtered per client. */
+  private usesSyncVisibility(obj: any, subRoom: any): boolean {
+    return obj?.type === "sync" && typeof subRoom?.syncVisibility === "function";
+  }
+
+  /**
+   * Builds the sync packet of one client for a room that defines `syncVisibility`.
+   *
+   * For each collection returned by `syncVisibility(user, conn, patch)`:
+   * - an entity that stays visible gets its patch (if it changed);
+   * - an entity that becomes visible gets its full state, from `$memoryAll`;
+   * - an entity that is no longer visible (or was deleted) gets `"$delete"`.
+   * Other keys of the packet are sent to everyone. `syncPacketHeader(user, conn, patch)` adds
+   * per-client fields. Fragments are serialized once per broadcast and shared between clients.
+   */
+  private buildVisibleSyncPacket(conn: Party.Connection, obj: any, subRoom: any, fragments: SyncFragments): string {
+    const user = this.getUsersProperty(subRoom)?.()[(conn.state as any)?.publicId];
+    const value = obj.value && typeof obj.value === "object" ? obj.value : {};
+    const visibility: Record<string, Iterable<string> | null | undefined> =
+      subRoom.syncVisibility(user, conn, value) ?? {};
+
+    const states: Map<string, Map<string, Set<string>>> = (subRoom.$syncVisibleEntities ??= new Map());
+    let state = states.get(conn.id);
+    if (!state) {
+      state = new Map();
+      states.set(conn.id, state);
+    }
+
+    const parts: string[] = [];
+    for (const key in value) {
+      if (visibility[key] != null) continue;
+      parts.push(fragments.field(key, value[key]));
+    }
+
+    for (const key in visibility) {
+      const visibleIds = visibility[key];
+      if (visibleIds == null) continue;
+      const patch = value[key];
+      const patchEntries = patch && typeof patch === "object" && !Array.isArray(patch) ? patch : undefined;
+      const memory = subRoom.$memoryAll?.[key];
+      const previous = state.get(key);
+      const visible = new Set<string>();
+      const entries: string[] = [];
+
+      for (const id of visibleIds) {
+        if (visible.has(id)) continue;
+        if (previous?.has(id)) {
+          const entityPatch = patchEntries?.[id];
+          // Deleted entities are removed below, with the ones that left the view
+          if (entityPatch === DELETE_TOKEN) continue;
+          visible.add(id);
+          if (entityPatch !== undefined) {
+            entries.push(fragments.entity(key, id, entityPatch, "patch"));
+          }
+        } else {
+          const snapshot = memory?.[id];
+          if (snapshot === undefined) continue; // does not exist (anymore)
+          visible.add(id);
+          entries.push(fragments.entity(key, id, snapshot, "full"));
+        }
+      }
+      if (previous) {
+        for (const id of previous) {
+          if (!visible.has(id)) entries.push(fragments.deleted(id));
+        }
+      }
+      if (entries.length > 0) {
+        parts.push(`${JSON.stringify(key)}:{${entries.join(",")}}`);
+      }
+      state.set(key, visible);
+    }
+
+    const header = subRoom.syncPacketHeader?.(user, conn, value);
+    if (header) {
+      // Added last: like `{ ...value, ...header }`, a header field wins over a packet field
+      for (const key in header) {
+        parts.push(`${JSON.stringify(key)}:${JSON.stringify(header[key])}`);
+      }
+    }
+
+    let data = `{"type":"sync","value":{${parts.join(",")}}`;
+    for (const key in obj) {
+      if (key === "type" || key === "value") continue;
+      data += `,${JSON.stringify(key)}:${JSON.stringify(obj[key])}`;
+    }
+    return data + "}";
   }
 
   /**
@@ -1814,6 +1950,8 @@ export class Server implements Party.Server {
     if (subRoom.$pendingInitialSync) {
       subRoom.$pendingInitialSync.delete(conn);
     }
+    // Forget what this connection could see (syncVisibility)
+    subRoom.$syncVisibleEntities?.delete(conn.id);
 
     const signal = this.getUsersProperty(subRoom);
 
