@@ -5,6 +5,9 @@ import {
   isObjectSubject,
   isSignal,
   isComputed,
+  subscribeToSignal,
+  type ArraySignalStore,
+  type ObjectSignalStore,
   type WritableSignal,
 } from "@signe/reactive";
 import { isInstanceOfClass, isObject } from "./utils";
@@ -36,7 +39,7 @@ type SyncMetadata = Map<string, NormalizedSyncOptions>;
 interface ExtendedWritableSignal<T>
   extends Omit<WritableSignal<T>, "observable"> {
   options?: TypeOptions;
-  _subject?: ObjectSubject<T> | ArraySubject<T>;
+  _subject?: ObjectSubject<T> | ArraySubject<T> | ObjectSignalStore<any> | ArraySignalStore<any>;
   observable: Observable<SubjectValue<T>>;
 }
 
@@ -326,7 +329,7 @@ export const createSyncClass = (
       // Handle computed signals specifically
       if (isComputed(signal)) {
         // Subscribe to the computed signal's observable to sync changes
-        signal.observable.subscribe((newValue: any) => {
+        subscribeToSignal(signal, (newValue: any) => {
           if (syncToClient) {
             const transformedNewValue = transform ? transform(newValue) : newValue;
             currentClass.$valuesChanges.set(newPath, transformedNewValue);
@@ -486,7 +489,8 @@ export const type = <T>(
     let cachedBasePath: string | undefined;
     let cachedFullPath = "";
 
-    signal.observable.subscribe((value: any) => {
+    // Fast path (no rxjs) for signals of this version, `observable` otherwise
+    subscribeToSignal(signal, (value: any) => {
       if (init) return; // Skip initial value
 
       const basePath = currentInstance.$path;

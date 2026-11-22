@@ -204,6 +204,20 @@ a.set(2);
 console.log(sum()); // Output: 4
 ```
 
+Dependencies are collected again on every run (this also applies to `effect` and `linkedSignal`), so signals read conditionally are tracked as soon as they are read, and signals no longer read stop triggering recomputation:
+
+```typescript
+const moving = signal(false);
+const running = signal(false);
+
+const clip = computed(() => (moving() ? (running() ? 'Running' : 'Walking') : 'Idle'));
+
+moving.set(true);  // clip() === 'Walking'
+running.set(true); // clip() === 'Running'
+```
+
+`computed.observable` emits the current value to each new subscriber and is shared: subscribing several times does not recompute more often. Unsubscribing `computed.subscription` disposes the computed, completes its observable and calls `disposableFn`.
+
 ### 3. `linkedSignal`
 
 Creates a linked signal that depends on other signals. A linked signal automatically updates when its source changes, and can be overridden using `set()`.
@@ -357,6 +371,45 @@ console.log(isSignal(notASignal)); // Output: false
 ```
 
 ---
+
+## Batching writes
+
+`batch(fn)` groups signal writes: computed signals and effects that depend on several written signals update once, when the batch ends, instead of once per write.
+
+```typescript
+import { signal, effect, batch } from '@signe/reactive';
+
+const x = signal(0);
+const y = signal(0);
+effect(() => console.log(x(), y()));
+
+batch(() => {
+  x.set(10);
+  y.set(20);
+}); // logs "10 20" once
+```
+
+- Change events (`signal.observable`, `subscribeToSignal`) are still delivered at each write.
+- Reading a computed signal inside the batch first applies the pending updates, so it never returns a stale value.
+- Batches can be nested: updates run when the outermost batch ends, also when `fn` throws.
+- `load()` from `@signe/sync` applies each received packet in one batch.
+
+## Subscribing and rxjs
+
+Signals notify computed signals and effects without going through rxjs. `signal.observable` is still a real rxjs `Observable`: it emits the current value (or the last change event for arrays and objects) on subscribe, then each change, and works with every rxjs operator (`pipe`, `combineLatest`...). rxjs is only involved for code that subscribes to `.observable`.
+
+To react to changes outside a computed or an effect without rxjs, use `subscribeToSignal`. It does not replay the current value and returns a function that unsubscribes:
+
+```typescript
+import { signal, subscribeToSignal } from '@signe/reactive';
+
+const count = signal(0);
+const stop = subscribeToSignal(count, (value) => console.log(value));
+count.set(1); // logs 1
+stop();
+```
+
+`subscribeToSignal` also accepts signals from `@signe/reactive` 2.x (through their `observable`), and computed signals track signals of both versions.
 
 ## Advanced Examples
 

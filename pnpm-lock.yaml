@@ -18,6 +18,9 @@ importers:
       '@signe/reactive':
         specifier: workspace:*
         version: link:packages/reactive
+      '@signe/reactive-v2':
+        specifier: npm:@signe/reactive@2.10.0
+        version: '@signe/reactive@2.10.0'
       '@signe/room':
         specifier: workspace:*
         version: link:packages/room
@@ -36,6 +39,9 @@ importers:
       pnpm:
         specifier: ^9.1.4
         version: 9.1.4
+      rxjs:
+        specifier: ^7.8.1
+        version: 7.8.1
       tsup:
         specifier: ^8.1.0
         version: 8.1.0(@swc/core@1.10.4)(postcss@8.4.49)(typescript@5.4.5)
@@ -1180,6 +1186,9 @@ packages:
     resolution: {integrity: sha512-DYvxS0M07PvgvavMIybCOBYheyrqlui6ZQBHJs6GqduVzHSZ06TPPvlfvnYstjODHQ8UUXFwt5YE+h0jFI8kwg==}
     cpu: [x64]
     os: [win32]
+
+  '@signe/reactive@2.10.0':
+    resolution: {integrity: sha512-JmGxTS1C5C2jrB3vxnQXVuoiHgUNeAOJQ1uRS5pnAfo3qN/LJhFKmnHXBntdN5ypQSqLHoM6zDZhkhGFQYvHAQ==}
 
   '@swc/core-darwin-arm64@1.10.4':
     resolution: {integrity: sha512-sV/eurLhkjn/197y48bxKP19oqcLydSel42Qsy2zepBltqUx+/zZ8+/IS0Bi7kaWVFxerbW1IPB09uq8Zuvm3g==}
@@ -3811,6 +3820,10 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.30.0':
     optional: true
+
+  '@signe/reactive@2.10.0':
+    dependencies:
+      rxjs: 7.8.1
 
   '@swc/core-darwin-arm64@1.10.4':
     optional: true

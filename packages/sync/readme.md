@@ -378,6 +378,8 @@ Compression uses native zlib when the runtime exposes it synchronously through `
 
 ### Loading State
 
+`load()` applies all values of a call in one `batch()` (see `@signe/reactive`): a computed signal or an effect that reads several loaded values (for example a sprite reading `x` and `y`) runs once per call, after every value is applied, instead of once per value.
+
 Load state from paths or objects:
 
 ```typescript
