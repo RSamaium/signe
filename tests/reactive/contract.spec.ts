@@ -266,6 +266,39 @@ describe("contract: detached methods and signal-like wrappers", () => {
     expect(callable()).toBe("b");
   });
 
+  // CanvasEngine engine/animation.ts (animatedSignal): `for (const key in publicSignal) fn[key] = publicSignal[key]`
+  it("a function filled with `for...in` over a signal gets its methods and observable", () => {
+    const publicSignal = signal(1);
+    const fn: any = () => publicSignal();
+    for (const key in publicSignal) {
+      fn[key] = (publicSignal as any)[key];
+    }
+    expect(isSignal(fn)).toBe(true);
+    for (const key of ["set", "update", "mutate", "freeze", "unfreeze", "observable", "_subject", "_isFrozen"]) {
+      expect(key in fn).toBe(true);
+    }
+    const seen: number[] = [];
+    fn.observable.subscribe((v: number) => seen.push(v));
+    fn.set(2);
+    fn.freeze();
+    fn.set(3);
+    fn.unfreeze();
+    expect(fn()).toBe(3);
+    expect(seen).toEqual([1, 2, 3]);
+  });
+
+  it("a computed copied with `for...in` keeps observable, dependencies and subscription", () => {
+    const a = signal(1);
+    const c = computed(() => a() * 2);
+    const copy: any = () => c();
+    for (const key in c) {
+      copy[key] = (c as any)[key];
+    }
+    expect(isSignal(copy)).toBe(true);
+    expect(copy.dependencies).toBe(c.dependencies);
+    expect(copy.subscription).toBe(c.subscription);
+  });
+
   it("isSignal is true for signals and computed, false for plain values", () => {
     expect(isSignal(signal(1))).toBe(true);
     expect(isSignal(computed(() => 1))).toBe(true);

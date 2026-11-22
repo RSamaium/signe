@@ -4,6 +4,11 @@ import {
     ObjectSignalStore,
     SignalStore,
     attachStore,
+    createSignalFunction,
+    WritableSignalPrototype,
+    ComputedSignalPrototype,
+    type ListenerEntry,
+    getSignalStore,
     subscribeToSignal,
 } from "./store";
 import type { ComputedSignal, Signal, WritableArraySignal, WritableObjectSignal, WritableSignal } from "./types";
@@ -76,7 +81,8 @@ const reactiveStore = getGlobalReactiveStore();
  * Batching state lives in the global store so that every copy of this version shares it.
  * Older versions ignore these fields.
  */
-const getBatchQueue = (): Set<() => void> => (reactiveStore.batchQueue ??= new Set());
+/** Pending updates: objects with an `update()` method (one entry per tracker). */
+const getBatchQueue = (): Set<{ update(): void }> => (reactiveStore.batchQueue ??= new Set());
 const isBatching = () => (reactiveStore.batchDepth ?? 0) > 0;
 
 const reportBatchError = (error: unknown) => {
@@ -96,10 +102,10 @@ function flushBatchQueue() {
     reactiveStore.batchFlushing = true;
     try {
         while (queue.size > 0) {
-            const update = queue.values().next().value as () => void;
-            queue.delete(update);
+            const pending = queue.values().next().value as { update(): void };
+            queue.delete(pending);
             try {
-                update();
+                pending.update();
             } catch (error) {
                 reportBatchError(error);
             }
@@ -204,86 +210,28 @@ export function signal<T = any>(
     // Plain stores instead of rxjs subjects: notifications do not go through rxjs.
     // `signal.observable` stays a real rxjs Observable (see SignalStore.toObservable).
     let store: SignalStore<any>;
-    let kind: 0 | 1 | 2; // 0 = value, 1 = array, 2 = object
     if (Array.isArray(defaultValue)) {
         store = new ArraySignalStore(defaultValue);
-        kind = 1;
     } else if (typeof defaultValue === 'object' && defaultValue !== null) {
         store = new ObjectSignalStore(defaultValue as any);
-        kind = 2;
     } else {
         store = new SignalStore(defaultValue);
-        kind = 0;
+    }
+    if (options?.equal) {
+        store.equal = options.equal;
     }
 
-    const getValue = () => {
-        if (kind === 0) return store.last;
-        return kind === 1 ? (store as ArraySignalStore).items : (store as ObjectSignalStore).obj;
-    };
-
-    const fn: any = function () {
-        trackDependency(fn);
-        return getValue();
-    };
-
-    // Methods stay bound to this signal (own closures): downstream code copies them
-    // onto other functions and calls them detached (e.g. `wrapper.set = signal.set`).
-    fn.set = (value) => {
-        const currentValue = getValue();
-        
-        // Use custom equality function if provided
-        let shouldEmit = true;
-        if (options?.equal) {
-            // If equal returns true, values are equal, don't emit
-            // If equal returns false, values are different, emit
-            shouldEmit = !options.equal(currentValue, value);
-        } else {
-            shouldEmit = currentValue !== value;
-        }
-        
-        // Emit only if values are different
-        if (shouldEmit) {
-            if (kind === 1) {
-                (store as ArraySignalStore).items = value;
-            } else if (kind === 2) {
-                (store as ObjectSignalStore).obj = value;
-            } else {
-                store.emit(value);
-            }
-        }
-    };
-
-    fn._isFrozen = false;
-
-    fn.freeze = () => {
-        fn._isFrozen = true;
-    };
-
-    fn.unfreeze = () => {
-        fn._isFrozen = false;
-        if (kind === 1) {
-            store.emit({ type: 'init', items: (store as ArraySignalStore).items });
-        } else if (kind === 2) {
-            store.emit({ type: 'init', value: (store as ObjectSignalStore).obj });
-        } else {
-            store.emit(store.last);
-        }
-    };
-
-    fn.mutate = (mutateFn) => {
-        const value = getValue();
-        mutateFn(value);
-    };
-
-    fn.update = (updateFn) => {
-        const updatedValue = updateFn(getValue());
-        fn.set(updatedValue);
-    };
-
-    attachStore(fn, store);
-
-    return fn as any;
+    // set / update / mutate / freeze / unfreeze / observable / _subject / _isFrozen come from
+    // a shared prototype: created on first access, bound to this signal, then reused.
+    return createSignalFunction(readWritableSignal, store) as any;
 }
+
+/** Body of every writable signal, bound to its store (see createSignalFunction). */
+function readWritableSignal(this: SignalStore<any>) {
+    trackDependency(this.owner);
+    return this.read();
+}
+Object.setPrototypeOf(readWritableSignal, WritableSignalPrototype);
 
 /**
  * Checks if a value is a signal.
@@ -291,7 +239,8 @@ export function signal<T = any>(
  * @returns {boolean} True if the value is a signal, false otherwise
  */
 export function isSignal(value: any): boolean {
-    return !!(value && value.observable)
+    // Signals of this version are recognized without creating their rxjs view
+    return !!value && (getSignalStore(value) !== undefined || !!value.observable);
 }
 
 /**
@@ -309,108 +258,188 @@ export function isComputed(value: any): boolean {
  * `onChange` runs when a tracked signal emits. A change emitted while the function is
  * running (e.g. it writes a signal it reads) triggers one more `onChange` afterwards.
  */
-function createDependencyTracker(owner: any, onChange: () => void) {
-    // Same Set instance for the whole lifetime: it is exposed as `fn.dependencies`.
-    const dependencies: Set<WritableSignal<any>> = new Set();
-    // One entry per tracked signal; `epoch` is the last run that read it.
-    const entries = new Map<WritableSignal<any>, { unsubscribe: () => void; epoch: number }>();
-    let epoch = 0;
-    let reusedCount = 0;
-    // Signals read for the first time during the current run (reused, cleared after each run)
-    const newDependencies: Set<WritableSignal<any>> = new Set();
-    let running = false;
-    let rerunRequested = false;
-    let disposed = false;
+interface TrackedDependency {
+    /** Last run that read this dependency. */
+    epoch: number;
+    /** Signals of this version: listener entry in their store (no closure per dependency). */
+    store?: SignalStore<any>;
+    listener?: ListenerEntry<any>;
+    /** Other signals (2.x): unsubscribe from their observable. */
+    unsubscribe?: () => void;
+}
 
-    const update = () => {
-        if (disposed) return;
-        do {
-            rerunRequested = false;
-            onChange();
-        } while (rerunRequested && !disposed);
-    };
+/** Something to run again when a dependency changes. */
+interface Recomputable {
+    recompute(): void;
+}
 
-    const handleChange = () => {
-        if (disposed) return;
-        if (running) {
-            rerunRequested = true;
+/** Tracker of the computed or effect currently running (read by `trackActive`). */
+let activeTracker: DependencyTracker | null = null;
+/** Installed as the global dependency tracker while a computed runs. */
+const trackActive = (signal: WritableSignal<any>) => {
+    activeTracker?.track(signal);
+};
+
+/**
+ * Collects the signals read by a function on every run and keeps one subscription per
+ * dependency: new reads are subscribed to, signals no longer read are unsubscribed from.
+ * `onChange` runs when a tracked signal emits. A change emitted while the function is
+ * running (e.g. it writes a signal it reads) triggers one more `onChange` afterwards.
+ *
+ * A class (methods shared by all trackers) rather than closures: computed signals are
+ * created in large numbers and each closure costs memory.
+ */
+class DependencyTracker {
+    /** Same Set instance for the whole lifetime: it is exposed as `fn.dependencies`. */
+    readonly dependencies: Set<WritableSignal<any>> = new Set();
+    private readonly entries = new Map<WritableSignal<any>, TrackedDependency>();
+    private epoch = 0;
+    private reusedCount = 0;
+    /** Signals read for the first time during the current run (allocated when needed, then dropped). */
+    private newDependencies: Set<WritableSignal<any>> | null = null;
+    private running = false;
+    private rerunRequested = false;
+    private disposed = false;
+    /** Listener given to dependencies (the only closure of a tracker). */
+    readonly handleChange: () => void;
+
+    constructor(private readonly owner: any, private readonly target: Recomputable) {
+        this.handleChange = () => this.onDependencyChange();
+    }
+
+    private onDependencyChange() {
+        if (this.disposed) return;
+        if (this.running) {
+            this.rerunRequested = true;
             return;
         }
         if (isBatching()) {
             // Run once when the batch ends (a Set keeps a single entry per tracker)
-            getBatchQueue().add(update);
+            getBatchQueue().add(this);
             return;
         }
-        update();
-    };
+        this.update();
+    }
 
-    // Allocated once: no per-run allocation when the dependencies do not change.
-    const track = (signal: WritableSignal<any>) => {
-        if (signal === owner) return;
-        const entry = entries.get(signal);
+    update() {
+        if (this.disposed) return;
+        do {
+            this.rerunRequested = false;
+            this.target.recompute();
+        } while (this.rerunRequested && !this.disposed);
+    }
+
+    track(signal: WritableSignal<any>) {
+        if (signal === this.owner) return;
+        const entry = this.entries.get(signal);
         if (entry) {
-            if (entry.epoch !== epoch) {
-                entry.epoch = epoch;
-                reusedCount++;
+            if (entry.epoch !== this.epoch) {
+                entry.epoch = this.epoch;
+                this.reusedCount++;
             }
         } else {
-            newDependencies.add(signal);
+            (this.newDependencies ??= new Set()).add(signal);
         }
-    };
+    }
 
-    const run = <T>(compute: () => T): T => {
-        epoch++;
-        reusedCount = 0;
-        newDependencies.clear();
+    run<T>(compute: () => T): T {
+        this.epoch++;
+        this.reusedCount = 0;
+        this.newDependencies = null;
         const previousTracker = reactiveStore.currentDependencyTracker;
-        reactiveStore.currentDependencyTracker = track;
-        running = true;
+        const previousActive = activeTracker;
+        reactiveStore.currentDependencyTracker = trackActive;
+        activeTracker = this;
+        this.running = true;
         let value: T;
         try {
             value = compute();
         } finally {
-            running = false;
+            this.running = false;
+            activeTracker = previousActive;
             reactiveStore.currentDependencyTracker = previousTracker;
         }
-        if (disposed) return value;
+        if (this.disposed) return value;
 
+        const { entries, dependencies, epoch } = this;
         // Signals not read during this run
-        if (reusedCount !== entries.size) {
+        if (this.reusedCount !== entries.size) {
             for (const [dependency, entry] of entries) {
                 if (entry.epoch !== epoch) {
-                    entry.unsubscribe();
+                    releaseDependency(entry);
                     entries.delete(dependency);
                     dependencies.delete(dependency);
                 }
             }
         }
         // Signals read for the first time
-        if (newDependencies.size) {
-            try {
-                for (const dependency of newDependencies) {
-                    entries.set(dependency, {
-                        // Fast path for signals of this version, `observable` for others (2.x)
-                        unsubscribe: subscribeToSignal(dependency, handleChange),
-                        epoch,
-                    });
-                    dependencies.add(dependency);
-                }
-            } finally {
-                newDependencies.clear();
+        const newDependencies = this.newDependencies;
+        if (newDependencies) {
+            this.newDependencies = null;
+            for (const dependency of newDependencies) {
+                entries.set(dependency, subscribeDependency(dependency, this.handleChange, epoch));
+                dependencies.add(dependency);
             }
         }
         return value;
-    };
+    }
 
-    const dispose = () => {
-        disposed = true;
-        for (const entry of entries.values()) {
-            entry.unsubscribe();
+    dispose() {
+        this.disposed = true;
+        for (const entry of this.entries.values()) {
+            releaseDependency(entry);
         }
-        entries.clear();
-    };
+        this.entries.clear();
+    }
+}
 
-    return { dependencies, run, dispose };
+/** Fast path for signals of this version, `observable` for others (2.x). */
+function subscribeDependency(dependency: any, listener: () => void, epoch: number): TrackedDependency {
+    const store = getSignalStore(dependency);
+    if (store) {
+        return { epoch, store, listener: store.addListener(listener) };
+    }
+    return { epoch, unsubscribe: subscribeToSignal(dependency, listener) };
+}
+
+function releaseDependency(entry: TrackedDependency) {
+    if (entry.store) {
+        entry.store.removeListener(entry.listener!);
+    } else {
+        entry.unsubscribe?.();
+    }
+}
+
+function createDependencyTracker(owner: any, onChange: () => void): DependencyTracker {
+    return new DependencyTracker(owner, { recompute: onChange });
+}
+
+/**
+ * Store of a computed signal: holds the compute function, its tracker and the dispose logic,
+ * so that a computed needs no closure besides its own function.
+ */
+class ComputedStore<T> extends SignalStore<T> implements Recomputable {
+    tracker!: DependencyTracker;
+    disposable: (() => void) | undefined;
+    private subscription: Subscription | undefined = undefined;
+
+    constructor(private readonly compute: () => T, disposable?: () => void) {
+        super(undefined as T);
+        this.disposable = disposable;
+    }
+
+    recompute() {
+        this.emit(this.tracker.run(this.compute));
+    }
+
+    /** `computed.subscription`, created on first use: unsubscribing disposes the computed. */
+    getSubscription(): Subscription {
+        return (this.subscription ??= new Subscription(() => {
+            this.tracker.dispose();
+            this.complete();
+            this.disposable?.();
+        }));
+    }
 }
 
 /**
@@ -420,37 +449,32 @@ function createDependencyTracker(owner: any, onChange: () => void) {
  * @param {() => void} [disposableFn] Optional function to be called when the computed signal is disposed
  * @returns {ComputedSignal<T>} A computed signal
  */
+/** Body of every computed signal, bound to its store (see createSignalFunction). */
+function readComputedSignal(this: SignalStore<any>) {
+    trackDependency(this.owner);
+    flushBeforeRead();
+    return this.last;
+}
+Object.setPrototypeOf(readComputedSignal, ComputedSignalPrototype);
+
 export function computed<T = any>(computeFunction: () => T, disposableFn?: () => void): ComputedSignal<T> {
-    let lastComputedValue: T;
+    const store = new ComputedStore<T>(computeFunction, disposableFn);
+    const fn: any = createSignalFunction(readComputedSignal, store);
 
-    const fn: any = function () {
-        trackDependency(fn);
-        flushBeforeRead();
-        return lastComputedValue;
-    };
-
-    const store = new SignalStore<T>(undefined as T);
-    const tracker = createDependencyTracker(fn, () => {
-        lastComputedValue = tracker.run(computeFunction);
-        store.emit(lastComputedValue);
-    });
-
-    lastComputedValue = tracker.run(computeFunction);
+    store.tracker = new DependencyTracker(fn, store);
+    store.last = store.tracker.run(computeFunction);
     if (computeFunction['isEffect']) {
-        disposableFn = lastComputedValue as any;
+        store.disposable = store.last as any;
     }
-    store.last = lastComputedValue;
 
-    // A computed is read-only: no `_subject`, as before
-    attachStore(fn, store, false);
-    fn.dependencies = tracker.dependencies;
-    fn.subscription = new Subscription(() => {
-        tracker.dispose();
-        store.complete();
-        disposableFn?.();
-    });
+    // A computed is read-only: no `_subject`, as before. `observable` and `subscription`
+    // are created on first use (shared prototype).
+    fn.dependencies = store.tracker.dependencies;
 
-    reactiveStore.currentSubscriptionsTracker?.(fn.subscription);
+    const subscriptionsTracker = reactiveStore.currentSubscriptionsTracker;
+    if (subscriptionsTracker) {
+        subscriptionsTracker(fn.subscription);
+    }
 
     return fn
 }
