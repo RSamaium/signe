@@ -64,23 +64,46 @@ interface WorldConnectionResult extends ConnectionResult {
   };
 }
 
+/** Query parameters asking the server for the formats this connection reads. */
+function formatQueryFlags(options: RoomConnectionOptions): Record<string, string> | undefined {
+  const flags: Record<string, string> = {};
+  if (options.compression) flags[COMPRESSION_QUERY_PARAM] = COMPRESSION_QUERY_VALUE;
+  if (options.pathFormat) flags[PATH_FORMAT_QUERY_PARAM] = PATH_FORMAT_QUERY_VALUE;
+  return Object.keys(flags).length > 0 ? flags : undefined;
+}
+
+function withFlags(query: PartySocketOptions["query"], flags: Record<string, string>): PartySocketOptions["query"] {
+  return typeof query === "function"
+    ? async () => ({ ...(await query()), ...flags })
+    : { ...(query || {}), ...flags };
+}
+
 function withCompressionQuery(options: RoomConnectionOptions): PartySocketOptions {
   const { compression, pathFormat, ...socketOptions } = options;
-  if (!compression && !pathFormat) return socketOptions;
-  const query = socketOptions.query;
-  const flag: Record<string, string> = {};
-  if (compression) flag[COMPRESSION_QUERY_PARAM] = COMPRESSION_QUERY_VALUE;
-  if (pathFormat) flag[PATH_FORMAT_QUERY_PARAM] = PATH_FORMAT_QUERY_VALUE;
-  return {
-    ...socketOptions,
-    query: typeof query === "function"
-      ? async () => ({ ...(await query()), ...flag })
-      : { ...(query || {}), ...flag },
-  };
+  const flags = formatQueryFlags(options);
+  if (!flags) return socketOptions;
+  return { ...socketOptions, query: withFlags(socketOptions.query, flags) };
+}
+
+/**
+ * Keeps the format flags when the query is replaced later, for example when an application
+ * moves the socket to another room with `conn.updateProperties({ room, query })`.
+ */
+function keepFormatFlags(conn: PartySocket, options: RoomConnectionOptions) {
+  const flags = formatQueryFlags(options);
+  if (!flags || typeof conn.updateProperties !== "function") return;
+  const updateProperties = conn.updateProperties.bind(conn);
+  conn.updateProperties = (properties: Partial<PartySocketOptions>) =>
+    updateProperties(
+      properties.query !== undefined
+        ? { ...properties, query: withFlags(properties.query, flags) }
+        : properties
+    );
 }
 
 function createConnection(options: RoomConnectionOptions, roomInstance: RoomInstance): ConnectionResult {
   const conn = new PartySocket(withCompressionQuery(options));
+  keepFormatFlags(conn, options);
   if (options.compression) {
     // Compressed messages are binary frames: read them synchronously as ArrayBuffer
     (conn as any).binaryType = "arraybuffer";

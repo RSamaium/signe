@@ -10,3 +10,5 @@ Optional path table format for sync packets: a flat list of path ids and values 
 - `load()` counts the changes of a state's structure (`getStructureVersion()`), used by the decoder.
 
 With 100 moving players and an effect per player: parsing and applying a tick on the client is about 2 times faster (about 155 µs → 75 µs), with about 30 % fewer bytes without compression (8 % with it). Encoding costs about 30 µs per broadcast on the server (12 µs for `JSON.stringify`).
+
+`connectionRoom` now keeps its `compression` and `pathFormat` query flags when the application replaces the query with `conn.updateProperties({ query })` (as RPG-JS does when the player changes room). Before, the next room connection lost them.
