@@ -542,9 +542,10 @@ class GameRoom {
 **Instance Properties:**
 - `$autoSync` (boolean): Controls whether synchronization happens automatically (default: `true`)
 - `$pendingSync` (Map): Stores pending synchronization changes when `autoSync` is disabled
+- `$pendingEvents` (Map): Stores pending `event()` emissions when `autoSync` is disabled; they are sent once by the next `$applySync()`
 - `$applySync()` (method): Manually broadcasts all pending changes to all clients
 
-**Note:** When `autoSync` is disabled, changes are stored in `$pendingSync` until you call `$applySync()`. If you call `$applySync()` with no pending changes, it will broadcast the current state from `$memoryAll`, which is useful for forcing a full state synchronization.
+**Note:** When `autoSync` is disabled, changes are stored in `$pendingSync` until you call `$applySync()`. If you call `$applySync()` with no pending changes, it will broadcast the current state from `$memoryAll`, which is useful for forcing a full state synchronization. Volatile events (`event()` from `@signe/sync`) are never part of `$memoryAll`, so a full synchronization or a new connection never replays them.
 
 ### Connecting to World Service
 

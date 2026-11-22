@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { connectionRoom, connectionWorld, WorldConnectionOptions } from "../src/client";
-import { load, compressMessage } from "@signe/sync";
+import { load, loadEvents, compressMessage } from "@signe/sync";
 import PartySocket from "partysocket";
 import { TokenStorage } from "../src/client/storage";
 
@@ -16,6 +16,7 @@ vi.mock("../src/client/storage", () => ({
 vi.mock("@signe/sync", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@signe/sync")>()),
   load: vi.fn(),
+  loadEvents: vi.fn(),
 }));
 
 // Mock location
@@ -133,6 +134,26 @@ describe("Sync Client", () => {
       
       // Verify the load function was called with correct parameters
       expect(load).toHaveBeenCalledWith(roomInstance, messageData.value, true);
+    });
+
+    it("should dispatch volatile events after loading the state", async () => {
+      const roomInstance = {};
+      await connectionRoom(defaultOptions, roomInstance);
+      const calls: string[] = [];
+      vi.mocked(load).mockImplementationOnce(() => { calls.push("load"); });
+      vi.mocked(loadEvents).mockImplementationOnce(() => { calls.push("events"); });
+
+      const messageData = {
+        type: "sync",
+        value: { hp: 60 },
+        events: { hit: [{ damage: 40 }] },
+      };
+      eventListeners.get("message")[0](
+        new MessageEvent("message", { data: JSON.stringify(messageData) })
+      );
+
+      expect(loadEvents).toHaveBeenCalledWith(roomInstance, messageData.events);
+      expect(calls).toEqual(["load", "events"]);
     });
 
     it("should ignore non-sync messages in the default handler", async () => {

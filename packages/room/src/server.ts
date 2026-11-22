@@ -99,6 +99,17 @@ const TRANSFER_GC_LAST_RUN_KEY = `${INTERNAL_PREFIX}transfer-gc:last-run`;
 const DEFAULT_TRANSFER_EXPIRY_MS = 5 * 60 * 1000;
 
 /**
+ * Converts queued volatile events to a packet object and empties the queue.
+ * Returns undefined when there is nothing to send.
+ */
+function takeEvents(queue: Map<string, any[]>): Record<string, any[]> | undefined {
+  if (queue.size === 0) return undefined;
+  const events = Object.fromEntries(queue);
+  queue.clear();
+  return events;
+}
+
+/**
  * @class Server
  * @implements {Party.Server}
  * @description Represents a server that manages rooms and connections for a multiplayer game or application.
@@ -828,6 +839,7 @@ export class Server implements Party.Server {
     const shouldPersistState = instance["persistState"] !== false;
     instance.$autoSync = instance["autoSync"] !== false; // Default to true
     instance.$pendingSync = new Map<string, any>();
+    instance.$pendingEvents = new Map<string, any[]>(); // Volatile events waiting for $applySync() when autoSync is disabled
     instance.$pendingInitialSync = new Map<Party.Connection, string>(); // Store connections waiting for initial sync with their publicId
     instance.$send = (conn: Party.Connection, obj: any) => {
       return this.send(conn, obj, instance)
@@ -860,6 +872,7 @@ export class Server implements Party.Server {
      */
     instance.$applySync = () => {
       let packet: any;
+      const events = takeEvents(instance.$pendingEvents);
       if (instance.$pendingSync.size > 0) {
         // buildObject also merges the changes into $memoryAll
         packet = buildObject(instance.$pendingSync, instance.$memoryAll);
@@ -878,6 +891,7 @@ export class Server implements Party.Server {
             pId: publicId,
             ...packet,
           },
+          ...(events ? { events } : {}),
         }, instance);
       }
       instance.$pendingInitialSync.clear();
@@ -886,6 +900,7 @@ export class Server implements Party.Server {
       this.broadcast({
         type: "sync",
         value: packet,
+        ...(events ? { events } : {}),
       }, instance, pendingConnections);
     }
     instance.$sessionTransfer = async (conn: Party.Connection, targetRoomId: string) => {
@@ -954,9 +969,11 @@ export class Server implements Party.Server {
       }
     };
 
-    // Sync callback: Broadcast changes to all clients or store them for manual sync
-    const syncCb = (values: Map<string, any>) => {
-      if (values.size === 0) {
+    // Sync callback: Broadcast changes to all clients or store them for manual sync.
+    // Volatile events (`event()`) travel in the same packet under `events`
+    // and are never merged into $memoryAll nor persisted.
+    const syncCb = (values: Map<string, any>, eventsQueue: Map<string, any[]>) => {
+      if (values.size === 0 && eventsQueue.size === 0) {
         return;
       }
       const skipInit = init && this.isHibernate;
@@ -967,6 +984,7 @@ export class Server implements Party.Server {
       // During initialization in hibernate mode, skip entirely
       if (skipInit) {
         init = false;
+        eventsQueue.clear();
         return;
       }
       
@@ -977,20 +995,32 @@ export class Server implements Party.Server {
           instance.$pendingSync.set(path, value);
         }
         values.clear();
+        for (const [path, payloads] of eventsQueue) {
+          const pending = instance.$pendingEvents.get(path);
+          if (pending) {
+            pending.push(...payloads);
+          } else {
+            instance.$pendingEvents.set(path, [...payloads]);
+          }
+        }
+        eventsQueue.clear();
         return;
       }
       
       // Auto sync: broadcast immediately (even during init if autoSync is enabled)
       const packet = buildObject(values, instance.$memoryAll);
+      const events = takeEvents(eventsQueue);
       this.broadcast(
         {
           type: "sync",
           value: packet,
+          ...(events ? { events } : {}),
         },
         instance
       );
       values.clear();
     }
+
 
     const flushPersist = async (values: Map<string, any>) => {
       const startedAt = Date.now();
@@ -1076,15 +1106,21 @@ export class Server implements Party.Server {
     };
 
     // Changes made in the same task are sent as one packet (at the end of the task),
-    // and with throttleSync at most one packet per window.
-    let syncValuesRef: Map<string, any> | null = null;
+    // and with throttleSync at most one packet per window. State changes and events
+    // share this flush, so an event and the state change emitted with it arrive together.
+    let syncValuesRef: Map<string, any> = new Map();
+    let syncEventsRef: Map<string, any[]> = new Map();
     const scheduleSync = batch(() => {
-      if (syncValuesRef) syncCb(syncValuesRef);
+      syncCb(syncValuesRef, syncEventsRef);
     }, instance["throttleSync"] || 0);
 
     syncClass(instance, {
       onSync: (values) => {
         syncValuesRef = values;
+        scheduleSync();
+      },
+      onEvent: (events) => {
+        syncEventsRef = events;
         scheduleSync();
       },
       onPersist: shouldPersistState ? batchedPersist : disabledPersist,

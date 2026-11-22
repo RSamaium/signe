@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { Room, testRoom, tick } from "../../packages/room/src";
 import { MockConnection } from "../../packages/room/src/mock";
-import { decodeMessage, sync } from "@signe/sync";
+import { decodeMessage, event, sync } from "@signe/sync";
 import { signal } from "@signe/reactive";
 
 const big = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`item${i}`, i]));
@@ -27,6 +27,12 @@ class InterceptRoom {
 class InterceptCompressedRoom {
   @sync() data = signal<Record<string, number>>({});
   interceptorPacket(_user: any, packet: any) { return packet; }
+}
+
+@Room({ path: "compression-events", compression: true })
+class EventsRoom {
+  @sync() data = signal<Record<string, number>>({});
+  @sync() hit = event<{ damage: number }>();
 }
 
 const collect = (client: any) => {
@@ -103,6 +109,22 @@ describe("room compression", () => {
     expect(initial).toBeInstanceOf(Uint8Array);
     expect(decodeMessage(initial).value.data.item199).toBe(199);
     expect(decodeMessage(initial).value.pId).toBeTruthy();
+  });
+
+  it("carries volatile events inside compressed packets", async () => {
+    const test = await testRoom(EventsRoom);
+    const frames = collect(await connect(test, true));
+    const room = test.room as any;
+
+    room.data.set(big(200));
+    room.hit.emit({ damage: 40 });
+    await tick();
+
+    const last = syncFrames(frames).at(-1);
+    expect(last).toBeInstanceOf(Uint8Array);
+    const packet = decodeMessage(last);
+    expect(packet.value.data.item199).toBe(199);
+    expect(packet.events).toEqual({ hit: [{ damage: 40 }] });
   });
 
   it("ignores the client request when the room does not enable compression", async () => {

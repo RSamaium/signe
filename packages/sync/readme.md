@@ -289,6 +289,44 @@ Benefits:
 - Can be used in UI to show online/offline indicators
 - No need to manually track connection status with custom events
 
+#### Volatile events with event()
+Use `event()` for things that happen once (a hit, a sound, an animation) rather than state. An event has no current value: it is sent to clients, triggers their listeners, and is never stored, persisted or sent to clients that join later.
+
+```typescript
+import { signal } from '@signe/reactive'
+import { sync, event } from '@signe/sync'
+
+class Player {
+  @sync() hp = signal(100)
+  @sync() hit = event<{ damage: number; crit: boolean }>()
+}
+
+// Server
+player.hp.update(v => v - 40)
+player.hit.emit({ damage: 40, crit: false })
+
+// Client
+player.hit.on(({ damage, crit }) => {
+  // player.hp() is already 60 here
+  showDamage(damage, crit)
+})
+```
+
+Behavior:
+- Every `emit()` is delivered, even with an identical payload or several in the same tick (in emission order)
+- The event travels in the same sync packet as the state changes made with it, and client listeners run after that state is applied
+- `on()` returns an unsubscribe function; `off(listener)` removes a listener
+- `emit()` also calls listeners registered on the same instance (for example on the server)
+- `syncToClient: false` keeps the event local; `transform` is applied to the payload; `persist` is ignored
+
+Sync packets carry events under a separate `events` key, by path:
+
+```json
+{ "type": "sync", "value": { "hp": 60 }, "events": { "hit": [{ "damage": 40, "crit": false }] } }
+```
+
+`connectionRoom()` dispatches them automatically. If you handle packets yourself, call `loadEvents(instance, packet.events)` after `load()`.
+
 ### Client Connection
 
 Set up a WebSocket connection for real-time synchronization:
@@ -431,6 +469,10 @@ Synchronizes an instance by adding state management methods.
 Options:
 - `onSync?: (value: Map<string, any>) => void` - Callback for sync events
 - `onPersist?: (value: Set<string>) => void` - Callback for persistence events
+- `onEvent?: (events: Map<string, any[]>) => void` - Called on each `event()` emission with the pending payloads by path. The consumer clears the map once sent. Without it, events are not collected.
+
+### loadEvents(instance, events)
+Dispatches the `events` of a sync packet (`{ [path]: payload[] }`) to the matching `event()` listeners. Unknown paths are ignored.
 
 ### Decorator Options
 

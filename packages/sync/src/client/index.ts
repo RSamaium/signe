@@ -1,4 +1,4 @@
-import { load, decodeMessage, COMPRESSION_QUERY_PARAM, COMPRESSION_QUERY_VALUE } from "@signe/sync";
+import { load, loadEvents, decodeMessage, COMPRESSION_QUERY_PARAM, COMPRESSION_QUERY_VALUE } from "@signe/sync";
 import PartySocket, { PartySocketOptions } from "partysocket";
 
 export interface CompressionOptions {
@@ -85,6 +85,8 @@ function createConnection(options: RoomConnectionOptions, roomInstance: RoomInst
     switch (object.type) {
       case "sync":
         load(roomInstance, object.value, true);
+        // Volatile events run after the state of the same packet is applied
+        loadEvents(roomInstance, object.events);
         break;
     }
   });
