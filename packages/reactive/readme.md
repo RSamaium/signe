@@ -372,6 +372,28 @@ console.log(isSignal(notASignal)); // Output: false
 
 ---
 
+## Batching writes
+
+`batch(fn)` groups signal writes: computed signals and effects that depend on several written signals update once, when the batch ends, instead of once per write.
+
+```typescript
+import { signal, effect, batch } from '@signe/reactive';
+
+const x = signal(0);
+const y = signal(0);
+effect(() => console.log(x(), y()));
+
+batch(() => {
+  x.set(10);
+  y.set(20);
+}); // logs "10 20" once
+```
+
+- Change events (`signal.observable`, `subscribeToSignal`) are still delivered at each write.
+- Reading a computed signal inside the batch first applies the pending updates, so it never returns a stale value.
+- Batches can be nested: updates run when the outermost batch ends, also when `fn` throws.
+- `load()` from `@signe/sync` applies each received packet in one batch.
+
 ## Subscribing and rxjs
 
 Signals notify computed signals and effects without going through rxjs. `signal.observable` is still a real rxjs `Observable`: it emits the current value (or the last change event for arrays and objects) on subscribe, then each change, and works with every rxjs operator (`pipe`, `combineLatest`...). rxjs is only involved for code that subscribes to `.observable`.

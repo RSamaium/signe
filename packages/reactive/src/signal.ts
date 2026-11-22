@@ -72,6 +72,83 @@ const getGlobalReactiveStore = () => {
 // Get the global store only once
 const reactiveStore = getGlobalReactiveStore();
 
+/**
+ * Batching state lives in the global store so that every copy of this version shares it.
+ * Older versions ignore these fields.
+ */
+const getBatchQueue = (): Set<() => void> => (reactiveStore.batchQueue ??= new Set());
+const isBatching = () => (reactiveStore.batchDepth ?? 0) > 0;
+
+const reportBatchError = (error: unknown) => {
+    setTimeout(() => {
+        throw error;
+    });
+};
+
+/**
+ * Runs the queued computed and effect updates once each. Updates queued while flushing
+ * (a computed that changed during the flush) are run in the same flush.
+ */
+function flushBatchQueue() {
+    if (reactiveStore.batchFlushing) return;
+    const queue = getBatchQueue();
+    if (queue.size === 0) return;
+    reactiveStore.batchFlushing = true;
+    try {
+        while (queue.size > 0) {
+            const update = queue.values().next().value as () => void;
+            queue.delete(update);
+            try {
+                update();
+            } catch (error) {
+                reportBatchError(error);
+            }
+        }
+    } finally {
+        reactiveStore.batchFlushing = false;
+    }
+}
+
+/**
+ * Groups signal writes: computed signals and effects that depend on several of the written
+ * signals are updated once, at the end of the batch, instead of once per write.
+ *
+ * - Change events (`signal.observable`, `subscribeToSignal`) are still delivered at each write.
+ * - Reading a computed signal inside the batch first runs the pending updates, so it never
+ *   returns a stale value.
+ * - Batches can be nested; updates run when the outermost batch ends.
+ *
+ * @param fn - Function that writes signals.
+ * @returns The value returned by `fn`.
+ *
+ * @example
+ * const x = signal(0), y = signal(0);
+ * effect(() => render(x(), y()));
+ * batch(() => {
+ *   x.set(10);
+ *   y.set(20);
+ * }); // render runs once, with (10, 20)
+ */
+export function batch<T>(fn: () => T): T {
+    reactiveStore.batchDepth = (reactiveStore.batchDepth ?? 0) + 1;
+    try {
+        return fn();
+    } finally {
+        try {
+            // Still inside the batch while flushing: updates triggered by the flush are queued
+            // and run once in this same flush.
+            if (reactiveStore.batchDepth === 1) flushBatchQueue();
+        } finally {
+            reactiveStore.batchDepth--;
+        }
+    }
+}
+
+/** Before reading a computed value inside a batch, apply the pending updates. */
+const flushBeforeRead = () => {
+    if (isBatching() && !reactiveStore.batchFlushing) flushBatchQueue();
+};
+
 // Replace module global variables with store access
 const trackDependency = (signal) => {
   if (reactiveStore.currentDependencyTracker) {
@@ -245,16 +322,26 @@ function createDependencyTracker(owner: any, onChange: () => void) {
     let rerunRequested = false;
     let disposed = false;
 
+    const update = () => {
+        if (disposed) return;
+        do {
+            rerunRequested = false;
+            onChange();
+        } while (rerunRequested && !disposed);
+    };
+
     const handleChange = () => {
         if (disposed) return;
         if (running) {
             rerunRequested = true;
             return;
         }
-        do {
-            rerunRequested = false;
-            onChange();
-        } while (rerunRequested && !disposed);
+        if (isBatching()) {
+            // Run once when the batch ends (a Set keeps a single entry per tracker)
+            getBatchQueue().add(update);
+            return;
+        }
+        update();
     };
 
     // Allocated once: no per-run allocation when the dependencies do not change.
@@ -338,6 +425,7 @@ export function computed<T = any>(computeFunction: () => T, disposableFn?: () =>
 
     const fn: any = function () {
         trackDependency(fn);
+        flushBeforeRead();
         return lastComputedValue;
     };
 
@@ -578,6 +666,7 @@ export function linkedSignal<TSource, TValue>(
 
     const fn: any = function () {
         trackDependency(fn);
+        flushBeforeRead();
 
         // If we have an override and dependencies, check whether sources changed (using depVersion)
         if (isOverridden && dependencies.size > 0) {
