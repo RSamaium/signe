@@ -229,7 +229,12 @@ export function isComputed(value: any): boolean {
 function createDependencyTracker(owner: any, onChange: () => void) {
     // Same Set instance for the whole lifetime: it is exposed as `fn.dependencies`.
     const dependencies: Set<WritableSignal<any>> = new Set();
-    const subscriptions = new Map<WritableSignal<any>, Subscription>();
+    // One entry per tracked signal; `epoch` is the last run that read it.
+    const entries = new Map<WritableSignal<any>, { subscription: Subscription; epoch: number }>();
+    let epoch = 0;
+    let reusedCount = 0;
+    // Signals read for the first time during the current run (reused, cleared after each run)
+    const newDependencies: Set<WritableSignal<any>> = new Set();
     // Signal observables emit their current value on subscribe: ignore it.
     let subscribing = false;
     let running = false;
@@ -248,12 +253,26 @@ function createDependencyTracker(owner: any, onChange: () => void) {
         } while (rerunRequested && !disposed);
     };
 
+    // Allocated once: no per-run allocation when the dependencies do not change.
+    const track = (signal: WritableSignal<any>) => {
+        if (signal === owner) return;
+        const entry = entries.get(signal);
+        if (entry) {
+            if (entry.epoch !== epoch) {
+                entry.epoch = epoch;
+                reusedCount++;
+            }
+        } else {
+            newDependencies.add(signal);
+        }
+    };
+
     const run = <T>(compute: () => T): T => {
-        const nextDependencies: Set<WritableSignal<any>> = new Set();
+        epoch++;
+        reusedCount = 0;
+        newDependencies.clear();
         const previousTracker = reactiveStore.currentDependencyTracker;
-        reactiveStore.currentDependencyTracker = (signal) => {
-            if (signal !== owner) nextDependencies.add(signal);
-        };
+        reactiveStore.currentDependencyTracker = track;
         running = true;
         let value: T;
         try {
@@ -264,36 +283,41 @@ function createDependencyTracker(owner: any, onChange: () => void) {
         }
         if (disposed) return value;
 
-        for (const [dependency, subscription] of subscriptions) {
-            if (!nextDependencies.has(dependency)) {
-                subscription.unsubscribe();
-                subscriptions.delete(dependency);
-            }
-        }
-        subscribing = true;
-        try {
-            for (const dependency of nextDependencies) {
-                if (!subscriptions.has(dependency)) {
-                    subscriptions.set(dependency, dependency.observable.subscribe(handleChange));
+        // Signals not read during this run
+        if (reusedCount !== entries.size) {
+            for (const [dependency, entry] of entries) {
+                if (entry.epoch !== epoch) {
+                    entry.subscription.unsubscribe();
+                    entries.delete(dependency);
+                    dependencies.delete(dependency);
                 }
             }
-        } finally {
-            subscribing = false;
         }
-
-        dependencies.clear();
-        for (const dependency of nextDependencies) {
-            dependencies.add(dependency);
+        // Signals read for the first time
+        if (newDependencies.size) {
+            subscribing = true;
+            try {
+                for (const dependency of newDependencies) {
+                    entries.set(dependency, {
+                        subscription: dependency.observable.subscribe(handleChange),
+                        epoch,
+                    });
+                    dependencies.add(dependency);
+                }
+            } finally {
+                subscribing = false;
+                newDependencies.clear();
+            }
         }
         return value;
     };
 
     const dispose = () => {
         disposed = true;
-        for (const subscription of subscriptions.values()) {
-            subscription.unsubscribe();
+        for (const entry of entries.values()) {
+            entry.subscription.unsubscribe();
         }
-        subscriptions.clear();
+        entries.clear();
     };
 
     return { dependencies, run, dispose };
