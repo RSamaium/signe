@@ -822,6 +822,9 @@ export class Server implements Party.Server {
      * ```
      */
     instance.$applySync = () => {
+      // Changes made in the current task are still waiting for the batched sync:
+      // take them now, so that `x.set(1); $applySync()` sends them.
+      flushBatchedSync();
       let packet: any;
       if (instance.$pendingSync.size > 0) {
         // buildObject also merges the changes into $memoryAll
@@ -835,11 +838,12 @@ export class Server implements Party.Server {
       // Send initial sync to connections that were waiting for it (with their pId)
       const pendingConnections = new Set<Party.Connection>(instance.$pendingInitialSync.keys());
       for (const [conn, publicId] of instance.$pendingInitialSync) {
+        // A client waiting for its initial sync needs the whole state, not only the changes
         this.send(conn, {
           type: "sync",
           value: {
             pId: publicId,
-            ...packet,
+            ...instance.$memoryAll,
           },
         }, instance);
       }
@@ -1041,9 +1045,10 @@ export class Server implements Party.Server {
     // Changes made in the same task are sent as one packet (at the end of the task),
     // and with throttleSync at most one packet per window.
     let syncValuesRef: Map<string, any> | null = null;
-    const scheduleSync = batch(() => {
+    const flushBatchedSync = () => {
       if (syncValuesRef) syncCb(syncValuesRef);
-    }, instance["throttleSync"] || 0);
+    };
+    const scheduleSync = batch(flushBatchedSync, instance["throttleSync"] || 0);
 
     syncClass(instance, {
       onSync: (values) => {
