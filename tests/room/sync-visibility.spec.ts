@@ -5,14 +5,16 @@ import { MockConnection } from "../../packages/room/src/mock";
 // Record what each connection receives from its very first message (the initial sync is
 // sent while the client is connecting, before a listener could be attached).
 const sentTo = new Map<string, any[]>();
+const binaryFrames = new Map<string, number>();
 const originalSend = MockConnection.prototype.send;
 MockConnection.prototype.send = function (data: any) {
   const list = sentTo.get(this.id) ?? [];
-  list.push(JSON.parse(data));
+  list.push(decodeMessage(data));
   sentTo.set(this.id, list);
+  if (typeof data !== "string") binaryFrames.set(this.id, (binaryFrames.get(this.id) ?? 0) + 1);
   return originalSend.call(this, data);
 };
-import { id, load, sync, users } from "@signe/sync";
+import { decodeMessage, event, id, load, sync, users } from "@signe/sync";
 import { signal } from "@signe/reactive";
 
 class Player {
@@ -223,6 +225,69 @@ describe("syncVisibility: client state", () => {
       expect(clientState.players()[id].name()).toBe(server[id].name());
     }
     expect(clientState.score()).toBe(room.score());
+  });
+});
+
+class Npc {
+  @id() id = signal("");
+  @sync() label = signal("");
+}
+
+const bigNpcs = () => Object.fromEntries(Array.from({ length: 80 }, (_, i) => {
+  const npc = new Npc();
+  npc.label.set("npc number " + i);
+  return ["n" + i, npc];
+}));
+
+@Room({ path: "visibility-events", compression: true })
+class VisibilityEventsRoom {
+  @sync(Npc) npcs = signal<Record<string, Npc>>({});
+  @sync() hit = event<{ damage: number }>();
+  syncVisibility() {
+    return { npcs: Object.keys(this.npcs()) };
+  }
+}
+
+@Room({ path: "visibility-compressed", compression: { intercepted: true, threshold: 100 } })
+class VisibilityCompressedRoom {
+  @sync(Npc) npcs = signal<Record<string, Npc>>({});
+  syncVisibility() {
+    return { npcs: Object.keys(this.npcs()) };
+  }
+}
+
+describe("syncVisibility with events and compression", () => {
+  const clients: any[] = [];
+  afterEach(() => { for (const c of clients.splice(0)) c.conn?.close(); });
+  const connectCompressed = async (test: any) => {
+    const client = await test.createClient(undefined, { query: { compression: "deflate" } });
+    clients.push(client);
+    const packets = sentTo.get(client.conn.id) ?? [];
+    sentTo.set(client.conn.id, packets);
+    return { client, packets };
+  };
+
+  it("keeps volatile events in filtered packets, and does not compress them by default", async () => {
+    const test = await testRoom(VisibilityEventsRoom);
+    const room = test.room as VisibilityEventsRoom;
+    const a = await connectCompressed(test);
+    room.npcs.set(bigNpcs());
+    room.hit.emit({ damage: 3 });
+    await tick();
+    const last = lastSync(a.packets);
+    expect(Object.keys(last.value.npcs)).toHaveLength(80);
+    expect(last.events).toEqual({ hit: [{ damage: 3 }] });
+    expect(binaryFrames.get(a.client.conn.id) ?? 0).toBe(0);
+  });
+
+  it("compresses filtered packets with compression.intercepted", async () => {
+    const test = await testRoom(VisibilityCompressedRoom);
+    const room = test.room as VisibilityCompressedRoom;
+    const a = await connectCompressed(test);
+    room.npcs.set(bigNpcs());
+    await tick();
+    expect(binaryFrames.get(a.client.conn.id) ?? 0).toBeGreaterThan(0);
+    expect(Object.keys(lastSync(a.packets).value.npcs)).toHaveLength(80);
   });
 });
 

@@ -7,7 +7,10 @@ import {
   syncClass,
   DELETE_TOKEN,
   generateShortUUID,
-  createStatesSnapshotDeep
+  createStatesSnapshotDeep,
+  compressMessage,
+  COMPRESSION_QUERY_PARAM,
+  COMPRESSION_QUERY_VALUE,
 } from "@signe/sync";
 import type * as Party from "./types/party";
 import {
@@ -126,6 +129,17 @@ class SyncFragments {
   deleted(id: string): string {
     return `${JSON.stringify(id)}:${JSON.stringify(DELETE_TOKEN)}`;
   }
+}
+
+/**
+ * Converts queued volatile events to a packet object and empties the queue.
+ * Returns undefined when there is nothing to send.
+ */
+function takeEvents(queue: Map<string, any[]>): Record<string, any[]> | undefined {
+  if (queue.size === 0) return undefined;
+  const events = Object.fromEntries(queue);
+  queue.clear();
+  return events;
 }
 
 /**
@@ -412,12 +426,25 @@ export class Server implements Party.Server {
       .some((conn) => this.getPrivateId(conn) === privateId);
   }
 
+  /**
+   * Whether `data` should be sent compressed to `conn`: the room enables compression,
+   * the client asked for it, the message is large enough, and (for packets returned by
+   * `interceptorPacket`) per-client compression is enabled.
+   */
+  private shouldCompress(conn: Party.Connection, subRoom: any, data: string, intercepted: boolean): boolean {
+    const compression = subRoom?.$compression;
+    if (!compression || !(conn.state as any)?.compression) return false;
+    if (intercepted && !compression.intercepted) return false;
+    return data.length >= compression.threshold;
+  }
+
   async send(conn: Party.Connection, obj: any, subRoom: any) {
     if (this.usesSyncVisibility(obj, subRoom)) {
-      conn.send(this.buildVisibleSyncPacket(conn, obj, subRoom, new SyncFragments()));
+      this.sendPerClient(conn, this.buildVisibleSyncPacket(conn, obj, subRoom, new SyncFragments()), subRoom);
       return;
     }
-    if (subRoom.interceptorPacket) {
+    const intercepted = !!subRoom?.interceptorPacket;
+    if (subRoom?.interceptorPacket) {
       // The interceptor may modify the packet: give it its own copy, unless the room says it does not
       if (subRoom.copyPacketForInterceptor !== false) {
         obj = structuredClone(obj);
@@ -428,7 +455,12 @@ export class Server implements Party.Server {
       obj = await awaitReturn(subRoom["interceptorPacket"]?.(user, obj, conn));
       if (obj === null) return;
     }
-    conn.send(JSON.stringify(obj));
+    const data = JSON.stringify(obj);
+    conn.send(
+      this.shouldCompress(conn, subRoom, data, intercepted)
+        ? compressMessage(data, subRoom.$compression.level)
+        : data
+    );
   }
 
   /**
@@ -441,7 +473,7 @@ export class Server implements Party.Server {
       const fragments = new SyncFragments();
       for (let conn of this.room.getConnections()) {
         if (exclude?.has(conn)) continue;
-        conn.send(this.buildVisibleSyncPacket(conn, obj, subRoom, fragments));
+        this.sendPerClient(conn, this.buildVisibleSyncPacket(conn, obj, subRoom, fragments), subRoom);
       }
       return;
     }
@@ -453,11 +485,30 @@ export class Server implements Party.Server {
       return;
     }
     let data: string | undefined;
+    let compressed: Uint8Array | undefined;
     for (let conn of this.room.getConnections()) {
       if (exclude?.has(conn)) continue;
       data ??= JSON.stringify(obj);
-      conn.send(data);
+      if (this.shouldCompress(conn, subRoom, data, false)) {
+        // Compressed once, then the same bytes are sent to every client that asked for it
+        compressed ??= compressMessage(data, subRoom.$compression.level);
+        conn.send(compressed);
+      } else {
+        conn.send(data);
+      }
     }
+  }
+
+  /**
+   * Sends a packet built for this client only. Like intercepted packets, it is compressed only
+   * with `compression.intercepted`, since each client would need its own compression.
+   */
+  private sendPerClient(conn: Party.Connection, data: string, subRoom: any) {
+    conn.send(
+      this.shouldCompress(conn, subRoom, data, true)
+        ? compressMessage(data, subRoom.$compression.level)
+        : data
+    );
   }
 
   /** Sync packets of a room that defines `syncVisibility` are filtered per client. */
@@ -923,10 +974,20 @@ export class Server implements Party.Server {
     };
 
     instance.$memoryAll = {}
+    const compressionOption = instance["compression"];
+    instance.$compression = compressionOption
+      ? {
+          threshold: 512,
+          level: 1,
+          intercepted: false,
+          ...(typeof compressionOption === "object" ? compressionOption : {}),
+        }
+      : null;
     instance.$storageMetrics = this.createStorageMetrics();
     const shouldPersistState = instance["persistState"] !== false;
     instance.$autoSync = instance["autoSync"] !== false; // Default to true
     instance.$pendingSync = new Map<string, any>();
+    instance.$pendingEvents = new Map<string, any[]>(); // Volatile events waiting for $applySync() when autoSync is disabled
     instance.$pendingInitialSync = new Map<Party.Connection, string>(); // Store connections waiting for initial sync with their publicId
     instance.$send = (conn: Party.Connection, obj: any) => {
       return this.send(conn, obj, instance)
@@ -959,6 +1020,7 @@ export class Server implements Party.Server {
      */
     instance.$applySync = () => {
       let packet: any;
+      const events = takeEvents(instance.$pendingEvents);
       if (instance.$pendingSync.size > 0) {
         // buildObject also merges the changes into $memoryAll
         packet = buildObject(instance.$pendingSync, instance.$memoryAll);
@@ -977,6 +1039,7 @@ export class Server implements Party.Server {
             pId: publicId,
             ...packet,
           },
+          ...(events ? { events } : {}),
         }, instance);
       }
       instance.$pendingInitialSync.clear();
@@ -985,6 +1048,7 @@ export class Server implements Party.Server {
       this.broadcast({
         type: "sync",
         value: packet,
+        ...(events ? { events } : {}),
       }, instance, pendingConnections);
     }
     instance.$sessionTransfer = async (conn: Party.Connection, targetRoomId: string) => {
@@ -1053,9 +1117,11 @@ export class Server implements Party.Server {
       }
     };
 
-    // Sync callback: Broadcast changes to all clients or store them for manual sync
-    const syncCb = (values: Map<string, any>) => {
-      if (values.size === 0) {
+    // Sync callback: Broadcast changes to all clients or store them for manual sync.
+    // Volatile events (`event()`) travel in the same packet under `events`
+    // and are never merged into $memoryAll nor persisted.
+    const syncCb = (values: Map<string, any>, eventsQueue: Map<string, any[]>) => {
+      if (values.size === 0 && eventsQueue.size === 0) {
         return;
       }
       const skipInit = init && this.isHibernate;
@@ -1066,6 +1132,7 @@ export class Server implements Party.Server {
       // During initialization in hibernate mode, skip entirely
       if (skipInit) {
         init = false;
+        eventsQueue.clear();
         return;
       }
       
@@ -1076,20 +1143,32 @@ export class Server implements Party.Server {
           instance.$pendingSync.set(path, value);
         }
         values.clear();
+        for (const [path, payloads] of eventsQueue) {
+          const pending = instance.$pendingEvents.get(path);
+          if (pending) {
+            pending.push(...payloads);
+          } else {
+            instance.$pendingEvents.set(path, [...payloads]);
+          }
+        }
+        eventsQueue.clear();
         return;
       }
       
       // Auto sync: broadcast immediately (even during init if autoSync is enabled)
       const packet = buildObject(values, instance.$memoryAll);
+      const events = takeEvents(eventsQueue);
       this.broadcast(
         {
           type: "sync",
           value: packet,
+          ...(events ? { events } : {}),
         },
         instance
       );
       values.clear();
     }
+
 
     const flushPersist = async (values: Map<string, any>) => {
       const startedAt = Date.now();
@@ -1175,15 +1254,21 @@ export class Server implements Party.Server {
     };
 
     // Changes made in the same task are sent as one packet (at the end of the task),
-    // and with throttleSync at most one packet per window.
-    let syncValuesRef: Map<string, any> | null = null;
+    // and with throttleSync at most one packet per window. State changes and events
+    // share this flush, so an event and the state change emitted with it arrive together.
+    let syncValuesRef: Map<string, any> = new Map();
+    let syncEventsRef: Map<string, any[]> = new Map();
     const scheduleSync = batch(() => {
-      if (syncValuesRef) syncCb(syncValuesRef);
+      syncCb(syncValuesRef, syncEventsRef);
     }, instance["throttleSync"] || 0);
 
     syncClass(instance, {
       onSync: (values) => {
         syncValuesRef = values;
+        scheduleSync();
+      },
+      onEvent: (events) => {
+        syncEventsRef = events;
         scheduleSync();
       },
       onPersist: shouldPersistState ? batchedPersist : disabledPersist,
@@ -1465,9 +1550,11 @@ export class Server implements Party.Server {
 
     // Handle session transfer
     let transferToken = null;
+    let wantsCompression = false;
     if (ctx.request?.url) {
       const url = new URL(ctx.request.url);
       transferToken = url.searchParams.get('transferToken');
+      wantsCompression = url.searchParams.get(COMPRESSION_QUERY_PARAM) === COMPRESSION_QUERY_VALUE;
     }
     let transferData: any = null;
     if (transferToken) {
@@ -1548,7 +1635,9 @@ export class Server implements Party.Server {
      conn.setState({
       ...conn.state,
       publicId,
-      privateId
+      privateId,
+      // The client accepts compressed messages (only used if the room enables compression)
+      ...(wantsCompression ? { compression: true } : {}),
     });
 
     // Call the room's onJoin method if it exists

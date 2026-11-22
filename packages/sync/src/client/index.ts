@@ -1,7 +1,17 @@
-import { load } from "@signe/sync";
+import { load, loadEvents, decodeMessage, COMPRESSION_QUERY_PARAM, COMPRESSION_QUERY_VALUE } from "@signe/sync";
 import PartySocket, { PartySocketOptions } from "partysocket";
 
-export interface WorldConnectionOptions extends PartySocketOptions {
+export interface CompressionOptions {
+  /**
+   * Ask the server for compressed messages (binary frames, DEFLATE).
+   * Only used when the room enables `compression`; otherwise messages stay JSON text.
+   */
+  compression?: boolean;
+}
+
+export type RoomConnectionOptions = PartySocketOptions & CompressionOptions;
+
+export interface WorldConnectionOptions extends PartySocketOptions, CompressionOptions {
   host: string;
   room: string;
   worldId?: string;
@@ -39,15 +49,44 @@ interface WorldConnectionResult extends ConnectionResult {
   };
 }
 
-function createConnection(options: PartySocketOptions, roomInstance: RoomInstance): ConnectionResult {
-  const conn = new PartySocket(options);
+function withCompressionQuery(options: RoomConnectionOptions): PartySocketOptions {
+  const { compression, ...socketOptions } = options;
+  if (!compression) return socketOptions;
+  const query = socketOptions.query;
+  const flag = { [COMPRESSION_QUERY_PARAM]: COMPRESSION_QUERY_VALUE };
+  return {
+    ...socketOptions,
+    query: typeof query === "function"
+      ? async () => ({ ...(await query()), ...flag })
+      : { ...(query || {}), ...flag },
+  };
+}
+
+function createConnection(options: RoomConnectionOptions, roomInstance: RoomInstance): ConnectionResult {
+  const conn = new PartySocket(withCompressionQuery(options));
+  if (options.compression) {
+    // Compressed messages are binary frames: read them synchronously as ArrayBuffer
+    (conn as any).binaryType = "arraybuffer";
+  }
+
+  // Every listener receives the same event: decode (and decompress) it once
+  const decoded = new WeakMap<object, any>();
+  const decodeEvent = (event: MessageEvent) => {
+    if (decoded.has(event)) return decoded.get(event);
+    const object = decodeMessage(event.data);
+    decoded.set(event, object);
+    return object;
+  };
+  const handlers = new Map<string, Map<(value: any) => void, (event: MessageEvent) => void>>();
   
   // Set up message handling
   conn.addEventListener("message", (event) => {
-    const object = JSON.parse(event.data);
+    const object = decodeEvent(event);
     switch (object.type) {
       case "sync":
         load(roomInstance, object.value, true);
+        // Volatile events run after the state of the same packet is applied
+        loadEvents(roomInstance, object.events);
         break;
     }
   });
@@ -62,20 +101,22 @@ function createConnection(options: PartySocketOptions, roomInstance: RoomInstanc
       );
     },
     on: (key, cb) => {
-      conn.addEventListener("message", (event) => {
-        const object = JSON.parse(event.data);
+      const handler = (event: MessageEvent) => {
+        const object = decodeEvent(event);
         if (object.type === key) {
           cb(object.value);
         }
-      });
+      };
+      if (!handlers.has(key)) handlers.set(key, new Map());
+      handlers.get(key)!.set(cb, handler);
+      conn.addEventListener("message", handler);
     },
     off: (key, cb) => {
-      conn.removeEventListener("message", (event) => {
-        const object = JSON.parse(event.data);
-        if (object.type === key) {
-          cb(object.value);
-        }
-      });
+      // Remove the handler registered by on() for this callback
+      const handler = handlers.get(key)?.get(cb);
+      if (!handler) return;
+      handlers.get(key)!.delete(cb);
+      conn.removeEventListener("message", handler);
     },
     close: () => conn.close(),
     conn
@@ -88,7 +129,7 @@ function createConnection(options: PartySocketOptions, roomInstance: RoomInstanc
  * @param roomInstance Instance to receive state updates
  * @returns Connection result with methods to interact with the room
  */
-export async function connectionRoom(options: PartySocketOptions, roomInstance: RoomInstance): Promise<ConnectionResult> {
+export async function connectionRoom(options: RoomConnectionOptions, roomInstance: RoomInstance): Promise<ConnectionResult> {
   return createConnection(options, roomInstance);
 }
 

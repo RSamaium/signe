@@ -358,6 +358,25 @@ The `@Room` decorator accepts various configuration options:
 
 **Sync batching.** All state changes made in the same task (for example one action, or one game tick) are sent as a single `sync` packet at the end of that task, even without `throttleSync`. With `throttleSync`, packets are also sent at most once per window, and changes in between are grouped into the next packet. Without `interceptorPacket`, a packet is serialized once and the same string is sent to every client.
 
+**Compression.** With `compression: true`, clients that ask for it (`connectionRoom(..., { compression: true })`) receive large messages compressed (binary frames, DEFLATE); other clients keep receiving JSON text.
+
+```ts
+@Room({
+  path: "game",
+  compression: true,
+  // or: compression: { threshold: 512, level: 1, intercepted: false }
+})
+```
+
+- A broadcast is compressed **once** and the same bytes are sent to every client that asked for it, so the cost does not grow with the number of clients.
+- `threshold` (default 512 characters of JSON): smaller messages stay as text, where compression would not help.
+- `level` (default 1): DEFLATE level. Level 1 keeps most of the size gain for about half the CPU of level 6.
+- `intercepted` (default `false`): with `interceptorPacket` or `syncVisibility`, each client gets its own packet, so compressing costs one compression per client and per message. Enable it only if bandwidth matters more than CPU.
+- Not applied through shards (`connectionWorld`): the shard connection does not ask for compression.
+- Works on Cloudflare Workers (Durable Objects, including `webSocketMode: "hibernate"`: the client's choice is kept in the connection attachment). With the `nodejs_compat` flag, native zlib is used; without it, the pure-JS fallback (fflate) is used.
+
+With 100 moving players, a tick goes from about 3 KB of JSON to about 1.1 KB, for about 50 µs of server CPU per tick (native zlib) and about 60 µs on the client to decompress and parse (fflate in browsers is slower to decompress: about 90 µs).
+
 **Storage batching.** Without `throttleStorage`, all changes of the same task are written to storage together. With `throttleStorage`, writes wait until no change happened for that long, but never more than `throttleStorageMaxWait`, so a state that changes continuously is still persisted.
 
 ### Authentication & Authorization
@@ -523,9 +542,10 @@ class GameRoom {
 **Instance Properties:**
 - `$autoSync` (boolean): Controls whether synchronization happens automatically (default: `true`)
 - `$pendingSync` (Map): Stores pending synchronization changes when `autoSync` is disabled
+- `$pendingEvents` (Map): Stores pending `event()` emissions when `autoSync` is disabled; they are sent once by the next `$applySync()`
 - `$applySync()` (method): Manually broadcasts all pending changes to all clients
 
-**Note:** When `autoSync` is disabled, changes are stored in `$pendingSync` until you call `$applySync()`. If you call `$applySync()` with no pending changes, it will broadcast the current state from `$memoryAll`, which is useful for forcing a full state synchronization.
+**Note:** When `autoSync` is disabled, changes are stored in `$pendingSync` until you call `$applySync()`. If you call `$applySync()` with no pending changes, it will broadcast the current state from `$memoryAll`, which is useful for forcing a full state synchronization. Volatile events (`event()` from `@signe/sync`) are never part of `$memoryAll`, so a full synchronization or a new connection never replays them.
 
 ### Connecting to World Service
 
@@ -861,7 +881,7 @@ For each collection returned by `syncVisibility`:
 - an entity that becomes visible is sent with its **full state** (from the room's synchronized state), so the client can create it;
 - an entity that is no longer visible, or was deleted, is sent as `"$delete"`, so the client removes it.
 
-The initial sync of a new client is filtered the same way. Sync packets of a room with `syncVisibility` do not go through `interceptorPacket`; other packets still do. The room remembers what each connection sees and forgets it when the connection closes (after a Cloudflare hibernation, visible entities are sent again in full).
+The initial sync of a new client is filtered the same way. Sync packets of a room with `syncVisibility` do not go through `interceptorPacket`; other packets still do. Volatile events (`event()`) are sent with the packet. With `compression`, these per-client packets are compressed only with `compression.intercepted: true`. The room remembers what each connection sees and forgets it when the connection closes (after a Cloudflare hibernation, visible entities are sent again in full).
 
 With 100 players and 50 clients each seeing 30 players, building the per-client packets goes from about 3.4 ms per tick (copy, interceptor and serialization per client) to about 0.12 ms, for the same packet size.
 

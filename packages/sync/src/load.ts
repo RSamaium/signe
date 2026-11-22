@@ -1,5 +1,6 @@
 import { isSignal } from "@signe/reactive";
 import { DELETE_TOKEN, setMetadata } from "./core";
+import { isSyncEvent } from "./event";
 import { isClass } from "./utils";
 
 /**
@@ -157,6 +158,32 @@ function mutateSignalContainer(
 }
 
 /**
+ * Dispatches volatile events received in a sync packet to the matching `event()` listeners.
+ *
+ * Call it after `load()` so listeners see the state of the same packet.
+ * Paths that do not resolve to an `event()` are ignored. Nothing is stored.
+ *
+ * @param {object} rootInstance - The instance holding the events.
+ * @param {object} events - Payloads by path, in emission order.
+ * @example
+ * load(instance, packet.value, true);
+ * loadEvents(instance, packet.events ?? {});
+ */
+export function loadEvents(
+  rootInstance: any,
+  events: Record<string, any[]> | undefined | null
+): void {
+  if (!events) return;
+  for (const [path, payloads] of Object.entries(events)) {
+    const target = getByPath(rootInstance, path);
+    if (!isSyncEvent(target) || !Array.isArray(payloads)) continue;
+    for (const payload of payloads) {
+      target.$dispatch(payload);
+    }
+  }
+}
+
+/**
  * Retrieves a value from the root instance by a path.
  * 
  * @param {object} root - The root instance.
@@ -172,7 +199,7 @@ export function getByPath(root: any, path: string) {
     if (isSignal(current)) {
       current = current();
     }
-    if (current[part]) {
+    if (current != null && current[part]) {
       current = current[part];
     } else {
       return undefined;
