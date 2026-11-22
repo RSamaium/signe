@@ -1,6 +1,11 @@
-import { BehaviorSubject, filter, Subscription } from "rxjs";
-import { ArraySubject } from "./ArraySubject";
-import { ObjectSubject } from "./ObjectSubject";
+import { Subscription } from "rxjs";
+import {
+    ArraySignalStore,
+    ObjectSignalStore,
+    SignalStore,
+    attachStore,
+    subscribeToSignal,
+} from "./store";
 import type { ComputedSignal, Signal, WritableArraySignal, WritableObjectSignal, WritableSignal } from "./types";
 
 /**
@@ -119,22 +124,24 @@ export function signal<T = any>(
     T extends Record<string, any> ? WritableObjectSignal<T> :
     WritableSignal<T> {
     
-    let subject;
+    // Plain stores instead of rxjs subjects: notifications do not go through rxjs.
+    // `signal.observable` stays a real rxjs Observable (see SignalStore.toObservable).
+    let store: SignalStore<any>;
+    let kind: 0 | 1 | 2; // 0 = value, 1 = array, 2 = object
     if (Array.isArray(defaultValue)) {
-        subject = new ArraySubject(defaultValue);
+        store = new ArraySignalStore(defaultValue);
+        kind = 1;
     } else if (typeof defaultValue === 'object' && defaultValue !== null) {
-        subject = new ObjectSubject(defaultValue);
+        store = new ObjectSignalStore(defaultValue as any);
+        kind = 2;
     } else {
-        subject = new BehaviorSubject(defaultValue);
+        store = new SignalStore(defaultValue);
+        kind = 0;
     }
 
     const getValue = () => {
-        if (subject instanceof ArraySubject) {
-            return subject.items;
-        } else if (subject instanceof ObjectSubject) {
-            return subject.obj;
-        }
-        return subject.value;
+        if (kind === 0) return store.last;
+        return kind === 1 ? (store as ArraySignalStore).items : (store as ObjectSignalStore).obj;
     };
 
     const fn: any = function () {
@@ -142,6 +149,8 @@ export function signal<T = any>(
         return getValue();
     };
 
+    // Methods stay bound to this signal (own closures): downstream code copies them
+    // onto other functions and calls them detached (e.g. `wrapper.set = signal.set`).
     fn.set = (value) => {
         const currentValue = getValue();
         
@@ -157,12 +166,12 @@ export function signal<T = any>(
         
         // Emit only if values are different
         if (shouldEmit) {
-            if (subject instanceof ArraySubject) {
-                subject.items = value;
-            } else if (subject instanceof ObjectSubject) {
-                subject.obj = value;
+            if (kind === 1) {
+                (store as ArraySignalStore).items = value;
+            } else if (kind === 2) {
+                (store as ObjectSignalStore).obj = value;
             } else {
-                subject.next(value);
+                store.emit(value);
             }
         }
     };
@@ -175,12 +184,12 @@ export function signal<T = any>(
 
     fn.unfreeze = () => {
         fn._isFrozen = false;
-        if (subject instanceof ArraySubject) {
-            subject.next({ type: 'init', items: subject.items });
-        } else if (subject instanceof ObjectSubject) {
-            subject.next({ type: 'init', value: subject.obj });
+        if (kind === 1) {
+            store.emit({ type: 'init', items: (store as ArraySignalStore).items });
+        } else if (kind === 2) {
+            store.emit({ type: 'init', value: (store as ObjectSignalStore).obj });
         } else {
-            subject.next(subject.value);
+            store.emit(store.last);
         }
     };
 
@@ -194,10 +203,7 @@ export function signal<T = any>(
         fn.set(updatedValue);
     };
 
-    fn.observable = subject.asObservable().pipe(
-        filter(() => !fn._isFrozen)
-    );
-    fn._subject = subject;
+    attachStore(fn, store);
 
     return fn as any;
 }
@@ -230,19 +236,17 @@ function createDependencyTracker(owner: any, onChange: () => void) {
     // Same Set instance for the whole lifetime: it is exposed as `fn.dependencies`.
     const dependencies: Set<WritableSignal<any>> = new Set();
     // One entry per tracked signal; `epoch` is the last run that read it.
-    const entries = new Map<WritableSignal<any>, { subscription: Subscription; epoch: number }>();
+    const entries = new Map<WritableSignal<any>, { unsubscribe: () => void; epoch: number }>();
     let epoch = 0;
     let reusedCount = 0;
     // Signals read for the first time during the current run (reused, cleared after each run)
     const newDependencies: Set<WritableSignal<any>> = new Set();
-    // Signal observables emit their current value on subscribe: ignore it.
-    let subscribing = false;
     let running = false;
     let rerunRequested = false;
     let disposed = false;
 
     const handleChange = () => {
-        if (subscribing || disposed) return;
+        if (disposed) return;
         if (running) {
             rerunRequested = true;
             return;
@@ -287,7 +291,7 @@ function createDependencyTracker(owner: any, onChange: () => void) {
         if (reusedCount !== entries.size) {
             for (const [dependency, entry] of entries) {
                 if (entry.epoch !== epoch) {
-                    entry.subscription.unsubscribe();
+                    entry.unsubscribe();
                     entries.delete(dependency);
                     dependencies.delete(dependency);
                 }
@@ -295,17 +299,16 @@ function createDependencyTracker(owner: any, onChange: () => void) {
         }
         // Signals read for the first time
         if (newDependencies.size) {
-            subscribing = true;
             try {
                 for (const dependency of newDependencies) {
                     entries.set(dependency, {
-                        subscription: dependency.observable.subscribe(handleChange),
+                        // Fast path for signals of this version, `observable` for others (2.x)
+                        unsubscribe: subscribeToSignal(dependency, handleChange),
                         epoch,
                     });
                     dependencies.add(dependency);
                 }
             } finally {
-                subscribing = false;
                 newDependencies.clear();
             }
         }
@@ -315,7 +318,7 @@ function createDependencyTracker(owner: any, onChange: () => void) {
     const dispose = () => {
         disposed = true;
         for (const entry of entries.values()) {
-            entry.subscription.unsubscribe();
+            entry.unsubscribe();
         }
         entries.clear();
     };
@@ -338,23 +341,24 @@ export function computed<T = any>(computeFunction: () => T, disposableFn?: () =>
         return lastComputedValue;
     };
 
-    const subject = new BehaviorSubject<T>(undefined as T);
+    const store = new SignalStore<T>(undefined as T);
     const tracker = createDependencyTracker(fn, () => {
         lastComputedValue = tracker.run(computeFunction);
-        subject.next(lastComputedValue);
+        store.emit(lastComputedValue);
     });
 
     lastComputedValue = tracker.run(computeFunction);
     if (computeFunction['isEffect']) {
         disposableFn = lastComputedValue as any;
     }
-    subject.next(lastComputedValue);
+    store.last = lastComputedValue;
 
-    fn.observable = subject.asObservable();
+    // A computed is read-only: no `_subject`, as before
+    attachStore(fn, store, false);
     fn.dependencies = tracker.dependencies;
     fn.subscription = new Subscription(() => {
         tracker.dispose();
-        subject.complete();
+        store.complete();
         disposableFn?.();
     });
 
@@ -618,7 +622,7 @@ export function linkedSignal<TSource, TValue>(
         overriddenValue = undefined;
         overrideDepVersion = null;
         lastComputedBeforeOverride = lastComputedValue;
-        subject.next(lastComputedValue);
+        store.emit(lastComputedValue);
     });
     const dependencies = tracker.dependencies;
 
@@ -626,16 +630,15 @@ export function linkedSignal<TSource, TValue>(
     lastComputedBeforeOverride = lastComputedValue;
 
     // Holds the current value (computed or overridden) and is shared by all subscribers
-    const subject = new BehaviorSubject<TValue>(lastComputedValue);
+    const store = new SignalStore<TValue>(lastComputedValue);
+    attachStore(fn, store);
 
-    fn.observable = subject.asObservable();
     fn.subscription = new Subscription(() => {
         tracker.dispose();
-        subject.complete();
+        store.complete();
     });
 
     fn.dependencies = dependencies;
-    fn._subject = subject;
 
     // Always add setter to allow overriding the computed value
     fn.set = (value: TValue) => {
@@ -661,7 +664,7 @@ export function linkedSignal<TSource, TValue>(
         isOverridden = true;
         overriddenValue = value;
         lastComputedValue = value;
-        subject.next(value);
+        store.emit(value);
     };
 
     reactiveStore.currentSubscriptionsTracker?.(fn.subscription);

@@ -372,6 +372,23 @@ console.log(isSignal(notASignal)); // Output: false
 
 ---
 
+## Subscribing and rxjs
+
+Signals notify computed signals and effects without going through rxjs. `signal.observable` is still a real rxjs `Observable`: it emits the current value (or the last change event for arrays and objects) on subscribe, then each change, and works with every rxjs operator (`pipe`, `combineLatest`...). rxjs is only involved for code that subscribes to `.observable`.
+
+To react to changes outside a computed or an effect without rxjs, use `subscribeToSignal`. It does not replay the current value and returns a function that unsubscribes:
+
+```typescript
+import { signal, subscribeToSignal } from '@signe/reactive';
+
+const count = signal(0);
+const stop = subscribeToSignal(count, (value) => console.log(value));
+count.set(1); // logs 1
+stop();
+```
+
+`subscribeToSignal` also accepts signals from `@signe/reactive` 2.x (through their `observable`), and computed signals track signals of both versions.
+
 ## Advanced Examples
 
 ### Working with ArraySubject

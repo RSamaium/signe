@@ -1,6 +1,7 @@
 import { Observable, Subscription } from 'rxjs';
-import { ArrayChange, ArraySubject } from './ArraySubject';
-import { ObjectChange, ObjectSubject } from "./ObjectSubject";
+import { ArrayChange } from './ArraySubject';
+import { ObjectChange } from "./ObjectSubject";
+import type { ArraySignalStore, ObjectSignalStore } from "./store";
 
 interface BaseWritableSignal<T = any> {
     (): T;
@@ -18,12 +19,12 @@ export interface WritableSignal<T = any> extends BaseWritableSignal<T> {
 
 export interface WritableArraySignal<T = any> extends BaseWritableSignal<T> {
     observable: Observable<ArrayChange<T>>;
-    _subject: ArraySubject<T>;
+    _subject: ArraySignalStore<any>;
 }
 
 export interface WritableObjectSignal<T = any> extends BaseWritableSignal<T> {
     observable: Observable<ObjectChange<T>>;
-    _subject: ObjectSubject<any>;
+    _subject: ObjectSignalStore<any>;
 }
 
 export interface ComputedSignal<T = any> {
