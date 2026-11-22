@@ -4,6 +4,8 @@ import {
   dremove,
   extractParams,
   throttle,
+  batch,
+  debounce,
 } from "../../packages/room/src/utils";
 
 describe("extractParams", () => {
@@ -292,5 +294,68 @@ describe('buildObject', () => {
       }
     });
     expect(allMemory).toEqual({ a: { b: { d: 2 } } });
+  });
+});
+describe("batch", () => {
+  it("runs once at the end of the task when wait is 0", async () => {
+    const fn = vi.fn();
+    const schedule = batch(fn);
+    schedule(); schedule(); schedule();
+    expect(fn).not.toHaveBeenCalled();
+    await Promise.resolve();
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs at most once per wait window, with a trailing run", async () => {
+    vi.useFakeTimers();
+    try {
+      const fn = vi.fn();
+      const schedule = batch(fn, 100);
+      schedule();
+      await Promise.resolve();
+      expect(fn).toHaveBeenCalledTimes(1);
+
+      schedule(); schedule();
+      await vi.advanceTimersByTimeAsync(99);
+      expect(fn).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fn).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("debounce", () => {
+  it("runs after the quiet period", () => {
+    vi.useFakeTimers();
+    try {
+      const fn = vi.fn();
+      const schedule = debounce(fn, 100);
+      schedule();
+      vi.advanceTimersByTime(50);
+      schedule();
+      vi.advanceTimersByTime(99);
+      expect(fn).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(fn).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("runs after maxWait even when calls keep coming", () => {
+    vi.useFakeTimers();
+    try {
+      const fn = vi.fn();
+      const schedule = debounce(fn, 100, 300);
+      for (let t = 0; t < 300; t += 50) {
+        schedule();
+        vi.advanceTimersByTime(50);
+      }
+      expect(fn).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

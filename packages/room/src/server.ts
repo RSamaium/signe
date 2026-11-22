@@ -15,7 +15,8 @@ import {
   buildObject,
   extractParams,
   isClass,
-  throttle,
+  batch,
+  debounce,
 } from "./utils";
 import { ServerResponse } from "./request/response";
 import { createCorsInterceptor } from "./request/cors";
@@ -379,8 +380,9 @@ export class Server implements Party.Server {
   }
 
   async send(conn: Party.Connection, obj: any, subRoom: any) {
-    obj = structuredClone(obj);
     if (subRoom.interceptorPacket) {
+      // The interceptor may modify the packet: give it its own copy
+      obj = structuredClone(obj);
       const signal = this.getUsersProperty(subRoom);
       const { publicId } = conn.state as any;
       const user = signal?.()[publicId];
@@ -390,9 +392,23 @@ export class Server implements Party.Server {
     conn.send(JSON.stringify(obj));
   }
 
-  broadcast(obj: any, subRoom: any) {
+  /**
+   * Sends a packet to every connection (except `exclude`).
+   * Without `interceptorPacket`, the packet is serialized once and the same string is sent to all.
+   */
+  broadcast(obj: any, subRoom: any, exclude?: Set<Party.Connection>) {
+    if (subRoom?.interceptorPacket) {
+      for (let conn of this.room.getConnections()) {
+        if (exclude?.has(conn)) continue;
+        this.send(conn, obj, subRoom);
+      }
+      return;
+    }
+    let data: string | undefined;
     for (let conn of this.room.getConnections()) {
-      this.send(conn, obj, subRoom);
+      if (exclude?.has(conn)) continue;
+      data ??= JSON.stringify(obj);
+      conn.send(data);
     }
   }
 
@@ -808,9 +824,7 @@ export class Server implements Party.Server {
     instance.$applySync = () => {
       let packet: any;
       if (instance.$pendingSync.size > 0) {
-        if (options.getMemoryAll) {
-          buildObject(instance.$pendingSync, instance.$memoryAll);
-        }
+        // buildObject also merges the changes into $memoryAll
         packet = buildObject(instance.$pendingSync, instance.$memoryAll);
         instance.$pendingSync.clear();
       } else {
@@ -819,7 +833,7 @@ export class Server implements Party.Server {
       }
       
       // Send initial sync to connections that were waiting for it (with their pId)
-      const pendingConnections = new Set(instance.$pendingInitialSync.keys());
+      const pendingConnections = new Set<Party.Connection>(instance.$pendingInitialSync.keys());
       for (const [conn, publicId] of instance.$pendingInitialSync) {
         this.send(conn, {
           type: "sync",
@@ -832,14 +846,10 @@ export class Server implements Party.Server {
       instance.$pendingInitialSync.clear();
       
       // Broadcast to all other connections (excluding those that just received initial sync)
-      for (const conn of this.room.getConnections()) {
-        if (!pendingConnections.has(conn)) {
-          this.send(conn, {
-            type: "sync",
-            value: packet,
-          }, instance);
-        }
-      }
+      this.broadcast({
+        type: "sync",
+        value: packet,
+      }, instance, pendingConnections);
     }
     instance.$sessionTransfer = async (conn: Party.Connection, targetRoomId: string) => {
       let user: any;
@@ -908,12 +918,17 @@ export class Server implements Party.Server {
     };
 
     // Sync callback: Broadcast changes to all clients or store them for manual sync
-    const syncCb = (values) => {
-      if (options.getMemoryAll) {
+    const syncCb = (values: Map<string, any>) => {
+      if (values.size === 0) {
+        return;
+      }
+      const skipInit = init && this.isHibernate;
+      // The broadcast path below merges into $memoryAll itself (buildObject)
+      if (options.getMemoryAll && (skipInit || !instance.$autoSync)) {
         buildObject(values, instance.$memoryAll);
       }
       // During initialization in hibernate mode, skip entirely
-      if (init && this.isHibernate) {
+      if (skipInit) {
         init = false;
         return;
       }
@@ -993,68 +1008,49 @@ export class Server implements Party.Server {
       await persistQueue;
     }
 
-    const debouncePersist = (wait: number) => {
-      let timeout: ReturnType<typeof setTimeout> | null = null;
-      let flushing = false;
-      const pending = new Map<string, any>();
-
-      const schedule = () => {
-        if (timeout) {
-          clearTimeout(timeout);
-        }
-        timeout = setTimeout(() => {
-          void flush();
-        }, wait);
-      };
-
-      const flush = async () => {
-        timeout = null;
-        if (flushing) {
-          schedule();
-          return;
-        }
-
-        const values = new Map(pending);
-        pending.clear();
-        if (!values.size) {
-          return;
-        }
-
-        flushing = true;
-        try {
-          await persistCb(values);
-        } finally {
-          flushing = false;
-          if (pending.size) {
-            schedule();
-          }
-        }
-      };
-
-      return (values: Map<string, any>) => {
-        if (initPersist) {
-          values.clear();
-          return;
-        }
-
-        for (const [path, value] of values) {
-          pending.set(path, value);
-        }
+    // Persist changes in batches. Without throttleStorage, all changes of the same task are
+    // written together. With throttleStorage, writes are debounced, but never delayed more than
+    // throttleStorageMaxWait (default 10 × throttleStorage) while the state keeps changing.
+    let persistValuesRef: Map<string, any> | null = null;
+    const flushPersistValues = () => {
+      if (persistValuesRef?.size) {
+        void persistCb(persistValuesRef);
+      }
+    };
+    const throttleStorage = instance["throttleStorage"] || 0;
+    const schedulePersist = throttleStorage > 0
+      ? debounce(
+          flushPersistValues,
+          throttleStorage,
+          instance["throttleStorageMaxWait"] ?? throttleStorage * 10
+        )
+      : batch(flushPersistValues);
+    const batchedPersist = (values: Map<string, any>) => {
+      if (initPersist) {
         values.clear();
-        schedule();
-      };
+        return;
+      }
+      persistValuesRef = values;
+      schedulePersist();
     };
 
     const disabledPersist = (values: Map<string, any>) => {
       values.clear();
     };
 
-    // Set up syncing and persistence with throttling to optimize performance
+    // Changes made in the same task are sent as one packet (at the end of the task),
+    // and with throttleSync at most one packet per window.
+    let syncValuesRef: Map<string, any> | null = null;
+    const scheduleSync = batch(() => {
+      if (syncValuesRef) syncCb(syncValuesRef);
+    }, instance["throttleSync"] || 0);
+
     syncClass(instance, {
-      onSync: instance["throttleSync"] ? throttle(syncCb, instance["throttleSync"]) : syncCb,
-      onPersist: shouldPersistState
-        ? instance["throttleStorage"] ? debouncePersist(instance["throttleStorage"]) : persistCb
-        : disabledPersist,
+      onSync: (values) => {
+        syncValuesRef = values;
+        scheduleSync();
+      },
+      onPersist: shouldPersistState ? batchedPersist : disabledPersist,
     });
 
     if (shouldPersistState) {
