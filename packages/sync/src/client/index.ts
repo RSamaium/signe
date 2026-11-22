@@ -1,4 +1,4 @@
-import { load } from "@signe/sync";
+import { load, loadEvents } from "@signe/sync";
 import PartySocket, { PartySocketOptions } from "partysocket";
 
 export interface WorldConnectionOptions extends PartySocketOptions {
@@ -48,6 +48,8 @@ function createConnection(options: PartySocketOptions, roomInstance: RoomInstanc
     switch (object.type) {
       case "sync":
         load(roomInstance, object.value, true);
+        // Volatile events run after the state of the same packet is applied
+        loadEvents(roomInstance, object.events);
         break;
     }
   });

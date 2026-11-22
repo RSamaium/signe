@@ -10,10 +10,17 @@ import {
 import { isInstanceOfClass, isObject } from "./utils";
 import { type Observable } from "rxjs";
 import type { NormalizedSyncOptions } from "./decorators";
+import { isSyncEvent } from "./event";
 
 interface SyncOptions {
   onSync?: (value: Map<string, any>) => void;
   onPersist?: (value: Map<string, any>) => void;
+  /**
+   * Called each time an `event()` is emitted, with the pending events grouped by path
+   * (in emission order). The consumer is responsible for clearing the map once sent.
+   * When omitted, emitted events are not collected.
+   */
+  onEvent?: (events: Map<string, any[]>) => void;
 }
 
 interface TypeOptions {
@@ -49,6 +56,7 @@ interface SyncInstance {
     setPersist: (path: string, value: any) => void;
     has: (path: string) => boolean;
     get: (path: string) => any;
+    emit?: (path: string, payload: any) => void;
   };
 }
 
@@ -65,6 +73,7 @@ export const DELETE_TOKEN = "$delete";
  * @param {SyncOptions} [options={}] - Optional synchronization options.
  * @param {Function} [options.onSync] - Callback function to be called on value sync with the current cache.
  * @param {Function} [options.onPersist] - Callback function to be called on value persistence with the current cache.
+ * @param {Function} [options.onEvent] - Callback function to be called when an `event()` is emitted, with pending events by path.
  *
  * @example
  * class TestClass {
@@ -80,6 +89,7 @@ export const DELETE_TOKEN = "$delete";
 export const syncClass = (instance: any, options: SyncOptions = {}) => {
   const cacheSync = new Map();
   const cachePersist = new Map<string, any>();
+  const cacheEvents = new Map<string, any[]>();
   instance.$valuesChanges = {
     set: (path: string, value: any) => {
       cacheSync.set(path, value);
@@ -95,6 +105,16 @@ export const syncClass = (instance: any, options: SyncOptions = {}) => {
     },
     get: (path: string) => {
       return cacheSync.get(path);
+    },
+    emit: (path: string, payload: any) => {
+      if (!options.onEvent) return;
+      const queue = cacheEvents.get(path);
+      if (queue) {
+        queue.push(payload);
+      } else {
+        cacheEvents.set(path, [payload]);
+      }
+      options.onEvent(cacheEvents);
     },
   };
   createSyncClass(instance);
@@ -324,6 +344,10 @@ function applyDecoratedSignalMetadata(currentClass: any) {
 
   for (const [propertyKey, options] of syncMetadata) {
     const signal = currentClass[propertyKey];
+    if (isSyncEvent(signal)) {
+      type(signal as any, propertyKey, options, currentClass);
+      continue;
+    }
     if (!isSignal(signal) || signal.options) {
       continue;
     }
@@ -345,6 +369,21 @@ export const type = <T>(
 ): ExtendedWritableSignal<T> => {
   const { syncToClient = true, persist = true, transform, skipInitialSync = false } = options;
   let init = true;
+
+  // Volatile events: forward each emission to the sync channel, never snapshot or persist.
+  if (isSyncEvent(_signal)) {
+    _signal.$bind(
+      syncToClient
+        ? (payload: any) => {
+            const valuesChanges = currentInstance?.$valuesChanges;
+            if (!valuesChanges?.emit || currentInstance.$path === undefined) return;
+            const fullPath = `${currentInstance.$path ? currentInstance.$path + "." : ""}${path}`;
+            valuesChanges.emit(fullPath, transform ? transform(payload) : payload);
+          }
+        : null
+    );
+    return _signal as any;
+  }
 
   const handleObjectSubject = (value: SubjectValue, propPath: string) => {
     const newPath = `${propPath}${value.key ? `.${value.key}` : ""}`;
