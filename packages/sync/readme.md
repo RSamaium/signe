@@ -336,7 +336,7 @@ socket.addEventListener('message', (event) => {
 })
 ```
 
-Compression uses native zlib when the runtime exposes it synchronously (Node.js 20.16+ / 22.3+), and [fflate](https://github.com/101arrowz/fflate) otherwise (browsers).
+Compression uses native zlib when the runtime exposes it synchronously through `process.getBuiltinModule` (Node.js 20.16+ / 22.3+, Cloudflare Workers with the `nodejs_compat` flag), and [fflate](https://github.com/101arrowz/fflate) otherwise (browsers, Workers without `nodejs_compat`). Both produce the same format.
 
 ### Loading State
 

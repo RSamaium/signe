@@ -373,6 +373,7 @@ The `@Room` decorator accepts various configuration options:
 - `level` (default 1): DEFLATE level. Level 1 keeps most of the size gain for about half the CPU of level 6.
 - `intercepted` (default `false`): with `interceptorPacket`, each client gets its own packet, so compressing costs one compression per client and per message. Enable it only if bandwidth matters more than CPU.
 - Not applied through shards (`connectionWorld`): the shard connection does not ask for compression.
+- Works on Cloudflare Workers (Durable Objects, including `webSocketMode: "hibernate"`: the client's choice is kept in the connection attachment). With the `nodejs_compat` flag, native zlib is used; without it, the pure-JS fallback (fflate) is used.
 
 With 100 moving players, a tick goes from about 3 KB of JSON to about 1.1 KB, for about 50 µs of server CPU per tick (native zlib) and about 60 µs on the client to decompress and parse (fflate in browsers is slower to decompress: about 90 µs).
 
