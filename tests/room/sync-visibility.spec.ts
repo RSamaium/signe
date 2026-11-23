@@ -6,15 +6,21 @@ import { MockConnection } from "../../packages/room/src/mock";
 // sent while the client is connecting, before a listener could be attached).
 const sentTo = new Map<string, any[]>();
 const binaryFrames = new Map<string, number>();
+const formats = new Map<string, number[]>();
+const decoders = new Map<string, ReturnType<typeof createMessageDecoder>>();
 const originalSend = MockConnection.prototype.send;
 MockConnection.prototype.send = function (data: any) {
   const list = sentTo.get(this.id) ?? [];
-  list.push(decodeMessage(data));
+  // One decoder per connection, like a client: stream messages refer to the previous ones
+  let decoder = decoders.get(this.id);
+  if (!decoder) decoders.set(this.id, (decoder = createMessageDecoder()));
+  list.push(decoder.decode(data));
+  if (typeof data !== "string") formats.set(this.id, [...(formats.get(this.id) ?? []), data[0]]);
   sentTo.set(this.id, list);
   if (typeof data !== "string") binaryFrames.set(this.id, (binaryFrames.get(this.id) ?? 0) + 1);
   return originalSend.call(this, data);
 };
-import { decodeMessage, event, id, load, sync, users } from "@signe/sync";
+import { createMessageDecoder, event, id, load, sync, users } from "@signe/sync";
 import { signal } from "@signe/reactive";
 
 class Player {
@@ -288,6 +294,97 @@ describe("syncVisibility with events and compression", () => {
     await tick();
     expect(binaryFrames.get(a.client.conn.id) ?? 0).toBeGreaterThan(0);
     expect(Object.keys(lastSync(a.packets).value.npcs)).toHaveLength(80);
+  });
+});
+
+@Room({ path: "visibility-stream", compression: { intercepted: true, threshold: 0 } })
+class VisibilityStreamRoom {
+  @users(Player) players = signal<Record<string, Player>>({});
+  syncVisibility() {
+    return { players: Object.keys(this.players()) };
+  }
+}
+
+@Room({ path: "visibility-no-stream", compression: { intercepted: true, threshold: 0, stream: false } })
+class VisibilityNoStreamRoom {
+  @users(Player) players = signal<Record<string, Player>>({});
+  syncVisibility() {
+    return { players: Object.keys(this.players()) };
+  }
+}
+
+class StreamClientState {
+  @sync(Player) players = signal<Record<string, Player>>({});
+}
+
+describe("syncVisibility with stream compression", () => {
+  const clients: any[] = [];
+  afterEach(() => { for (const c of clients.splice(0)) c.conn?.close(); });
+  const connectWith = async (test: any, query: Record<string, string>) => {
+    const client = await test.createClient(undefined, { query });
+    clients.push(client);
+    const packets = sentTo.get(client.conn.id) ?? [];
+    sentTo.set(client.conn.id, packets);
+    const session = await test.server.getSession(client.conn.sessionId);
+    return { client, packets, id: session.publicId as string, formats: () => formats.get(client.conn.id) ?? [] };
+  };
+  const STREAM = { compression: "deflate", compressionStream: "1" };
+  const move = async (room: any, rounds: number) => {
+    for (let round = 0; round < rounds; round++) {
+      for (const player of Object.values(room.players()) as Player[]) player.x.update((x) => x + 1);
+      await tick();
+    }
+  };
+
+  it("compresses per-client packets as one stream for clients that read it", async () => {
+    const test = await testRoom(VisibilityStreamRoom);
+    const room = test.room as VisibilityStreamRoom;
+    const a = await connectWith(test, STREAM);
+    const b = await connectWith(test, STREAM);
+    await move(room, 4);
+    const streamFormats = a.formats();
+    expect(streamFormats[0]).toBe(3);
+    expect(streamFormats.length).toBeGreaterThanOrEqual(4);
+    expect(streamFormats.slice(1).every((f) => f === 2)).toBe(true);
+    // Every packet was read in order: the client has the last positions
+    const server = room.players();
+    const clientState = new StreamClientState();
+    for (const packet of a.packets) if (packet.type === "sync") load(clientState, packet.value, true);
+    expect(clientState.players()[b.id].x()).toBe(server[b.id].x());
+    expect(server[b.id].x()).toBe(4);
+  });
+
+  it("keeps one-shot compression for older clients and with stream: false", async () => {
+    const test = await testRoom(VisibilityStreamRoom);
+    const old = await connectWith(test, { compression: "deflate" });
+    await move(test.room, 2);
+    expect(old.formats().length).toBeGreaterThan(0);
+    expect(old.formats().every((f) => f === 1)).toBe(true);
+
+    const test2 = await testRoom(VisibilityNoStreamRoom);
+    const b = await connectWith(test2, STREAM);
+    await move(test2.room, 2);
+    expect(b.formats().length).toBeGreaterThan(0);
+    expect(b.formats().every((f) => f === 1)).toBe(true);
+  });
+
+  it("starts a new stream for each connection and frees it on close", async () => {
+    const test = await testRoom(VisibilityStreamRoom);
+    const room = test.room as VisibilityStreamRoom;
+    const a = await connectWith(test, STREAM);
+    await move(room, 2);
+    const b = await connectWith(test, STREAM);
+    await move(room, 2);
+    expect(a.formats()[0]).toBe(3);
+    expect(b.formats()[0]).toBe(3);
+    expect(b.formats().slice(1).every((f) => f === 2)).toBe(true);
+    expect(lastSync(b.packets).value.players[a.id]).toEqual({ x: 4 });
+    const compressors = (test.server as any).compressors as WeakMap<object, unknown>;
+    const conn = [...(test.server as any).room.getConnections()].find((c: any) => c.id === a.client.conn.id);
+    expect(compressors.has(conn)).toBe(true);
+    a.client.conn.close();
+    await tick();
+    expect(compressors.has(conn)).toBe(false);
   });
 });
 

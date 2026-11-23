@@ -200,7 +200,9 @@ describe("Sync Client", () => {
       conn.on("custom-event", callback);
       
       // Verify an event listener was added
-      expect(mockSocket.addEventListener).toHaveBeenCalledTimes(2); // Initial + our new one
+      // "open" (resets the stream decoder) + the sync handler + our new one
+      expect(mockSocket.addEventListener).toHaveBeenCalledTimes(3);
+      expect(vi.mocked(mockSocket.addEventListener).mock.calls.at(-1)![0]).toBe("message");
       
       // Simulate receiving a matching event
       const messageData = {
@@ -258,7 +260,7 @@ describe("Sync Client", () => {
     it("should ask for compression through the query and read binary frames as ArrayBuffer", async () => {
       await connectionRoom({ ...defaultOptions, query: { token: "t" }, compression: true } as any, {});
       const options = vi.mocked(PartySocket).mock.calls.at(-1)![0] as any;
-      expect(options.query).toEqual({ token: "t", compression: "deflate" });
+      expect(options.query).toEqual({ token: "t", compression: "deflate", compressionStream: "1" });
       expect(options.compression).toBeUndefined();
       expect((mockSocket as any).binaryType).toBe("arraybuffer");
     });
@@ -266,7 +268,7 @@ describe("Sync Client", () => {
     it("should keep an async query function and add the compression flag", async () => {
       await connectionRoom({ ...defaultOptions, query: async () => ({ token: "t" }), compression: true } as any, {});
       const options = vi.mocked(PartySocket).mock.calls.at(-1)![0] as any;
-      await expect(options.query()).resolves.toEqual({ token: "t", compression: "deflate" });
+      await expect(options.query()).resolves.toEqual({ token: "t", compression: "deflate", compressionStream: "1" });
     });
 
     it("should not change the query without compression", async () => {

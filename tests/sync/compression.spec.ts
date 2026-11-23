@@ -50,3 +50,132 @@ describe("native zlib and fflate interoperability", () => {
     expect(zlib.inflateRawSync(fflateBody).toString()).toBe(json);
   });
 });
+
+import {
+  createMessageCompressor,
+  createMessageDecoder,
+  MESSAGE_FORMAT_DEFLATE_STREAM,
+  MESSAGE_FORMAT_DEFLATE_STREAM_START,
+} from "../../packages/sync/src";
+import { vi } from "vitest";
+
+/** Game-like packets: the same entities (random ids) with positions that change a little. */
+const gamePackets = (count: number) => {
+  let seed = 7;
+  const random = () => (seed = (seed * 48271) % 2147483647) / 2147483647;
+  const ids = Array.from({ length: 25 }, () => Array.from({ length: 8 }, () => Math.floor(random() * 36).toString(36)).join(""));
+  const positions = ids.map(() => ({ x: Math.floor(random() * 500), y: Math.floor(random() * 500) }));
+  return Array.from({ length: count }, (_, frame) => {
+    for (const p of positions) {
+      if (random() < 0.5) p.x += 3; else p.y += 3;
+    }
+    return JSON.stringify({
+      type: "sync",
+      value: {
+        players: Object.fromEntries(
+          ids.map((id, i) => [id, { x: positions[i].x, _frames: [{ ...positions[i], ts: 1795378073000 + frame * 50 + i }] }])
+        ),
+      },
+    });
+  });
+};
+
+describe("stream compression", () => {
+  it("round-trips the messages of a connection, in order", () => {
+    const compressor = createMessageCompressor();
+    const decoder = createMessageDecoder();
+    const packets = gamePackets(30);
+    const frames = packets.map((json) => compressor.compress(json));
+    expect(frames[0][0]).toBe(MESSAGE_FORMAT_DEFLATE_STREAM_START);
+    expect(frames.slice(1).every((f) => f[0] === MESSAGE_FORMAT_DEFLATE_STREAM)).toBe(true);
+    frames.forEach((frame, i) => expect(decoder.decode(frame)).toEqual(JSON.parse(packets[i])));
+    compressor.close();
+  });
+
+  it("is smaller than compressing each message alone", () => {
+    const compressor = createMessageCompressor();
+    const packets = gamePackets(30);
+    let stream = 0;
+    let alone = 0;
+    for (const json of packets) {
+      stream += compressor.compress(json).length;
+      alone += compressMessage(json).length;
+    }
+    expect(stream).toBeLessThan(alone * 0.75);
+  });
+
+  it("reads text, one-shot and stream frames mixed on the same connection", () => {
+    const compressor = createMessageCompressor();
+    const decoder = createMessageDecoder();
+    const [a, b, c] = gamePackets(3);
+    expect(decoder.decode(compressor.compress(a))).toEqual(JSON.parse(a));
+    expect(decoder.decode(compressMessage(b))).toEqual(JSON.parse(b));
+    expect(decoder.decode(b)).toEqual(JSON.parse(b));
+    expect(decoder.decode(Buffer.from(compressor.compress(c)))).toEqual(JSON.parse(c));
+  });
+
+  it("handles messages larger than the output buffer", () => {
+    const compressor = createMessageCompressor({ level: 1 });
+    const decoder = createMessageDecoder();
+    // Random-ish content compresses badly: the output exceeds 64 KB
+    let seed = 1;
+    const noise = Array.from({ length: 120_000 }, () => ((seed = (seed * 48271) % 2147483647) % 36).toString(36)).join("");
+    const json = JSON.stringify({ type: "sync", value: { noise } });
+    const frame = compressor.compress(json);
+    expect(frame.length).toBeGreaterThan(64 * 1024);
+    expect(decoder.decode(frame)).toEqual(JSON.parse(json));
+  });
+
+  it("starts over when a new stream starts (new connection)", () => {
+    const decoder = createMessageDecoder();
+    const [a, b, c] = gamePackets(3);
+    const first = createMessageCompressor();
+    decoder.decode(first.compress(a));
+    decoder.decode(first.compress(b));
+    const second = createMessageCompressor();
+    expect(decoder.decode(second.compress(c))).toEqual(JSON.parse(c));
+    expect(decoder.decode(second.compress(a))).toEqual(JSON.parse(a));
+  });
+
+  it("rejects stream frames outside of a stream", () => {
+    const compressor = createMessageCompressor();
+    const [a, b] = gamePackets(2);
+    const start = compressor.compress(a);
+    const next = compressor.compress(b);
+    expect(() => decodeMessage(start)).toThrow(/createMessageDecoder/);
+    const decoder = createMessageDecoder();
+    expect(() => decoder.decode(next)).toThrow(/before the start/);
+    decoder.decode(start);
+    decoder.reset();
+    expect(() => decoder.decode(next)).toThrow(/before the start/);
+  });
+
+  it("throws on corrupted stream data", () => {
+    const decoder = createMessageDecoder();
+    expect(() => decoder.decode(new Uint8Array([MESSAGE_FORMAT_DEFLATE_STREAM_START, 0xff, 0xff, 0xff, 0x00]))).toThrow();
+  });
+});
+
+describe("stream compression without native zlib (browsers)", () => {
+  it("fflate reads native streams; without native zlib, messages are compressed alone", async () => {
+    const native = { compressor: createMessageCompressor(), decoder: createMessageDecoder() };
+    vi.resetModules();
+    const getBuiltinModule = (process as any).getBuiltinModule;
+    (process as any).getBuiltinModule = undefined;
+    let fallback: typeof import("../../packages/sync/src/compression");
+    try {
+      fallback = await import("../../packages/sync/src/compression");
+    } finally {
+      (process as any).getBuiltinModule = getBuiltinModule;
+    }
+    const pure = { compressor: fallback.createMessageCompressor(), decoder: fallback.createMessageDecoder() };
+    for (const json of gamePackets(200)) {
+      // A browser (fflate) reads the stream of a Node.js server
+      expect(pure.decoder.decode(native.compressor.compress(json))).toEqual(JSON.parse(json));
+      // A server without native streams compresses each message alone
+      const frame = pure.compressor.compress(json);
+      expect(frame[0]).toBe(MESSAGE_FORMAT_DEFLATE_JSON);
+      expect(native.decoder.decode(frame)).toEqual(JSON.parse(json));
+    }
+  });
+});

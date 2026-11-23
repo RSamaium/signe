@@ -9,13 +9,16 @@ import {
   generateShortUUID,
   createStatesSnapshotDeep,
   compressMessage,
+  createMessageCompressor,
   COMPRESSION_QUERY_PARAM,
   COMPRESSION_QUERY_VALUE,
+  COMPRESSION_STREAM_QUERY_PARAM,
+  COMPRESSION_STREAM_QUERY_VALUE,
   PathTable,
   PATH_FORMAT_QUERY_PARAM,
   PATH_FORMAT_QUERY_VALUE,
 } from "@signe/sync";
-import type { PathTableCursor } from "@signe/sync";
+import type { MessageCompressor, PathTableCursor } from "@signe/sync";
 import type * as Party from "./types/party";
 import {
   awaitReturn,
@@ -570,9 +573,34 @@ export class Server implements Party.Server {
     }
     conn.send(
       this.shouldCompress(conn, subRoom, data, intercepted)
-        ? compressMessage(data, subRoom.$compression.level)
+        ? this.compressForClient(conn, subRoom, data)
         : data
     );
+  }
+
+  /** Compressors of the connections that read stream messages (see `createMessageCompressor`). */
+  private compressors = new WeakMap<Party.Connection, MessageCompressor>();
+
+  /**
+   * Compresses a message built for this client only: with the connection's stream when the
+   * client reads stream messages (3 times cheaper and 2 times smaller on small packets,
+   * since the stream is set up once and messages refer to the previous ones), otherwise alone.
+   */
+  private compressForClient(conn: Party.Connection, subRoom: any, data: string): Uint8Array {
+    const compression = subRoom.$compression;
+    if (compression.stream === false || !(conn.state as any)?.compressionStream) {
+      return compressMessage(data, compression.level);
+    }
+    let compressor = this.compressors.get(conn);
+    if (!compressor) {
+      compressor = createMessageCompressor({
+        level: compression.level,
+        windowBits: compression.windowBits,
+        memLevel: compression.memLevel,
+      });
+      this.compressors.set(conn, compressor);
+    }
+    return compressor.compress(data);
   }
 
   /**
@@ -638,12 +666,12 @@ export class Server implements Party.Server {
 
   /**
    * Sends a packet built for this client only. Like intercepted packets, it is compressed only
-   * with `compression.intercepted`, since each client would need its own compression.
+   * with `compression.intercepted`, since each client needs its own compression.
    */
   private sendPerClient(conn: Party.Connection, data: string, subRoom: any) {
     conn.send(
       this.shouldCompress(conn, subRoom, data, true)
-        ? compressMessage(data, subRoom.$compression.level)
+        ? this.compressForClient(conn, subRoom, data)
         : data
     );
   }
@@ -1727,11 +1755,13 @@ export class Server implements Party.Server {
     // Handle session transfer
     let transferToken = null;
     let wantsCompression = false;
+    let readsCompressionStream = false;
     let wantsPathFormat = false;
     if (ctx.request?.url) {
       const url = new URL(ctx.request.url);
       transferToken = url.searchParams.get('transferToken');
       wantsCompression = url.searchParams.get(COMPRESSION_QUERY_PARAM) === COMPRESSION_QUERY_VALUE;
+      readsCompressionStream = url.searchParams.get(COMPRESSION_STREAM_QUERY_PARAM) === COMPRESSION_STREAM_QUERY_VALUE;
       wantsPathFormat = url.searchParams.get(PATH_FORMAT_QUERY_PARAM) === PATH_FORMAT_QUERY_VALUE;
     }
     let transferData: any = null;
@@ -1816,6 +1846,8 @@ export class Server implements Party.Server {
       privateId,
       // The client accepts compressed messages (only used if the room enables compression)
       ...(wantsCompression ? { compression: true } : {}),
+      // ... and reads stream messages (one DEFLATE stream per connection)
+      ...(wantsCompression && readsCompressionStream ? { compressionStream: true } : {}),
       // The client reads sync packets in the path table format
       ...(wantsPathFormat ? { pathFormat: true } : {}),
     });
@@ -2221,6 +2253,9 @@ export class Server implements Party.Server {
     }
     // Forget what this connection could see (syncVisibility)
     subRoom.$syncVisibleEntities?.delete(conn.id);
+    // Free its compression stream
+    this.compressors.get(conn)?.close();
+    this.compressors.delete(conn);
 
     const signal = this.getUsersProperty(subRoom);
 

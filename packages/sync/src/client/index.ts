@@ -1,9 +1,11 @@
 import {
   load,
   loadEvents,
-  decodeMessage,
+  createMessageDecoder,
   COMPRESSION_QUERY_PARAM,
   COMPRESSION_QUERY_VALUE,
+  COMPRESSION_STREAM_QUERY_PARAM,
+  COMPRESSION_STREAM_QUERY_VALUE,
   PATH_FORMAT_QUERY_PARAM,
   PATH_FORMAT_QUERY_VALUE,
   PathTableDecoder,
@@ -67,7 +69,11 @@ interface WorldConnectionResult extends ConnectionResult {
 /** Query parameters asking the server for the formats this connection reads. */
 function formatQueryFlags(options: RoomConnectionOptions): Record<string, string> | undefined {
   const flags: Record<string, string> = {};
-  if (options.compression) flags[COMPRESSION_QUERY_PARAM] = COMPRESSION_QUERY_VALUE;
+  if (options.compression) {
+    flags[COMPRESSION_QUERY_PARAM] = COMPRESSION_QUERY_VALUE;
+    // This client reads stream messages (one DEFLATE stream per connection)
+    flags[COMPRESSION_STREAM_QUERY_PARAM] = COMPRESSION_STREAM_QUERY_VALUE;
+  }
   if (options.pathFormat) flags[PATH_FORMAT_QUERY_PARAM] = PATH_FORMAT_QUERY_VALUE;
   return Object.keys(flags).length > 0 ? flags : undefined;
 }
@@ -109,11 +115,15 @@ function createConnection(options: RoomConnectionOptions, roomInstance: RoomInst
     (conn as any).binaryType = "arraybuffer";
   }
 
-  // Every listener receives the same event: decode (and decompress) it once
+  // Every listener receives the same event: decode (and decompress) it once.
+  // Stream messages refer to the previous ones: one decoder per connection, reset when the
+  // socket opens again (the server starts a new stream for the new connection).
+  const messageDecoder = createMessageDecoder();
+  conn.addEventListener("open", () => messageDecoder.reset());
   const decoded = new WeakMap<object, any>();
   const decodeEvent = (event: MessageEvent) => {
     if (decoded.has(event)) return decoded.get(event);
-    const object = decodeMessage(event.data);
+    const object = messageDecoder.decode(event.data);
     decoded.set(event, object);
     return object;
   };

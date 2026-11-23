@@ -13,6 +13,7 @@ describe("connectionRoom query flags", () => {
     const { conn } = await connectionRoom({ host: "localhost:1", room: "a", startClosed: true, compression: true, pathFormat: true, query: { id: "1" } } as any, {});
     const url = await urlOf(conn);
     expect(url.searchParams.get("compression")).toBe("deflate");
+    expect(url.searchParams.get("compressionStream")).toBe("1");
     expect(url.searchParams.get("format")).toBe("paths");
     expect(url.searchParams.get("id")).toBe("1");
   });
@@ -24,6 +25,7 @@ describe("connectionRoom query flags", () => {
     expect(url.pathname).toContain("/b");
     expect(url.searchParams.get("transferToken")).toBe("t");
     expect(url.searchParams.get("compression")).toBe("deflate");
+    expect(url.searchParams.get("compressionStream")).toBe("1");
     expect(url.searchParams.get("format")).toBe("paths");
   });
 
@@ -32,6 +34,7 @@ describe("connectionRoom query flags", () => {
     conn.updateProperties({ room: "b", query: { transferToken: "t" } });
     const url = await urlOf(conn);
     expect(url.searchParams.has("compression")).toBe(false);
+    expect(url.searchParams.has("compressionStream")).toBe(false);
     expect(url.searchParams.has("format")).toBe(false);
   });
 });

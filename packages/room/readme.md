@@ -372,6 +372,7 @@ The `@Room` decorator accepts various configuration options:
 - `threshold` (default 512 characters of JSON): smaller messages stay as text, where compression would not help.
 - `level` (default 1): DEFLATE level. Level 1 keeps most of the size gain for about half the CPU of level 6.
 - `intercepted` (default `false`): with `interceptorPacket` or `syncVisibility`, each client gets its own packet, so compressing costs one compression per client and per message. Enable it only if bandwidth matters more than CPU.
+- `stream` (default `true`): these per-client packets are compressed with one DEFLATE stream per connection, for clients that read it (the `@signe/sync` client does). The stream is set up once and each packet can refer to the previous ones: on game packets of about 2 KB, about 3 times less CPU and 2 times fewer bytes than compressing each packet alone. It costs about 48 KB of memory per connection (`windowBits`, default 13, and `memLevel`, default 5, set the size). The stream is freed when the connection closes; after a Cloudflare hibernation, a new stream starts and the client follows. Needs the native zlib of Node.js; elsewhere each packet is compressed alone.
 - Not applied through shards (`connectionWorld`): the shard connection does not ask for compression.
 - Works on Cloudflare Workers (Durable Objects, including `webSocketMode: "hibernate"`: the client's choice is kept in the connection attachment). With the `nodejs_compat` flag, native zlib is used; without it, the pure-JS fallback (fflate) is used.
 

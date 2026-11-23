@@ -363,18 +363,26 @@ const conn = await connectionRoom({
 
 Large messages then arrive as binary frames (DEFLATE). `connectionRoom` decodes them before `load()` and before calling `on()` listeners. Each message is decoded once, however many listeners there are. Clients that do not ask keep receiving JSON text.
 
-If you read the socket yourself, use `decodeMessage()`: it accepts JSON text frames and compressed binary frames.
+`connectionRoom` also tells the server that it reads **stream messages** (`?compressionStream=1`). For the packets the server builds for one client only (`syncVisibility`, `interceptorPacket`), the server can then keep one DEFLATE stream per connection instead of compressing each message alone: the stream is set up once, and a packet can refer to the previous ones (the same entity ids and keys come back every tick). On RPG-JS packets of about 2 KB, this is about 3 times less server CPU and 2 times fewer bytes. A stream message can only be read by the connection that received the previous ones, in order.
+
+If you read the socket yourself, use one `createMessageDecoder()` per connection: it reads JSON text frames, compressed binary frames and stream messages. Ask for stream messages only if you use it.
 
 ```typescript
-import { decodeMessage } from '@signe/sync'
+import { createMessageDecoder } from '@signe/sync'
 
+const decoder = createMessageDecoder()
 socket.binaryType = 'arraybuffer'
+socket.addEventListener('open', () => decoder.reset())
 socket.addEventListener('message', (event) => {
-  const packet = decodeMessage(event.data)
+  const packet = decoder.decode(event.data)
 })
 ```
 
+`decodeMessage()` is the stateless version: it reads text and compressed frames, not stream messages.
+
 Compression uses native zlib when the runtime exposes it synchronously through `process.getBuiltinModule` (Node.js 20.16+ / 22.3+, Cloudflare Workers with the `nodejs_compat` flag), and [fflate](https://github.com/101arrowz/fflate) otherwise (browsers, Workers without `nodejs_compat`). Both produce the same format.
+
+Stream compression (`createMessageCompressor()`) needs the synchronous native zlib of Node.js. In other runtimes the compressor compresses each message alone, which every decoder reads. Decoding streams works everywhere (fflate in browsers).
 
 #### Path table format
 

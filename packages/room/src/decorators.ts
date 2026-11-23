@@ -67,8 +67,21 @@ export interface RoomCompressionOptions {
   /**
    * Also compress messages returned by `interceptorPacket`. Each client then has its own
    * packet, so this costs one compression per client and per message. Default: false.
+   * Also applies to the per-client packets of `syncVisibility`.
    */
   intercepted?: boolean;
+  /**
+   * Compress per-client messages with one DEFLATE stream per connection, for clients that can
+   * read it (`@signe/sync` client with `compression: true`). Each message is set up faster and
+   * refers to the previous ones: on small game packets, about 3 times less CPU and 2 times fewer
+   * bytes than compressing each message alone. Costs about 48 KB of memory per connection.
+   * Default: true.
+   */
+  stream?: boolean;
+  /** History of the stream: 2^windowBits bytes (9 to 15). Default: 13 (8 KB). */
+  windowBits?: number;
+  /** Memory of the stream's match finder (1 to 9). Default: 5. */
+  memLevel?: number;
 }
 
 export interface RoomOptions {
