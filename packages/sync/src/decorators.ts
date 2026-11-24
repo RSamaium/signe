@@ -5,11 +5,17 @@ export interface SyncOptions {
   persist?: boolean;
   syncToClient?: boolean;
   transform?: (value: any) => any;
+  /**
+   * Number of decimals kept in the values sent to clients (0 = integers, negative = tens, hundreds...).
+   * Applies to numbers, including numbers inside plain objects and arrays. The persisted value is not rounded.
+   */
+  precision?: number;
 }
 
 export type NormalizedSyncOptions = Required<Pick<SyncOptions, "persist" | "syncToClient">> & {
   classType?: Function;
   transform?: (value: any) => any;
+  precision?: number;
 };
 
 export function normalizeSyncOptions(options?: SyncOptions | Function): NormalizedSyncOptions {
@@ -17,6 +23,7 @@ export function normalizeSyncOptions(options?: SyncOptions | Function): Normaliz
   let persist = true;
   let syncToClient = true;
   let transform: ((value: any) => any) | undefined;
+  let precision: number | undefined;
 
   if (typeof options === "function") {
     classType = options;
@@ -31,9 +38,12 @@ export function normalizeSyncOptions(options?: SyncOptions | Function): Normaliz
     if (options.hasOwnProperty("transform")) {
       transform = options.transform;
     }
+    if (options.hasOwnProperty("precision")) {
+      precision = options.precision;
+    }
   }
 
-  return { classType, persist, syncToClient, transform };
+  return { classType, persist, syncToClient, transform, precision };
 }
 
 function setSyncMetadata(
@@ -58,6 +68,8 @@ function setSyncMetadata(
  * @param {boolean} [options.persist=true] - Enable/disable persistence.
  * @param {boolean} [options.syncToClient=true] - Enable/disable client synchronization.
  * @param {Function} [options.transform] - Transform the value before synchronization. Receives the original value and should return the transformed value.
+ * @param {number} [options.precision] - Round numbers sent to clients to this many decimals (the persisted value is exact).
+ *   A change that does not change the rounded value is not sent.
  * @returns {PropertyDecorator} - The property decorator function.
  * @example
  * ```typescript
@@ -71,6 +83,9 @@ function setSyncMetadata(
  * 
  *   // Transform string to number during sync
  *   @sync({ transform: (val) => +val }) value = signal(1);
+ *
+ *   // Send positions as integers
+ *   @sync({ precision: 0 }) x = signal(0);
  * }
  * ```
  */
