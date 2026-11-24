@@ -1130,3 +1130,39 @@ describe("transform option", () => {
     );
   });
 });
+
+describe("sync paths after an instance moves", () => {
+  it("uses the new path when the same instance is attached under another key", () => {
+    class Item {
+      @sync() value = signal(0);
+    }
+    class Root {
+      @sync(Item) items = signal<Record<string, Item>>({});
+    }
+    const root = new Root();
+    let changes = new Map<string, any>();
+    syncClass(root, { onSync: (v) => { changes = v; } });
+
+    const item = new Item();
+    root.items.mutate((items) => { items.a = item; });
+    changes.clear();
+    item.value.set(1);
+    expect([...changes.keys()]).toEqual(["items.a.value"]);
+
+    root.items.mutate((items) => { delete items.a; items.b = item; });
+    changes.clear();
+    item.value.set(2);
+    expect([...changes.keys()]).toEqual(["items.b.value"]);
+  });
+
+  it("does not collect persisted changes without onPersist", () => {
+    class Counter {
+      @sync() count = signal(0);
+    }
+    const instance = new Counter();
+    const onSync = vi.fn();
+    syncClass(instance, { onSync });
+    instance.count.set(1);
+    expect(onSync).toHaveBeenLastCalledWith(new Map([["count", 1]]));
+  });
+});

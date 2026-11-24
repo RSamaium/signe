@@ -7,15 +7,26 @@ import {
   syncClass,
   DELETE_TOKEN,
   generateShortUUID,
-  createStatesSnapshotDeep
+  createStatesSnapshotDeep,
+  compressMessage,
+  createMessageCompressor,
+  COMPRESSION_QUERY_PARAM,
+  COMPRESSION_QUERY_VALUE,
+  COMPRESSION_STREAM_QUERY_PARAM,
+  COMPRESSION_STREAM_QUERY_VALUE,
+  PathTable,
+  PATH_FORMAT_QUERY_PARAM,
+  PATH_FORMAT_QUERY_VALUE,
 } from "@signe/sync";
+import type { MessageCompressor, PathTableCursor } from "@signe/sync";
 import type * as Party from "./types/party";
 import {
   awaitReturn,
   buildObject,
   extractParams,
   isClass,
-  throttle,
+  batch,
+  debounce,
 } from "./utils";
 import { ServerResponse } from "./request/response";
 import { createCorsInterceptor } from "./request/cors";
@@ -93,6 +104,150 @@ const INTERNAL_PREFIX = "$room:";
 const SESSION_GC_LAST_RUN_KEY = `${INTERNAL_PREFIX}session-gc:last-run`;
 const TRANSFER_GC_LAST_RUN_KEY = `${INTERNAL_PREFIX}transfer-gc:last-run`;
 const DEFAULT_TRANSFER_EXPIRY_MS = 5 * 60 * 1000;
+
+/**
+ * Serialized pieces of a sync packet, shared by all the clients of one broadcast.
+ * `SyncFragments` writes JSON objects, `PathSyncFragments` the path table format.
+ */
+interface SyncPacketWriter {
+  field(key: string, value: any): string;
+  entity(collection: string, id: string, value: any, kind: "patch" | "full"): string;
+  deleted(collection: string, id: string): string;
+  /** A collection with its entity fragments. */
+  collection(key: string, entries: string[]): string;
+  /** Fields added for one client (`syncPacketHeader`). */
+  header(header: Record<string, any>): string[];
+  /** The whole packet of one client. */
+  packet(conn: Party.Connection, parts: string[], obj: any): string;
+}
+
+class SyncFragments implements SyncPacketWriter {
+  private fields = new Map<string, string>();
+  private patches = new Map<string, string>();
+  private fulls = new Map<string, string>();
+
+  field(key: string, value: any): string {
+    let fragment = this.fields.get(key);
+    if (fragment === undefined) {
+      fragment = `${JSON.stringify(key)}:${JSON.stringify(value)}`;
+      this.fields.set(key, fragment);
+    }
+    return fragment;
+  }
+
+  entity(collection: string, id: string, value: any, kind: "patch" | "full"): string {
+    const cache = kind === "patch" ? this.patches : this.fulls;
+    const cacheKey = collection + "\u0000" + id;
+    let fragment = cache.get(cacheKey);
+    if (fragment === undefined) {
+      fragment = `${JSON.stringify(id)}:${JSON.stringify(value)}`;
+      cache.set(cacheKey, fragment);
+    }
+    return fragment;
+  }
+
+  deleted(_collection: string, id: string): string {
+    return `${JSON.stringify(id)}:${JSON.stringify(DELETE_TOKEN)}`;
+  }
+
+  collection(key: string, entries: string[]): string {
+    return `${JSON.stringify(key)}:{${entries.join(",")}}`;
+  }
+
+  header(header: Record<string, any>): string[] {
+    const parts: string[] = [];
+    for (const key in header) {
+      parts.push(`${JSON.stringify(key)}:${JSON.stringify(header[key])}`);
+    }
+    return parts;
+  }
+
+  packet(_conn: Party.Connection, parts: string[], obj: any): string {
+    return `{"type":"sync","value":{${parts.join(",")}}` + otherPacketKeys(obj) + "}";
+  }
+}
+
+/** Keys of a packet other than `type` and `value` (for example `events`), as JSON fields. */
+function otherPacketKeys(obj: any): string {
+  let data = "";
+  for (const key in obj) {
+    if (key === "type" || key === "value") continue;
+    data += `,${JSON.stringify(key)}:${JSON.stringify(obj[key])}`;
+  }
+  return data;
+}
+
+/** Path table pieces of a sync packet (see `PathTable` in `@signe/sync`). */
+class PathSyncFragments implements SyncPacketWriter {
+  private fields = new Map<string, string>();
+  private patches = new Map<string, string>();
+  private fulls = new Map<string, string>();
+
+  constructor(private table: PathTable, private cursor: (conn: Party.Connection) => PathTableCursor) {
+    table.startPacket();
+  }
+
+  field(key: string, value: any): string {
+    let fragment = this.fields.get(key);
+    if (fragment === undefined) {
+      fragment = this.table.encode({ [key]: value });
+      this.fields.set(key, fragment);
+    }
+    return fragment;
+  }
+
+  entity(collection: string, id: string, value: any, kind: "patch" | "full"): string {
+    const cache = kind === "patch" ? this.patches : this.fulls;
+    const cacheKey = collection + "\u0000" + id;
+    let fragment = cache.get(cacheKey);
+    if (fragment === undefined) {
+      fragment = value !== null && typeof value === "object" && !Array.isArray(value)
+        ? this.table.encode(value, collection + "." + id)
+        : this.table.encodeLeaf(collection + "." + id, value);
+      cache.set(cacheKey, fragment);
+    }
+    return fragment;
+  }
+
+  deleted(collection: string, id: string): string {
+    return this.table.encodeLeaf(collection + "." + id, DELETE_TOKEN);
+  }
+
+  collection(_key: string, entries: string[]): string {
+    return joinPairs(entries);
+  }
+
+  header(header: Record<string, any>): string[] {
+    return [this.table.encode(header)];
+  }
+
+  packet(conn: Party.Connection, parts: string[], obj: any): string {
+    // The header comes last: the definitions must include the paths of this packet
+    const pairs = joinPairs(parts);
+    return `{"type":"sync",${this.table.header(this.cursor(conn))}"p":[${pairs}]` + otherPacketKeys(obj) + "}";
+  }
+}
+
+/** Joins lists of pairs, skipping empty ones. */
+function joinPairs(parts: string[]): string {
+  let out = "";
+  for (const part of parts) {
+    if (part === "") continue;
+    out += out === "" ? part : "," + part;
+  }
+  return out;
+}
+
+/**
+ * Converts queued volatile events to a packet object and empties the queue.
+ * Returns undefined when there is nothing to send.
+ */
+function takeEvents(queue: Map<string, any[]>): Record<string, any[]> | undefined {
+  if (queue.size === 0) return undefined;
+  const events = Object.fromEntries(queue);
+  queue.clear();
+  return events;
+}
 
 /**
  * @class Server
@@ -378,22 +533,269 @@ export class Server implements Party.Server {
       .some((conn) => this.getPrivateId(conn) === privateId);
   }
 
+  /**
+   * Whether `data` should be sent compressed to `conn`: the room enables compression,
+   * the client asked for it, the message is large enough, and (for packets returned by
+   * `interceptorPacket`) per-client compression is enabled.
+   */
+  private shouldCompress(conn: Party.Connection, subRoom: any, data: string, intercepted: boolean): boolean {
+    const compression = subRoom?.$compression;
+    if (!compression || !(conn.state as any)?.compression) return false;
+    if (intercepted && !compression.intercepted) return false;
+    return data.length >= compression.threshold;
+  }
+
   async send(conn: Party.Connection, obj: any, subRoom: any) {
-    obj = structuredClone(obj);
-    if (subRoom.interceptorPacket) {
+    if (this.usesSyncVisibility(obj, subRoom)) {
+      this.sendPerClient(conn, this.buildVisibleSyncPacket(conn, obj, subRoom, this.syncWriter(conn, subRoom, {})), subRoom);
+      return;
+    }
+    const intercepted = !!subRoom?.interceptorPacket;
+    if (subRoom?.interceptorPacket) {
+      // The interceptor may modify the packet: give it its own copy, unless the room says it does not
+      if (subRoom.copyPacketForInterceptor !== false) {
+        obj = structuredClone(obj);
+      }
       const signal = this.getUsersProperty(subRoom);
       const { publicId } = conn.state as any;
       const user = signal?.()[publicId];
       obj = await awaitReturn(subRoom["interceptorPacket"]?.(user, obj, conn));
       if (obj === null) return;
     }
-    conn.send(JSON.stringify(obj));
+    let data: string;
+    if (this.usesPathFormat(conn, obj)) {
+      const table = this.pathTable(subRoom);
+      table.startPacket();
+      const body = this.pathPacketBody(obj, table.encode(obj.value));
+      data = this.pathPacket(conn, table, body);
+    } else {
+      data = JSON.stringify(obj);
+    }
+    conn.send(
+      this.shouldCompress(conn, subRoom, data, intercepted)
+        ? this.compressForClient(conn, subRoom, data)
+        : data
+    );
   }
 
-  broadcast(obj: any, subRoom: any) {
-    for (let conn of this.room.getConnections()) {
-      this.send(conn, obj, subRoom);
+  /** Compressors of the connections that read stream messages (see `createMessageCompressor`). */
+  private compressors = new WeakMap<Party.Connection, MessageCompressor>();
+
+  /**
+   * Compresses a message built for this client only: with the connection's stream when the
+   * client reads stream messages (3 times cheaper and 2 times smaller on small packets,
+   * since the stream is set up once and messages refer to the previous ones), otherwise alone.
+   */
+  private compressForClient(conn: Party.Connection, subRoom: any, data: string): Uint8Array {
+    const compression = subRoom.$compression;
+    if (compression.stream === false || !(conn.state as any)?.compressionStream) {
+      return compressMessage(data, compression.level);
     }
+    let compressor = this.compressors.get(conn);
+    if (!compressor) {
+      compressor = createMessageCompressor({
+        level: compression.level,
+        windowBits: compression.windowBits,
+        memLevel: compression.memLevel,
+      });
+      this.compressors.set(conn, compressor);
+    }
+    return compressor.compress(data);
+  }
+
+  /**
+   * Sends a packet to every connection (except `exclude`).
+   * Without `interceptorPacket`, the packet is serialized once and the same string is sent to all.
+   */
+  broadcast(obj: any, subRoom: any, exclude?: Set<Party.Connection>) {
+    if (this.usesSyncVisibility(obj, subRoom)) {
+      // Each entity is serialized once per broadcast (per format), then assembled per client
+      const writers = {};
+      for (let conn of this.room.getConnections()) {
+        if (exclude?.has(conn)) continue;
+        this.sendPerClient(conn, this.buildVisibleSyncPacket(conn, obj, subRoom, this.syncWriter(conn, subRoom, writers)), subRoom);
+      }
+      return;
+    }
+    if (subRoom?.interceptorPacket) {
+      for (let conn of this.room.getConnections()) {
+        if (exclude?.has(conn)) continue;
+        this.send(conn, obj, subRoom);
+      }
+      return;
+    }
+    let data: string | undefined;
+    let compressed: Uint8Array | undefined;
+    // Path table format: the pairs are encoded once; only the definitions a client misses differ
+    let pathBody: string | undefined;
+    let pathCompressed: Map<string, Uint8Array> | undefined;
+    for (let conn of this.room.getConnections()) {
+      if (exclude?.has(conn)) continue;
+      if (this.usesPathFormat(conn, obj)) {
+        const table = this.pathTable(subRoom);
+        if (pathBody === undefined) {
+          table.startPacket();
+          pathBody = this.pathPacketBody(obj, table.encode(obj.value));
+        }
+        const header = table.header(this.pathCursor(conn));
+        const pathData = `{"type":"sync",${header}${pathBody}`;
+        if (this.shouldCompress(conn, subRoom, pathData, false)) {
+          // Clients with the same missing definitions share the same bytes
+          pathCompressed ??= new Map();
+          let bytes = pathCompressed.get(header);
+          if (!bytes) {
+            bytes = compressMessage(pathData, subRoom.$compression.level);
+            pathCompressed.set(header, bytes);
+          }
+          conn.send(bytes);
+        } else {
+          conn.send(pathData);
+        }
+        continue;
+      }
+      data ??= JSON.stringify(obj);
+      if (this.shouldCompress(conn, subRoom, data, false)) {
+        // Compressed once, then the same bytes are sent to every client that asked for it
+        compressed ??= compressMessage(data, subRoom.$compression.level);
+        conn.send(compressed);
+      } else {
+        conn.send(data);
+      }
+    }
+  }
+
+  /**
+   * Sends a packet built for this client only. Like intercepted packets, it is compressed only
+   * with `compression.intercepted`, since each client needs its own compression.
+   */
+  private sendPerClient(conn: Party.Connection, data: string, subRoom: any) {
+    conn.send(
+      this.shouldCompress(conn, subRoom, data, true)
+        ? this.compressForClient(conn, subRoom, data)
+        : data
+    );
+  }
+
+  /** Path cursor of each connection: the path definitions it already received. */
+  private pathCursors = new WeakMap<Party.Connection, PathTableCursor>();
+
+  /** Whether this sync packet is sent to `conn` in the path table format (asked by the client). */
+  private usesPathFormat(conn: Party.Connection, obj: any): boolean {
+    return obj?.type === "sync"
+      && !!(conn.state as any)?.pathFormat
+      && obj.value !== null
+      && typeof obj.value === "object";
+  }
+
+  private pathTable(subRoom: any): PathTable {
+    return (subRoom.$pathTable ??= new PathTable(subRoom.pathTableLimit));
+  }
+
+  private pathCursor = (conn: Party.Connection): PathTableCursor => {
+    let cursor = this.pathCursors.get(conn);
+    if (!cursor) {
+      cursor = { epoch: -1, known: 0 };
+      this.pathCursors.set(conn, cursor);
+    }
+    return cursor;
+  };
+
+  /** End of a path table packet: pairs and the other keys of the packet. */
+  private pathPacketBody(obj: any, pairs: string): string {
+    return `"p":[${pairs}]` + otherPacketKeys(obj) + "}";
+  }
+
+  private pathPacket(conn: Party.Connection, table: PathTable, body: string): string {
+    return `{"type":"sync",${table.header(this.pathCursor(conn))}${body}`;
+  }
+
+  /** Writer of `conn`'s format, shared through `writers` by the clients of one broadcast. */
+  private syncWriter(conn: Party.Connection, subRoom: any, writers: { json?: SyncFragments; paths?: PathSyncFragments }): SyncPacketWriter {
+    if ((conn.state as any)?.pathFormat) {
+      return (writers.paths ??= new PathSyncFragments(this.pathTable(subRoom), this.pathCursor));
+    }
+    return (writers.json ??= new SyncFragments());
+  }
+
+  /** Sync packets of a room that defines `syncVisibility` are filtered per client. */
+  private usesSyncVisibility(obj: any, subRoom: any): boolean {
+    return obj?.type === "sync" && typeof subRoom?.syncVisibility === "function";
+  }
+
+  /**
+   * Builds the sync packet of one client for a room that defines `syncVisibility`.
+   *
+   * For each collection returned by `syncVisibility(user, conn, patch)`:
+   * - an entity that stays visible gets its patch (if it changed);
+   * - an entity that becomes visible gets its full state, from `$memoryAll`;
+   * - an entity that is no longer visible (or was deleted) gets `"$delete"`.
+   * Other keys of the packet are sent to everyone. `syncPacketHeader(user, conn, patch)` adds
+   * per-client fields. Fragments are serialized once per broadcast and shared between clients.
+   */
+  private buildVisibleSyncPacket(conn: Party.Connection, obj: any, subRoom: any, fragments: SyncPacketWriter): string {
+    const user = this.getUsersProperty(subRoom)?.()[(conn.state as any)?.publicId];
+    const value = obj.value && typeof obj.value === "object" ? obj.value : {};
+    const visibility: Record<string, Iterable<string> | null | undefined> =
+      subRoom.syncVisibility(user, conn, value) ?? {};
+
+    const states: Map<string, Map<string, Set<string>>> = (subRoom.$syncVisibleEntities ??= new Map());
+    let state = states.get(conn.id);
+    if (!state) {
+      state = new Map();
+      states.set(conn.id, state);
+    }
+
+    const parts: string[] = [];
+    for (const key in value) {
+      if (visibility[key] != null) continue;
+      parts.push(fragments.field(key, value[key]));
+    }
+
+    for (const key in visibility) {
+      const visibleIds = visibility[key];
+      if (visibleIds == null) continue;
+      const patch = value[key];
+      const patchEntries = patch && typeof patch === "object" && !Array.isArray(patch) ? patch : undefined;
+      const memory = subRoom.$memoryAll?.[key];
+      const previous = state.get(key);
+      const visible = new Set<string>();
+      const entries: string[] = [];
+
+      for (const id of visibleIds) {
+        if (visible.has(id)) continue;
+        if (previous?.has(id)) {
+          const entityPatch = patchEntries?.[id];
+          // Deleted entities are removed below, with the ones that left the view
+          if (entityPatch === DELETE_TOKEN) continue;
+          visible.add(id);
+          if (entityPatch !== undefined) {
+            entries.push(fragments.entity(key, id, entityPatch, "patch"));
+          }
+        } else {
+          const snapshot = memory?.[id];
+          if (snapshot === undefined) continue; // does not exist (anymore)
+          visible.add(id);
+          entries.push(fragments.entity(key, id, snapshot, "full"));
+        }
+      }
+      if (previous) {
+        for (const id of previous) {
+          if (!visible.has(id)) entries.push(fragments.deleted(key, id));
+        }
+      }
+      if (entries.length > 0) {
+        parts.push(fragments.collection(key, entries));
+      }
+      state.set(key, visible);
+    }
+
+    const header = subRoom.syncPacketHeader?.(user, conn, value);
+    if (header) {
+      // Added last: like `{ ...value, ...header }`, a header field wins over a packet field
+      parts.push(...fragments.header(header));
+    }
+
+    return fragments.packet(conn, parts, obj);
   }
 
   /**
@@ -771,10 +1173,20 @@ export class Server implements Party.Server {
     };
 
     instance.$memoryAll = {}
+    const compressionOption = instance["compression"];
+    instance.$compression = compressionOption
+      ? {
+          threshold: 512,
+          level: 1,
+          intercepted: false,
+          ...(typeof compressionOption === "object" ? compressionOption : {}),
+        }
+      : null;
     instance.$storageMetrics = this.createStorageMetrics();
     const shouldPersistState = instance["persistState"] !== false;
     instance.$autoSync = instance["autoSync"] !== false; // Default to true
     instance.$pendingSync = new Map<string, any>();
+    instance.$pendingEvents = new Map<string, any[]>(); // Volatile events waiting for $applySync() when autoSync is disabled
     instance.$pendingInitialSync = new Map<Party.Connection, string>(); // Store connections waiting for initial sync with their publicId
     instance.$send = (conn: Party.Connection, obj: any) => {
       return this.send(conn, obj, instance)
@@ -806,11 +1218,13 @@ export class Server implements Party.Server {
      * ```
      */
     instance.$applySync = () => {
+      // Changes made in the current task are still waiting for the batched sync:
+      // take them now, so that `x.set(1); $applySync()` sends them.
+      flushBatchedSync();
       let packet: any;
+      const events = takeEvents(instance.$pendingEvents);
       if (instance.$pendingSync.size > 0) {
-        if (options.getMemoryAll) {
-          buildObject(instance.$pendingSync, instance.$memoryAll);
-        }
+        // buildObject also merges the changes into $memoryAll
         packet = buildObject(instance.$pendingSync, instance.$memoryAll);
         instance.$pendingSync.clear();
       } else {
@@ -819,27 +1233,26 @@ export class Server implements Party.Server {
       }
       
       // Send initial sync to connections that were waiting for it (with their pId)
-      const pendingConnections = new Set(instance.$pendingInitialSync.keys());
+      const pendingConnections = new Set<Party.Connection>(instance.$pendingInitialSync.keys());
       for (const [conn, publicId] of instance.$pendingInitialSync) {
+        // A client waiting for its initial sync needs the whole state, not only the changes
         this.send(conn, {
           type: "sync",
           value: {
             pId: publicId,
-            ...packet,
+            ...instance.$memoryAll,
           },
+          ...(events ? { events } : {}),
         }, instance);
       }
       instance.$pendingInitialSync.clear();
       
       // Broadcast to all other connections (excluding those that just received initial sync)
-      for (const conn of this.room.getConnections()) {
-        if (!pendingConnections.has(conn)) {
-          this.send(conn, {
-            type: "sync",
-            value: packet,
-          }, instance);
-        }
-      }
+      this.broadcast({
+        type: "sync",
+        value: packet,
+        ...(events ? { events } : {}),
+      }, instance, pendingConnections);
     }
     instance.$sessionTransfer = async (conn: Party.Connection, targetRoomId: string) => {
       let user: any;
@@ -907,14 +1320,22 @@ export class Server implements Party.Server {
       }
     };
 
-    // Sync callback: Broadcast changes to all clients or store them for manual sync
-    const syncCb = (values) => {
-      if (options.getMemoryAll) {
+    // Sync callback: Broadcast changes to all clients or store them for manual sync.
+    // Volatile events (`event()`) travel in the same packet under `events`
+    // and are never merged into $memoryAll nor persisted.
+    const syncCb = (values: Map<string, any>, eventsQueue: Map<string, any[]>) => {
+      if (values.size === 0 && eventsQueue.size === 0) {
+        return;
+      }
+      const skipInit = init && this.isHibernate;
+      // The broadcast path below merges into $memoryAll itself (buildObject)
+      if (options.getMemoryAll && (skipInit || !instance.$autoSync)) {
         buildObject(values, instance.$memoryAll);
       }
       // During initialization in hibernate mode, skip entirely
-      if (init && this.isHibernate) {
+      if (skipInit) {
         init = false;
+        eventsQueue.clear();
         return;
       }
       
@@ -925,20 +1346,32 @@ export class Server implements Party.Server {
           instance.$pendingSync.set(path, value);
         }
         values.clear();
+        for (const [path, payloads] of eventsQueue) {
+          const pending = instance.$pendingEvents.get(path);
+          if (pending) {
+            pending.push(...payloads);
+          } else {
+            instance.$pendingEvents.set(path, [...payloads]);
+          }
+        }
+        eventsQueue.clear();
         return;
       }
       
       // Auto sync: broadcast immediately (even during init if autoSync is enabled)
       const packet = buildObject(values, instance.$memoryAll);
+      const events = takeEvents(eventsQueue);
       this.broadcast(
         {
           type: "sync",
           value: packet,
+          ...(events ? { events } : {}),
         },
         instance
       );
       values.clear();
     }
+
 
     const flushPersist = async (values: Map<string, any>) => {
       const startedAt = Date.now();
@@ -993,68 +1426,56 @@ export class Server implements Party.Server {
       await persistQueue;
     }
 
-    const debouncePersist = (wait: number) => {
-      let timeout: ReturnType<typeof setTimeout> | null = null;
-      let flushing = false;
-      const pending = new Map<string, any>();
-
-      const schedule = () => {
-        if (timeout) {
-          clearTimeout(timeout);
-        }
-        timeout = setTimeout(() => {
-          void flush();
-        }, wait);
-      };
-
-      const flush = async () => {
-        timeout = null;
-        if (flushing) {
-          schedule();
-          return;
-        }
-
-        const values = new Map(pending);
-        pending.clear();
-        if (!values.size) {
-          return;
-        }
-
-        flushing = true;
-        try {
-          await persistCb(values);
-        } finally {
-          flushing = false;
-          if (pending.size) {
-            schedule();
-          }
-        }
-      };
-
-      return (values: Map<string, any>) => {
-        if (initPersist) {
-          values.clear();
-          return;
-        }
-
-        for (const [path, value] of values) {
-          pending.set(path, value);
-        }
+    // Persist changes in batches. Without throttleStorage, all changes of the same task are
+    // written together. With throttleStorage, writes are debounced, but never delayed more than
+    // throttleStorageMaxWait (default 10 × throttleStorage) while the state keeps changing.
+    let persistValuesRef: Map<string, any> | null = null;
+    const flushPersistValues = () => {
+      if (persistValuesRef?.size) {
+        void persistCb(persistValuesRef);
+      }
+    };
+    const throttleStorage = instance["throttleStorage"] || 0;
+    const schedulePersist = throttleStorage > 0
+      ? debounce(
+          flushPersistValues,
+          throttleStorage,
+          instance["throttleStorageMaxWait"] ?? throttleStorage * 10
+        )
+      : batch(flushPersistValues);
+    const batchedPersist = (values: Map<string, any>) => {
+      if (initPersist) {
         values.clear();
-        schedule();
-      };
+        return;
+      }
+      persistValuesRef = values;
+      schedulePersist();
     };
 
     const disabledPersist = (values: Map<string, any>) => {
       values.clear();
     };
 
-    // Set up syncing and persistence with throttling to optimize performance
+    // Changes made in the same task are sent as one packet (at the end of the task),
+    // and with throttleSync at most one packet per window. State changes and events
+    // share this flush, so an event and the state change emitted with it arrive together.
+    let syncValuesRef: Map<string, any> = new Map();
+    let syncEventsRef: Map<string, any[]> = new Map();
+    const flushBatchedSync = () => {
+      syncCb(syncValuesRef, syncEventsRef);
+    };
+    const scheduleSync = batch(flushBatchedSync, instance["throttleSync"] || 0);
+
     syncClass(instance, {
-      onSync: instance["throttleSync"] ? throttle(syncCb, instance["throttleSync"]) : syncCb,
-      onPersist: shouldPersistState
-        ? instance["throttleStorage"] ? debouncePersist(instance["throttleStorage"]) : persistCb
-        : disabledPersist,
+      onSync: (values) => {
+        syncValuesRef = values;
+        scheduleSync();
+      },
+      onEvent: (events) => {
+        syncEventsRef = events;
+        scheduleSync();
+      },
+      onPersist: shouldPersistState ? batchedPersist : disabledPersist,
     });
 
     if (shouldPersistState) {
@@ -1333,9 +1754,15 @@ export class Server implements Party.Server {
 
     // Handle session transfer
     let transferToken = null;
+    let wantsCompression = false;
+    let readsCompressionStream = false;
+    let wantsPathFormat = false;
     if (ctx.request?.url) {
       const url = new URL(ctx.request.url);
       transferToken = url.searchParams.get('transferToken');
+      wantsCompression = url.searchParams.get(COMPRESSION_QUERY_PARAM) === COMPRESSION_QUERY_VALUE;
+      readsCompressionStream = url.searchParams.get(COMPRESSION_STREAM_QUERY_PARAM) === COMPRESSION_STREAM_QUERY_VALUE;
+      wantsPathFormat = url.searchParams.get(PATH_FORMAT_QUERY_PARAM) === PATH_FORMAT_QUERY_VALUE;
     }
     let transferData: any = null;
     if (transferToken) {
@@ -1416,7 +1843,13 @@ export class Server implements Party.Server {
      conn.setState({
       ...conn.state,
       publicId,
-      privateId
+      privateId,
+      // The client accepts compressed messages (only used if the room enables compression)
+      ...(wantsCompression ? { compression: true } : {}),
+      // ... and reads stream messages (one DEFLATE stream per connection)
+      ...(wantsCompression && readsCompressionStream ? { compressionStream: true } : {}),
+      // The client reads sync packets in the path table format
+      ...(wantsPathFormat ? { pathFormat: true } : {}),
     });
 
     // Call the room's onJoin method if it exists
@@ -1818,6 +2251,11 @@ export class Server implements Party.Server {
     if (subRoom.$pendingInitialSync) {
       subRoom.$pendingInitialSync.delete(conn);
     }
+    // Forget what this connection could see (syncVisibility)
+    subRoom.$syncVisibleEntities?.delete(conn.id);
+    // Free its compression stream
+    this.compressors.get(conn)?.close();
+    this.compressors.delete(conn);
 
     const signal = this.getUsersProperty(subRoom);
 

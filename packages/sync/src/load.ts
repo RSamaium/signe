@@ -1,9 +1,13 @@
-import { isSignal } from "@signe/reactive";
+import { batch, isSignal } from "@signe/reactive";
 import { DELETE_TOKEN, setMetadata } from "./core";
+import { isSyncEvent } from "./event";
 import { isClass } from "./utils";
 
 /**
  * Loads values into the root instance by paths or from an object.
+ *
+ * Runs in a single `batch()`: computed signals and effects depending on several loaded
+ * values update once, after all values are applied.
  * 
  * @param {object} rootInstance - The instance into which values will be loaded.
  * @param {object} values - The values to load, either as paths or an object.
@@ -26,11 +30,15 @@ export function load(
   values: { [path: string]: any } | object,
   valueIsObject?: boolean
 ) {
-  if (valueIsObject) {
-    loadFromObject(rootInstance, values);
-  } else {
-    loadFromPaths(rootInstance, values);
-  }
+  // One batch per load: computed signals and effects that read several loaded values
+  // (e.g. a sprite reading x and y) update once per packet instead of once per value.
+  batch(() => {
+    if (valueIsObject) {
+      loadFromObject(rootInstance, values);
+    } else {
+      loadFromPaths(rootInstance, values);
+    }
+  });
 }
 
 /**
@@ -50,26 +58,58 @@ function loadFromPaths(rootInstance: any, values: { [path: string]: any }) {
 
 /**
  * Recursively loads values from an object into the root instance.
- * 
+ *
+ * Walks the values and the instance together: each level is resolved once, instead of
+ * building a path string for every value and walking it again from the root. The rules
+ * are the same as {@link loadValue}: intermediate nodes are created (with the parent's
+ * `classType` when set) only when a value is loaded below them.
+ *
  * @param {object} rootInstance - The instance into which values will be loaded.
  * @param {object} values - The values to load.
- * @param {string} [currentPath=""] - The current path in the recursion.
  * @example
  * loadFromObject(instance, { position: { x: 10, y: 20 } });
  */
-function loadFromObject(
-  rootInstance: any,
-  values: object,
-  currentPath: string = ""
-) {
-  for (let key in values) {
+function loadFromObject(rootInstance: any, values: object) {
+  loadObjectLevel(() => rootInstance, values, true);
+}
+
+/**
+ * @param getNode - Returns the node for this level (before unwrapping a signal), created on
+ *   first use so that a level with no value below it is never created.
+ * @param isRoot - At the root there is no parent, so no `classType` (as in loadValue).
+ */
+function loadObjectLevel(getNode: () => any, values: object, isRoot: boolean) {
+  for (const key in values) {
     const value = values[key];
-    const newPath = currentPath ? `${currentPath}.${key}` : key;
-    if (typeof value === "object" && !Array.isArray(value) && value !== null) {
-      loadFromObject(rootInstance, value, newPath);
+    // A key may itself be a path ("items.0.value"), as when paths were joined then split
+    const parts = key.includes(".") ? key.split(".") : null;
+    const last = parts ? parts[parts.length - 1] : key;
+    // Node that holds `last`: walks the leading parts of a dotted key
+    const getHolder = parts
+      ? () => {
+          let node = getNode();
+          for (let i = 0; i < parts.length - 1; i++) {
+            node = stepInto(node, parts[i], isRoot && i === 0 ? undefined : node);
+          }
+          return node;
+        }
+      : getNode;
+    const holderIsRoot = isRoot && !parts;
+
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      let child: any;
+      let resolved = false;
+      const getChild = () => {
+        if (!resolved) {
+          const node = getHolder();
+          child = stepInto(node, last, holderIsRoot ? undefined : node);
+          resolved = true;
+        }
+        return child;
+      };
+      loadObjectLevel(getChild, value, false);
     } else {
-      const parts = newPath.split(".");
-      loadValue(rootInstance, parts, value);
+      applyLeaf(getHolder(), last, value);
     }
   }
 }
@@ -85,56 +125,98 @@ function loadFromObject(
  */
 function loadValue(rootInstance: any, parts: string[], value: any) {
   let current: any = rootInstance;
+  const last = parts.length - 1;
+  for (let i = 0; i < last; i++) {
+    // The parent of a level is the node at the previous path (none at the root)
+    const parentInstance = i === 0 ? undefined : current;
+    current = stepInto(current, parts[i], parentInstance);
+  }
+  applyLeaf(current, parts[last], value);
+}
 
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i];
+/**
+ * Applies one value at a path, with the same rules as `load()` with paths.
+ *
+ * @internal Used by the path table decoder for values it cannot apply from its cache.
+ */
+export function loadPathParts(rootInstance: any, parts: string[], value: any): void {
+  loadValue(rootInstance, parts, value);
+}
 
-    if (i === parts.length - 1) {
-      if (value == DELETE_TOKEN) {
-        if (isSignal(current)) {
-          if (mutateSignalContainer(current, target => {
-            Reflect.deleteProperty(target, part);
-          })) {
-            continue;
-          }
-          current = current();
-        }
-        Reflect.deleteProperty(current, part);
-      }
-      else if (current[part]?._subject) {
-        current[part].set(value);
-      }
-      else if (isSignal(current) && mutateSignalContainer(current, target => {
-        const key = Array.isArray(target) && !isNaN(Number(part))
-          ? Number(part)
-          : part;
-        target[key] = value;
-      })) {
-        continue;
-      }
-      else {
-        current[part] = value;
-      }
+/**
+ * Counts the changes that may move or replace nodes of a loaded state: a node created, a
+ * value deleted, or an object or array written where something else was. Changing a
+ * primitive value does not count.
+ *
+ * Code that keeps references to nodes of the state (like the path table decoder, which keeps
+ * the signal of each path) uses it to know when those references must be looked up again.
+ */
+let structureVersion = 0;
+
+/** @internal See {@link structureVersion}. */
+export function getStructureVersion(): number {
+  return structureVersion;
+}
+
+function isObjectLike(value: any): boolean {
+  return value !== null && (typeof value === "object" || typeof value === "function");
+}
+
+/**
+ * Moves one level down from `current` (unwrapping a signal), creating the child when it is
+ * missing: an instance of the parent's `classType` if any, otherwise a plain object.
+ */
+function stepInto(current: any, part: string, parentInstance: any) {
+  if (isSignal(current)) {
+    current = current();
+  }
+  if (current[part] === undefined) {
+    structureVersion++;
+    const classType = parentInstance?.options?.classType;
+    if (classType) {
+      current[part] = !isClass(classType) ? classType(part) : new classType();
+      setMetadata(current[part], 'id', part)
     } else {
-      if (isSignal(current)) {
-        current = current();
-      }
-      const currentValue = current[part];
-      if (currentValue === undefined) {
-        const parentInstance = getByPath(
-          rootInstance,
-          parts.slice(0, i).join(".")
-        );
-        const classType = parentInstance?.options?.classType;
-        if (classType) {
-          current[part] = !isClass(classType) ? classType(part) : new classType();
-          setMetadata(current[part], 'id', part)
-        } else {
-          current[part] = {};
-        }
-      }
-      current = current[part];
+      current[part] = {};
     }
+  }
+  return current[part];
+}
+
+/** Applies a value (or a delete) at `part` of `current`. */
+function applyLeaf(current: any, part: string, value: any) {
+  if (typeof value === "object" && value !== null) {
+    structureVersion++;
+  }
+  if (value == DELETE_TOKEN) {
+    structureVersion++;
+    if (isSignal(current)) {
+      if (mutateSignalContainer(current, target => {
+        Reflect.deleteProperty(target, part);
+      })) {
+        return;
+      }
+      current = current();
+    }
+    Reflect.deleteProperty(current, part);
+  }
+  else if (current[part]?._subject) {
+    // A primitive written over an object or array needs no count: its old children can only
+    // come back with an object written there, which counts
+    current[part].set(value);
+  }
+  else if (isSignal(current) && mutateSignalContainer(current, target => {
+    const key = Array.isArray(target) && !isNaN(Number(part))
+      ? Number(part)
+      : part;
+    if (isObjectLike(target[key])) structureVersion++;
+    target[key] = value;
+  })) {
+    return;
+  }
+  else {
+    if (isObjectLike(current[part])) structureVersion++;
+    current[part] = value;
   }
 }
 
@@ -157,6 +239,32 @@ function mutateSignalContainer(
 }
 
 /**
+ * Dispatches volatile events received in a sync packet to the matching `event()` listeners.
+ *
+ * Call it after `load()` so listeners see the state of the same packet.
+ * Paths that do not resolve to an `event()` are ignored. Nothing is stored.
+ *
+ * @param {object} rootInstance - The instance holding the events.
+ * @param {object} events - Payloads by path, in emission order.
+ * @example
+ * load(instance, packet.value, true);
+ * loadEvents(instance, packet.events ?? {});
+ */
+export function loadEvents(
+  rootInstance: any,
+  events: Record<string, any[]> | undefined | null
+): void {
+  if (!events) return;
+  for (const [path, payloads] of Object.entries(events)) {
+    const target = getByPath(rootInstance, path);
+    if (!isSyncEvent(target) || !Array.isArray(payloads)) continue;
+    for (const payload of payloads) {
+      target.$dispatch(payload);
+    }
+  }
+}
+
+/**
  * Retrieves a value from the root instance by a path.
  * 
  * @param {object} root - The root instance.
@@ -172,7 +280,7 @@ export function getByPath(root: any, path: string) {
     if (isSignal(current)) {
       current = current();
     }
-    if (current[part]) {
+    if (current != null && current[part]) {
       current = current[part];
     } else {
       return undefined;

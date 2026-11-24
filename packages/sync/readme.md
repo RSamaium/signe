@@ -94,6 +94,25 @@ The `transform` function receives the value before it's synchronized and should 
 
 **Note:** The transformation is applied during synchronization, but the original value stored in the signal remains unchanged.
 
+##### Precision (quantization)
+
+Use `precision` to round the numbers sent to clients. Values are rounded after `transform`, including numbers inside plain objects and arrays. Negative values round to tens, hundreds, and so on.
+
+```typescript
+class Player {
+  @sync({ precision: 0 }) x = signal(0)    // sent as integers
+  @sync({ precision: 2 }) speed = signal(0) // sent with 2 decimals
+}
+
+player.x.set(10.2) // clients receive 10
+player.x.set(10.4) // still 10: nothing is sent
+player.x.set(10.6) // clients receive 11
+```
+
+- Only what is sent to clients is rounded: the server keeps the exact value, and persistence stores the exact value.
+- For a numeric signal, a change that does not change the rounded value is not sent at all.
+- Fewer digits mean smaller packets and faster serialization. With 100 moving players, rounding positions to integers reduced packets by 24 to 39% and server time per tick by 8 to 17%.
+
 ##### Syncing Collections
 
 You can synchronize collections of objects by specifying the class type:
@@ -289,6 +308,44 @@ Benefits:
 - Can be used in UI to show online/offline indicators
 - No need to manually track connection status with custom events
 
+#### Volatile events with event()
+Use `event()` for things that happen once (a hit, a sound, an animation) rather than state. An event has no current value: it is sent to clients, triggers their listeners, and is never stored, persisted or sent to clients that join later.
+
+```typescript
+import { signal } from '@signe/reactive'
+import { sync, event } from '@signe/sync'
+
+class Player {
+  @sync() hp = signal(100)
+  @sync() hit = event<{ damage: number; crit: boolean }>()
+}
+
+// Server
+player.hp.update(v => v - 40)
+player.hit.emit({ damage: 40, crit: false })
+
+// Client
+player.hit.on(({ damage, crit }) => {
+  // player.hp() is already 60 here
+  showDamage(damage, crit)
+})
+```
+
+Behavior:
+- Every `emit()` is delivered, even with an identical payload or several in the same tick (in emission order)
+- The event travels in the same sync packet as the state changes made with it, and client listeners run after that state is applied
+- `on()` returns an unsubscribe function; `off(listener)` removes a listener
+- `emit()` also calls listeners registered on the same instance (for example on the server)
+- `syncToClient: false` keeps the event local; `transform` is applied to the payload; `persist` is ignored
+
+Sync packets carry events under a separate `events` key, by path:
+
+```json
+{ "type": "sync", "value": { "hp": 60 }, "events": { "hit": [{ "damage": 40, "crit": false }] } }
+```
+
+`connectionRoom()` dispatches them automatically. If you handle packets yourself, call `loadEvents(instance, packet.events)` after `load()`.
+
 ### Client Connection
 
 Set up a WebSocket connection for real-time synchronization:
@@ -311,7 +368,74 @@ conn.on('event-name', (data) => {
 })
 ```
 
+#### Compressed messages
+
+When the room enables `compression` (see `@signe/room`), a client can ask for compressed messages:
+
+```typescript
+const conn = await connectionRoom({
+  host: 'your-server-url',
+  room: 'room-id',
+  compression: true, // adds ?compression=deflate and reads binary frames as ArrayBuffer
+}, room)
+```
+
+Large messages then arrive as binary frames (DEFLATE). `connectionRoom` decodes them before `load()` and before calling `on()` listeners. Each message is decoded once, however many listeners there are. Clients that do not ask keep receiving JSON text.
+
+`connectionRoom` also tells the server that it reads **stream messages** (`?compressionStream=1`). For the packets the server builds for one client only (`syncVisibility`, `interceptorPacket`), the server can then keep one DEFLATE stream per connection instead of compressing each message alone: the stream is set up once, and a packet can refer to the previous ones (the same entity ids and keys come back every tick). On RPG-JS packets of about 2 KB, this is about 3 times less server CPU and 2 times fewer bytes. A stream message can only be read by the connection that received the previous ones, in order.
+
+If you read the socket yourself, use one `createMessageDecoder()` per connection: it reads JSON text frames, compressed binary frames and stream messages. Ask for stream messages only if you use it.
+
+```typescript
+import { createMessageDecoder } from '@signe/sync'
+
+const decoder = createMessageDecoder()
+socket.binaryType = 'arraybuffer'
+socket.addEventListener('open', () => decoder.reset())
+socket.addEventListener('message', (event) => {
+  const packet = decoder.decode(event.data)
+})
+```
+
+`decodeMessage()` is the stateless version: it reads text and compressed frames, not stream messages.
+
+Compression uses native zlib when the runtime exposes it synchronously through `process.getBuiltinModule` (Node.js 20.16+ / 22.3+, Cloudflare Workers with the `nodejs_compat` flag), and [fflate](https://github.com/101arrowz/fflate) otherwise (browsers, Workers without `nodejs_compat`). Both produce the same format.
+
+Stream compression (`createMessageCompressor()`) needs the synchronous native zlib of Node.js. In other runtimes the compressor compresses each message alone, which every decoder reads. Decoding streams works everywhere (fflate in browsers).
+
+#### Path table format
+
+A client can ask for sync packets as a flat list of path ids and values (see `@signe/room`):
+
+```typescript
+const conn = await connectionRoom({
+  host: 'your-server-url',
+  room: 'room-id',
+  pathFormat: true, // adds ?format=paths
+}, room)
+```
+
+`connectionRoom` applies these packets with a `PathTableDecoder`, one per connection. It keeps the signal of each path and writes new values to it directly, without walking the state again. The kept signals are looked up again after any change that may move nodes of the state: an entity created or deleted, an object or array written (by a packet or by `load()`). If you change the structure of the synced state yourself, without `load()`, call `load()` for it or create a new decoder.
+
+If you read the socket yourself:
+
+```typescript
+import { decodeMessage, load, PathTableDecoder } from '@signe/sync'
+
+const decoder = new PathTableDecoder()
+socket.addEventListener('message', (event) => {
+  const packet = decodeMessage(event.data)
+  if (packet.type !== 'sync') return
+  if (PathTableDecoder.isPathPacket(packet)) decoder.apply(room, packet)
+  else load(room, packet.value, true)
+})
+```
+
+Values are applied with the same rules as `load()`, in one `batch()`.
+
 ### Loading State
+
+`load()` applies all values of a call in one `batch()` (see `@signe/reactive`): a computed signal or an effect that reads several loaded values (for example a sprite reading `x` and `y`) runs once per call, after every value is applied, instead of once per value.
 
 Load state from paths or objects:
 
@@ -404,6 +528,10 @@ Synchronizes an instance by adding state management methods.
 Options:
 - `onSync?: (value: Map<string, any>) => void` - Callback for sync events
 - `onPersist?: (value: Set<string>) => void` - Callback for persistence events
+- `onEvent?: (events: Map<string, any[]>) => void` - Called on each `event()` emission with the pending payloads by path. The consumer clears the map once sent. Without it, events are not collected.
+
+### loadEvents(instance, events)
+Dispatches the `events` of a sync packet (`{ [path]: payload[] }`) to the matching `event()` listeners. Unknown paths are ignored.
 
 ### Decorator Options
 
@@ -412,6 +540,7 @@ Common options for decorators:
 - `persist?: boolean` - Enable/disable persistence (default: true)
 - `syncToClient?: boolean` - Enable/disable client synchronization (default: true)
 - `transform?: <T>(value: T) => any` - Transform the value before synchronization. The function receives the original value and should return the transformed value. Useful for type conversions, data normalization, or formatting.
+- `precision?: number` - Round numbers sent to clients to this many decimals (after `transform`). The persisted value stays exact, and a change that keeps the same rounded value is not sent.
 
 ## License
 

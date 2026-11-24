@@ -89,6 +89,66 @@ export function throttle<F extends (...args: any[]) => any>(
 }
 
 /**
+ * Debounces `fn`: it runs `wait` ms after the last call, and at the latest `maxWait` ms
+ * after the first call that has not run yet (so continuous calls cannot postpone it forever).
+ *
+ * @example
+ * const save = debounce(() => persist(), 2500, 25000);
+ */
+export function debounce(fn: () => void, wait: number, maxWait: number = Infinity): () => void {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  let firstCallAt: number | null = null;
+
+  const run = () => {
+    timeout = null;
+    firstCallAt = null;
+    fn();
+  };
+
+  return () => {
+    const now = Date.now();
+    if (firstCallAt === null) firstCallAt = now;
+    if (timeout) clearTimeout(timeout);
+    const delay = Math.max(0, Math.min(wait, firstCallAt + maxWait - now));
+    timeout = setTimeout(run, delay);
+  };
+}
+
+/**
+ * Coalesces calls into one run of `fn`.
+ *
+ * - `wait <= 0`: runs once at the end of the current task (microtask), however many calls were made.
+ * - `wait > 0`: also runs at most once per `wait` ms. The first call of a quiet period runs at the end
+ *   of the current task; later calls are grouped into one trailing run. Unlike a debounce, continuous
+ *   calls never postpone the run beyond `wait`.
+ *
+ * @example
+ * const flush = batch(() => sendPending(), 50);
+ * a.set(1); b.set(2); flush(); flush(); // sendPending() runs once
+ */
+export function batch(fn: () => void, wait: number = 0): () => void {
+  let scheduled = false;
+  let lastRun = -Infinity;
+
+  const run = () => {
+    scheduled = false;
+    lastRun = Date.now();
+    fn();
+  };
+
+  return () => {
+    if (scheduled) return;
+    scheduled = true;
+    const delay = wait > 0 ? lastRun + wait - Date.now() : 0;
+    if (delay > 0) {
+      setTimeout(run, delay);
+    } else {
+      queueMicrotask(run);
+    }
+  };
+}
+
+/**
  * Extracts parameters from a given string based on a specified pattern.
  *
  * The pattern can include placeholders in the form of {paramName}, which will be
@@ -205,15 +265,33 @@ export function dremove(
  * // result is { a: { b: { c: 1 } }, x: { y: { z: '$delete' } } }
  * // allMemory is { a: { b: { c: 1 } }, x: { y: {} } }
  */
+// Sync paths repeat on every tick (e.g. "players.p1.x"): keep their split form.
+// Bounded so that a state with ever-changing ids cannot grow it forever.
+const PATH_KEYS_CACHE_LIMIT = 10_000;
+const pathKeysCache = new Map<string, string[]>();
+
+function splitPath(path: string): string[] {
+  let keys = pathKeysCache.get(path);
+  if (!keys) {
+    if (pathKeysCache.size >= PATH_KEYS_CACHE_LIMIT) {
+      pathKeysCache.clear();
+    }
+    keys = path.split(".");
+    pathKeysCache.set(path, keys);
+  }
+  return keys;
+}
+
 export function buildObject(valuesMap: Map<string, any>, allMemory: Record<string, any>): Record<string, any> {
-  let memoryObj = {};
-  for (let path of valuesMap.keys()) {
-    const value = valuesMap.get(path);
-    dset(memoryObj, path, value);
+  const memoryObj = {};
+  for (const [path, value] of valuesMap) {
+    // Split once (and cached) for both the packet and $memoryAll
+    const keys = splitPath(path);
+    dset(memoryObj, keys, value);
     if (value === "$delete") {
-      dremove(allMemory, path);
+      dremove(allMemory, keys);
     } else {
-      dset(allMemory, path, value);
+      dset(allMemory, keys, value);
     }
   }
   return memoryObj;

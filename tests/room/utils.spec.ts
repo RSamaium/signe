@@ -4,6 +4,8 @@ import {
   dremove,
   extractParams,
   throttle,
+  batch,
+  debounce,
 } from "../../packages/room/src/utils";
 
 describe("extractParams", () => {
@@ -292,5 +294,102 @@ describe('buildObject', () => {
       }
     });
     expect(allMemory).toEqual({ a: { b: { d: 2 } } });
+  });
+});
+describe("batch", () => {
+  it("runs once at the end of the task when wait is 0", async () => {
+    const fn = vi.fn();
+    const schedule = batch(fn);
+    schedule(); schedule(); schedule();
+    expect(fn).not.toHaveBeenCalled();
+    await Promise.resolve();
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs at most once per wait window, with a trailing run", async () => {
+    vi.useFakeTimers();
+    try {
+      const fn = vi.fn();
+      const schedule = batch(fn, 100);
+      schedule();
+      await Promise.resolve();
+      expect(fn).toHaveBeenCalledTimes(1);
+
+      schedule(); schedule();
+      await vi.advanceTimersByTimeAsync(99);
+      expect(fn).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fn).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("debounce", () => {
+  it("runs after the quiet period", () => {
+    vi.useFakeTimers();
+    try {
+      const fn = vi.fn();
+      const schedule = debounce(fn, 100);
+      schedule();
+      vi.advanceTimersByTime(50);
+      schedule();
+      vi.advanceTimersByTime(99);
+      expect(fn).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(fn).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("runs after maxWait even when calls keep coming", () => {
+    vi.useFakeTimers();
+    try {
+      const fn = vi.fn();
+      const schedule = debounce(fn, 100, 300);
+      for (let t = 0; t < 300; t += 50) {
+        schedule();
+        vi.advanceTimersByTime(50);
+      }
+      expect(fn).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("buildObject with cached path keys", () => {
+  it("builds a new packet each call while reusing split paths", () => {
+    const memory: any = {};
+    const values = new Map<string, any>([["players.p1.x", 1], ["players.p1.y", 2]]);
+    const first = buildObject(values, memory);
+    values.set("players.p1.x", 3);
+    const second = buildObject(values, memory);
+
+    expect(first).toEqual({ players: { p1: { x: 1, y: 2 } } });
+    expect(second).toEqual({ players: { p1: { x: 3, y: 2 } } });
+    expect(first).not.toBe(second);
+    expect(memory).toEqual({ players: { p1: { x: 3, y: 2 } } });
+  });
+
+  it("keeps creating arrays for numeric keys and handles deletes", () => {
+    const memory: any = {};
+    buildObject(new Map([["items.0", "a"], ["items.1", "b"]]), memory);
+    expect(Array.isArray(memory.items)).toBe(true);
+
+    const packet = buildObject(new Map([["items.0", "$delete"]]), memory);
+    expect(packet).toEqual({ items: ["$delete"] });
+    expect(memory.items[0]).toBeUndefined();
+  });
+
+  it("stays correct past the cache limit", () => {
+    const memory: any = {};
+    const values = new Map<string, any>();
+    for (let i = 0; i < 10_050; i++) values.set(`p${i}.v`, i);
+    buildObject(values, memory);
+    expect(memory.p0.v).toBe(0);
+    expect(memory.p10049.v).toBe(10049);
   });
 });

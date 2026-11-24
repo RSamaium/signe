@@ -5,15 +5,25 @@ import {
   isObjectSubject,
   isSignal,
   isComputed,
+  subscribeToSignal,
+  type ArraySignalStore,
+  type ObjectSignalStore,
   type WritableSignal,
 } from "@signe/reactive";
 import { isInstanceOfClass, isObject } from "./utils";
 import { type Observable } from "rxjs";
 import type { NormalizedSyncOptions } from "./decorators";
+import { isSyncEvent } from "./event";
 
 interface SyncOptions {
   onSync?: (value: Map<string, any>) => void;
   onPersist?: (value: Map<string, any>) => void;
+  /**
+   * Called each time an `event()` is emitted, with the pending events grouped by path
+   * (in emission order). The consumer is responsible for clearing the map once sent.
+   * When omitted, emitted events are not collected.
+   */
+  onEvent?: (events: Map<string, any[]>) => void;
 }
 
 interface TypeOptions {
@@ -21,6 +31,7 @@ interface TypeOptions {
   persist?: boolean;
   classType?: any;
   transform?: (value: any) => any;
+  precision?: number;
   skipInitialSync?: boolean;
 }
 
@@ -29,7 +40,7 @@ type SyncMetadata = Map<string, NormalizedSyncOptions>;
 interface ExtendedWritableSignal<T>
   extends Omit<WritableSignal<T>, "observable"> {
   options?: TypeOptions;
-  _subject?: ObjectSubject<T> | ArraySubject<T>;
+  _subject?: ObjectSubject<T> | ArraySubject<T> | ObjectSignalStore<any> | ArraySignalStore<any>;
   observable: Observable<SubjectValue<T>>;
 }
 
@@ -49,10 +60,61 @@ interface SyncInstance {
     setPersist: (path: string, value: any) => void;
     has: (path: string) => boolean;
     get: (path: string) => any;
+    emit?: (path: string, payload: any) => void;
   };
 }
 
 export const DELETE_TOKEN = "$delete";
+
+/**
+ * Rounds numbers to `precision` decimals, including numbers inside plain objects and arrays
+ * (returns copies). Negative precisions round to tens, hundreds... Other values are returned as is.
+ *
+ * @example
+ * roundToPrecision(12.345, 1)            // 12.3
+ * roundToPrecision({ x: 1.6, y: 2.4 }, 0) // { x: 2, y: 2 }
+ * roundToPrecision(1234, -2)              // 1200
+ */
+export function roundToPrecision(value: any, precision: number | undefined): any {
+  if (precision === undefined || value === DELETE_TOKEN) return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return value;
+    if (precision >= 0) {
+      const factor = 10 ** precision;
+      return Math.round(value * factor) / factor;
+    }
+    const step = 10 ** -precision;
+    return Math.round(value / step) * step;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => roundToPrecision(item, precision));
+  }
+  if (value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    const rounded: Record<string, any> = {};
+    for (const key in value) {
+      rounded[key] = roundToPrecision(value[key], precision);
+    }
+    return rounded;
+  }
+  return value;
+}
+
+/**
+ * With `precision`, a numeric signal whose rounded value did not change since the last sync
+ * does not need to be sent again. Returns true when the value must be sent.
+ */
+function rememberSyncedNumber(signal: any, path: string, value: any, precision: number | undefined): boolean {
+  if (precision === undefined) return true;
+  if (typeof value !== "number") {
+    // A non-numeric value was sent (or a delete): the next number must be sent again
+    signal.$lastSyncedPath = undefined;
+    return true;
+  }
+  if (signal.$lastSyncedPath === path && signal.$lastSyncedValue === value) return false;
+  signal.$lastSyncedPath = path;
+  signal.$lastSyncedValue = value;
+  return true;
+}
 
 /**
  * Synchronizes an instance by adding `$valuesChanges` methods for state management.
@@ -65,6 +127,7 @@ export const DELETE_TOKEN = "$delete";
  * @param {SyncOptions} [options={}] - Optional synchronization options.
  * @param {Function} [options.onSync] - Callback function to be called on value sync with the current cache.
  * @param {Function} [options.onPersist] - Callback function to be called on value persistence with the current cache.
+ * @param {Function} [options.onEvent] - Callback function to be called when an `event()` is emitted, with pending events by path.
  *
  * @example
  * class TestClass {
@@ -80,12 +143,15 @@ export const DELETE_TOKEN = "$delete";
 export const syncClass = (instance: any, options: SyncOptions = {}) => {
   const cacheSync = new Map();
   const cachePersist = new Map<string, any>();
+  const cacheEvents = new Map<string, any[]>();
   instance.$valuesChanges = {
     set: (path: string, value: any) => {
       cacheSync.set(path, value);
       options.onSync?.(cacheSync);
     },
     setPersist: (path: string, value: any) => {
+      // Nobody reads persisted changes: do not collect them
+      if (!options.onPersist) return;
       if (path == "") path = ".";
       cachePersist.set(path, value);
       options.onPersist?.(cachePersist);
@@ -95,6 +161,16 @@ export const syncClass = (instance: any, options: SyncOptions = {}) => {
     },
     get: (path: string) => {
       return cacheSync.get(path);
+    },
+    emit: (path: string, payload: any) => {
+      if (!options.onEvent) return;
+      const queue = cacheEvents.get(path);
+      if (queue) {
+        queue.push(payload);
+      } else {
+        cacheEvents.set(path, [payload]);
+      }
+      options.onEvent(cacheEvents);
     },
   };
   createSyncClass(instance);
@@ -279,6 +355,7 @@ export const createSyncClass = (
       const syncToClient = signal.options?.syncToClient ?? true;
       const persist = signal.options?.persist ?? true;
       const transform = signal.options?.transform;
+      const precision = signal.options?.precision;
       let signalValue = signal();
 
       // Apply transformation before converting array to object
@@ -294,7 +371,10 @@ export const createSyncClass = (
 
       const newPath = (path ? path + "." : "") + key;
       if (syncToClient) {
-        currentClass.$valuesChanges.set(newPath, transformedValue);
+        // Clients get the rounded value; persistence keeps the exact one
+        const syncValue = roundToPrecision(transformedValue, precision);
+        rememberSyncedNumber(signal, newPath, syncValue, precision);
+        currentClass.$valuesChanges.set(newPath, syncValue);
       }
       if (persist) {
         if (parentClass)
@@ -304,10 +384,10 @@ export const createSyncClass = (
       // Handle computed signals specifically
       if (isComputed(signal)) {
         // Subscribe to the computed signal's observable to sync changes
-        signal.observable.subscribe((newValue: any) => {
+        subscribeToSignal(signal, (newValue: any) => {
           if (syncToClient) {
             const transformedNewValue = transform ? transform(newValue) : newValue;
-            currentClass.$valuesChanges.set(newPath, transformedNewValue);
+            currentClass.$valuesChanges.set(newPath, roundToPrecision(transformedNewValue, precision));
           }
         });
       }
@@ -324,6 +404,10 @@ function applyDecoratedSignalMetadata(currentClass: any) {
 
   for (const [propertyKey, options] of syncMetadata) {
     const signal = currentClass[propertyKey];
+    if (isSyncEvent(signal)) {
+      type(signal as any, propertyKey, options, currentClass);
+      continue;
+    }
     if (!isSignal(signal) || signal.options) {
       continue;
     }
@@ -343,8 +427,23 @@ export const type = <T>(
   options: TypeOptions = {},
   currentInstance: SyncInstance
 ): ExtendedWritableSignal<T> => {
-  const { syncToClient = true, persist = true, transform, skipInitialSync = false } = options;
+  const { syncToClient = true, persist = true, transform, precision, skipInitialSync = false } = options;
   let init = true;
+
+  // Volatile events: forward each emission to the sync channel, never snapshot or persist.
+  if (isSyncEvent(_signal)) {
+    _signal.$bind(
+      syncToClient
+        ? (payload: any) => {
+            const valuesChanges = currentInstance?.$valuesChanges;
+            if (!valuesChanges?.emit || currentInstance.$path === undefined) return;
+            const fullPath = `${currentInstance.$path ? currentInstance.$path + "." : ""}${path}`;
+            valuesChanges.emit(fullPath, transform ? transform(payload) : payload);
+          }
+        : null
+    );
+    return _signal as any;
+  }
 
   const handleObjectSubject = (value: SubjectValue, propPath: string) => {
     const newPath = `${propPath}${value.key ? `.${value.key}` : ""}`;
@@ -396,13 +495,20 @@ export const type = <T>(
     }
   };
 
-  const savePath = (propPath: string, value: any) => {
+  /**
+   * @param dedupeSignal - for a numeric signal synced at its own path: skip the sync when the
+   *   rounded value (with `precision`) did not change. Persistence still gets every change.
+   */
+  const savePath = (propPath: string, value: any, dedupeSignal?: any) => {
     // Apply transformation if provided and value is not DELETE_TOKEN
     const transformedValue = 
       transform && value !== DELETE_TOKEN ? transform(value) : value;
     
     if (syncToClient) {
-      currentInstance.$valuesChanges.set(propPath, transformedValue);
+      const syncValue = roundToPrecision(transformedValue, precision);
+      if (!dedupeSignal || rememberSyncedNumber(dedupeSignal, propPath, syncValue, precision)) {
+        currentInstance.$valuesChanges.set(propPath, syncValue);
+      }
     }
     if (persist && currentInstance.$path !== undefined) {
       currentInstance.$valuesChanges.setPersist(
@@ -422,32 +528,50 @@ export const type = <T>(
     // For initial sync of direct property values
     if (syncToClient && !skipInitialSync && currentInstance.$valuesChanges) {
       const initialValue = signal();
-      const transformedInitialValue = transform ? transform(initialValue) : initialValue;
+      const transformedInitialValue = roundToPrecision(
+        transform ? transform(initialValue) : initialValue,
+        precision
+      );
       const initialPath = currentInstance.$path !== undefined
         ? `${currentInstance.$path ? `${currentInstance.$path}.` : ""}${signalPath}`
         : signalPath;
+      rememberSyncedNumber(signal, initialPath, transformedInitialValue, precision);
       currentInstance.$valuesChanges.set(initialPath, transformedInitialValue);
     }
 
     signal.options = options;
 
-    signal.observable.subscribe((value: any) => {
+    // The kind of signal never changes: resolve it once instead of on every change
+    const kind = isComputed(signal)
+      ? "value"
+      : isObjectSubject(signal._subject)
+        ? "object"
+        : isArraySubject(signal._subject)
+          ? "array"
+          : "value";
+
+    // Reuse the same path string while the instance path does not change: building a new
+    // string on every change also forces the change maps to hash it again.
+    let cachedBasePath: string | undefined;
+    let cachedFullPath = "";
+
+    // Fast path (no rxjs) for signals of this version, `observable` otherwise
+    subscribeToSignal(signal, (value: any) => {
       if (init) return; // Skip initial value
 
-      if (currentInstance.$path !== undefined) {
-        const fullPath = `${
-          currentInstance.$path ? currentInstance.$path + "." : ""
-        }${signalPath}`;
+      const basePath = currentInstance.$path;
+      if (basePath === undefined) return;
+      if (basePath !== cachedBasePath) {
+        cachedBasePath = basePath;
+        cachedFullPath = `${basePath ? basePath + "." : ""}${signalPath}`;
+      }
 
-        if (isComputed(signal)) {
-          savePath(fullPath, value);
-        } else if (isObjectSubject(signal._subject)) {
-          handleObjectSubject(value, fullPath);
-        } else if (isArraySubject(signal._subject)) {
-          handleArraySubject(value, fullPath);
-        } else {
-          savePath(fullPath, value);
-        }
+      if (kind === "object") {
+        handleObjectSubject(value, cachedFullPath);
+      } else if (kind === "array") {
+        handleArraySubject(value, cachedFullPath);
+      } else {
+        savePath(cachedFullPath, value, signal);
       }
     });
 

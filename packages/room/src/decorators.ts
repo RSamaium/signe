@@ -59,12 +59,67 @@ export function Request(options: RequestOptions, bodyValidation?: z.ZodSchema) {
   };
 }
 
+export interface RoomCompressionOptions {
+  /** Minimum size (characters of JSON) of a message to compress. Default: 512. */
+  threshold?: number;
+  /** DEFLATE level, 1 (fastest) to 9. Default: 1, which keeps most of the gain for half the CPU. */
+  level?: number;
+  /**
+   * Also compress messages returned by `interceptorPacket`. Each client then has its own
+   * packet, so this costs one compression per client and per message. Default: false.
+   * Also applies to the per-client packets of `syncVisibility`.
+   */
+  intercepted?: boolean;
+  /**
+   * Compress per-client messages with one DEFLATE stream per connection, for clients that can
+   * read it (`@signe/sync` client with `compression: true`). Each message is set up faster and
+   * refers to the previous ones: on small game packets, about 3 times less CPU and 2 times fewer
+   * bytes than compressing each message alone. Costs about 48 KB of memory per connection.
+   * Default: true.
+   */
+  stream?: boolean;
+  /** History of the stream: 2^windowBits bytes (9 to 15). Default: 13 (8 KB). */
+  windowBits?: number;
+  /** Memory of the stream's match finder (1 to 9). Default: 5. */
+  memLevel?: number;
+}
+
 export interface RoomOptions {
   path: string;
   maxUsers?: number;
   persistState?: boolean;
+  /**
+   * Debounce window (ms) for storage writes: changes are written once no change happened for this long.
+   */
   throttleStorage?: number;
+  /**
+   * Upper bound (ms) on how long changes can wait for a storage write while the state keeps changing.
+   * Defaults to 10 × `throttleStorage`.
+   */
+  throttleStorageMaxWait?: number;
+  /**
+   * Minimum interval (ms) between two sync packets. Changes made in the same task are always
+   * grouped into one packet, even without this option.
+   */
   throttleSync?: number;
+  /**
+   * Give `interceptorPacket` its own copy of each packet (default: true). Set to false when
+   * the interceptor never modifies the packet it receives (it returns a new object instead):
+   * this removes a `structuredClone` per client and per packet.
+   */
+  copyPacketForInterceptor?: boolean;
+  /**
+   * Send compressed messages (binary frames, DEFLATE) to clients that ask for them
+   * (`connectionRoom(..., { compression: true })`). Other clients keep receiving JSON text.
+   * A broadcast is compressed once for all clients. Default: disabled.
+   */
+  compression?: boolean | RoomCompressionOptions;
+  /**
+   * Number of paths after which the path table (sync packets of clients that asked for
+   * `pathFormat`) starts over. Paths of deleted entities stay in the table until then.
+   * Default: 65536.
+   */
+  pathTableLimit?: number;
   hibernate?: boolean;
   guards?: RoomGuardFn[];
   sessionExpiryTime?: number;
@@ -76,7 +131,15 @@ export function Room(options: RoomOptions) {
     target.prototype.maxUsers = options.maxUsers;
     target.prototype.persistState = options.persistState ?? true;
     target.prototype.throttleStorage = options.throttleStorage;
+    target.prototype.throttleStorageMaxWait = options.throttleStorageMaxWait;
     target.prototype.throttleSync = options.throttleSync;
+    if (options.copyPacketForInterceptor !== undefined) {
+      target.prototype.copyPacketForInterceptor = options.copyPacketForInterceptor;
+    }
+    target.prototype.compression = options.compression;
+    if (options.pathTableLimit !== undefined) {
+      target.prototype.pathTableLimit = options.pathTableLimit;
+    }
     target.prototype.sessionExpiryTime = options.sessionExpiryTime ?? 5 * 60 * 1000;
     if (options.guards) {
       target['_roomGuards'] = options.guards;
