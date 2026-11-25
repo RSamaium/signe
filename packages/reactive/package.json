@@ -1,6 +1,11 @@
 {
   "name": "@signe/reactive",
   "version": "3.2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RSamaium/signe.git",
+    "directory": "packages/reactive"
+  },
   "description": "Small signal-based reactivity primitives with observable object and array changes.",
   "main": "./dist/index.js",
   "scripts": {

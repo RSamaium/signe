@@ -1,6 +1,11 @@
 {
   "name": "@signe/room",
   "version": "3.3.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RSamaium/signe.git",
+    "directory": "packages/room"
+  },
   "description": "PartyKit room primitives with synchronized state, sessions, guards, and HTTP handlers.",
   "main": "./dist/index.js",
   "scripts": {

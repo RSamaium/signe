@@ -1,6 +1,11 @@
 {
   "name": "@signe/sync",
   "version": "3.2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RSamaium/signe.git",
+    "directory": "packages/sync"
+  },
   "description": "Decorator-based state synchronization and loading utilities for Signe signals.",
   "main": "./dist/index.js",
   "scripts": {
