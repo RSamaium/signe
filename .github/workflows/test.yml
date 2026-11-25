@@ -47,6 +47,8 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      # npm trusted publishing (OIDC): no NPM_TOKEN needed
+      id-token: write
     strategy:
       matrix:
         os: [ubuntu-22.04]
@@ -92,4 +94,3 @@ jobs:
           commit: "chore(release): version packages 🦋 [skip ci]"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
